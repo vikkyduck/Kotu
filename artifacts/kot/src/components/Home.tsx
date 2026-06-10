@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApp } from '@/hooks/use-app';
 import { Icon } from '@/lib/icons';
@@ -5,7 +6,7 @@ import {
   useListTranscriptions,
   useDeleteTranscription,
   getListTranscriptionsQueryKey,
-  type Transcription,
+  getGetTranscriptionQueryKey,
 } from '@workspace/api-client-react';
 
 function formatDate(value: string | Date): string {
@@ -14,28 +15,29 @@ function formatDate(value: string | Date): string {
 }
 
 export function Home() {
-  const { screen, go, openTranscription, newTranscription, toast } = useApp();
+  const { screen, go, toast, openTranscription, newTranscription } = useApp();
   const { data: transcriptions } = useListTranscriptions();
   const queryClient = useQueryClient();
   const deleteTranscription = useDeleteTranscription();
 
+  const [confirmId, setConfirmId] = useState<number | null>(null);
+
   const history = transcriptions ?? [];
   const hasHistory = history.length > 0;
 
-  const handleDelete = (e: React.MouseEvent, t: Transcription) => {
-    e.stopPropagation();
-    const ok = window.confirm(
-      `Удалить «${t.title}»? Расшифровку нельзя будет вернуть.`,
-    );
-    if (!ok) return;
+  const handleDelete = (id: number) => {
     deleteTranscription.mutate(
-      { id: t.id },
+      { id },
       {
         onSuccess: () => {
+          setConfirmId(null);
+          queryClient.removeQueries({ queryKey: getGetTranscriptionQueryKey(id) });
           queryClient.invalidateQueries({ queryKey: getListTranscriptionsQueryKey() });
-          toast('Расшифровка удалена');
+          toast('Запись удалена');
         },
-        onError: () => toast('Не удалось удалить. Попробуйте ещё раз.'),
+        onError: () => {
+          toast('Не удалось удалить — попробуйте ещё раз');
+        },
       },
     );
   };
@@ -85,21 +87,47 @@ export function Home() {
                   : t.status === 'error'
                     ? 'Не удалось — откройте, чтобы повторить'
                     : `Расшифровка · ${formatDate(t.createdAt)}`;
+              const isConfirming = confirmId === t.id;
+              const isDeleting = deleteTranscription.isPending && isConfirming;
               return (
-                <div className="r" key={t.id} onClick={() => openTranscription(t.id)}>
+                <div
+                  className={`r ${isConfirming ? 'confirming' : ''}`}
+                  key={t.id}
+                  onClick={() => { if (!isConfirming) openTranscription(t.id); }}
+                >
                   <span className="ri" data-icon="mic"><Icon name="mic" /></span>
                   <span className="rt"><b>{t.title}</b><span>{subtitle}</span></span>
-                  <button
-                    className="rdel"
-                    type="button"
-                    aria-label="Удалить расшифровку"
-                    title="Удалить"
-                    disabled={deleteTranscription.isPending}
-                    onClick={(e) => handleDelete(e, t)}
-                  >
-                    <Icon name="trash" />
-                  </button>
-                  <span className="chev" data-icon="chevron"><Icon name="chevron" /></span>
+                  {isConfirming ? (
+                    <span className="rconfirm" onClick={(e) => e.stopPropagation()}>
+                      <span className="rconfirm-q">Удалить?</span>
+                      <button
+                        className="rconfirm-yes"
+                        disabled={isDeleting}
+                        onClick={() => handleDelete(t.id)}
+                      >
+                        {isDeleting ? 'Удаляю…' : 'Удалить'}
+                      </button>
+                      <button
+                        className="rconfirm-no"
+                        disabled={isDeleting}
+                        onClick={() => setConfirmId(null)}
+                      >
+                        Отмена
+                      </button>
+                    </span>
+                  ) : (
+                    <>
+                      <button
+                        className="rdel"
+                        aria-label="Удалить запись"
+                        title="Удалить запись"
+                        onClick={(e) => { e.stopPropagation(); setConfirmId(t.id); }}
+                      >
+                        <Icon name="trash" />
+                      </button>
+                      <span className="chev" data-icon="chevron"><Icon name="chevron" /></span>
+                    </>
+                  )}
                 </div>
               );
             })}

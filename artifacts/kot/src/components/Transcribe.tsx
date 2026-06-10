@@ -26,6 +26,25 @@ function formatSize(bytes: number): string {
 export function Transcribe() {
   const { screen, go, toast, activeTranscriptionId, openTranscription, newTranscription } = useApp();
   const queryClient = useQueryClient();
+  const deleteTranscription = useDeleteTranscription();
+
+  const deleteActive = (id: number) => {
+    deleteTranscription.mutate(
+      { id },
+      {
+        onSuccess: () => {
+          queryClient.removeQueries({ queryKey: getGetTranscriptionQueryKey(id) });
+          queryClient.invalidateQueries({ queryKey: getListTranscriptionsQueryKey() });
+          justUploadedId.current = null;
+          toast('Запись удалена');
+          go('s-home');
+        },
+        onError: () => {
+          toast('Не удалось удалить — попробуйте ещё раз');
+        },
+      },
+    );
+  };
 
   const [view, setView] = useState<'tcUpload' | 'tcReady'>('tcUpload');
   const [sub, setSub] = useState<string | null>('Загрузите аудио — я переведу его в текст.');
@@ -286,12 +305,29 @@ export function Transcribe() {
           <p className="tnote" style={{ color: 'var(--danger, #c0392b)' }}>
             <Icon name="info" /> {active?.error || 'Не удалось распознать запись. Попробуйте ещё раз.'}
           </p>
-          <button className="btn primary big" onClick={retry}>Попробовать ещё раз <Icon name="arrow" /></button>
+          <div className="btnrow">
+            <button className="btn primary" style={{ flex: 1 }} onClick={retry}>
+              Попробовать ещё раз <Icon name="arrow" />
+            </button>
+            <button
+              className="btn danger"
+              disabled={deleteTranscription.isPending}
+              onClick={() => activeTranscriptionId != null && deleteActive(activeTranscriptionId)}
+            >
+              <Icon name="trash" /> {deleteTranscription.isPending ? 'Удаляю…' : 'Удалить'}
+            </button>
+          </div>
         </div>
       )}
 
       {showResult && (
-        <ResultView celebrated={celebrated} onDone={() => go('s-home')} toast={toast} />
+        <ResultView
+          celebrated={celebrated}
+          onDone={() => go('s-home')}
+          toast={toast}
+          onDelete={() => activeTranscriptionId != null && deleteActive(activeTranscriptionId)}
+          deleting={deleteTranscription.isPending}
+        />
       )}
     </section>
   );
@@ -326,11 +362,16 @@ function ResultView({
   celebrated,
   onDone,
   toast,
+  onDelete,
+  deleting,
 }: {
   celebrated: React.MutableRefObject<boolean>;
   onDone: () => void;
   toast: (msg: string) => void;
+  onDelete: () => void;
+  deleting: boolean;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const { activeTranscriptionId } = useApp();
   const queryClient = useQueryClient();
   const id = activeTranscriptionId ?? 0;
@@ -451,6 +492,24 @@ function ResultView({
           <Icon name="trash" /> Удалить
         </button>
       </div>
+
+      {confirmDelete ? (
+        <div className="del-confirm">
+          <span>Удалить эту запись? Это нельзя отменить.</span>
+          <div className="del-confirm-actions">
+            <button className="btn danger" disabled={deleting} onClick={onDelete}>
+              {deleting ? 'Удаляю…' : 'Удалить'}
+            </button>
+            <button className="btn" disabled={deleting} onClick={() => setConfirmDelete(false)}>
+              Оставить
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn link-danger" onClick={() => setConfirmDelete(true)}>
+          <Icon name="trash" /> Удалить запись
+        </button>
+      )}
     </div>
   );
 }
