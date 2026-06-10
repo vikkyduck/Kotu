@@ -20,7 +20,14 @@ processing) and renders the proc view from those fields.
 **How to apply / gotchas:**
 - New status columns on `transcriptions`: `status`, `progress`, `statusMessage`,
   `error`. They default to a finished state (`done`/100/""), so pre-existing rows
-  and the small-file fast path stay correct.
+  stay correct.
+- There is no small-file fast path anymore: `splitAudioIntoChunks` ALWAYS runs
+  ffmpeg to decode + re-encode every upload to mono 16 kHz mp3 (one chunk for a
+  short clip, many for a long one). This is deliberate — it normalizes any input
+  format ffmpeg can read into one OpenAI reliably accepts, and guarantees the
+  per-request duration cap is respected even for short-but-high-duration files.
+  Trade-off accepted: even tiny files are transcoded, and ffmpeg is a hard
+  dependency for every upload.
 - Multer uses **disk** storage (not memory) so large uploads don't blow RAM; the
   temp file is removed in the processing `finally` block.
 - Per-chunk failures throw `ChunkError` (carries a friendly Russian `userMessage`

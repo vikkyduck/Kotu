@@ -13,7 +13,8 @@ import { useApp } from '@/hooks/use-app';
 import { Icon } from '@/lib/icons';
 import { Celebrate } from '@/lib/celebrate';
 
-const ACCEPT = 'audio/*,.m4a,.mp3,.wav,.mp4,.ogg,.webm,.flac';
+const ACCEPT =
+  'audio/*,video/*,.m4a,.m4b,.mp3,.wav,.mp4,.mov,.ogg,.opus,.webm,.mkv,.flac,.aac,.amr,.3gp,.wma,.aiff,.caf';
 const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
 
 function formatSize(bytes: number): string {
