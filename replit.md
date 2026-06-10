@@ -10,6 +10,7 @@ A warm, glassmorphic Russian-language AI "work environment" for a psychologist/l
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
+- Deploy as a **Reserved VM (always-on)**, NOT autoscale. Transcription is an in-memory background job that continues after the HTTP response; autoscale freezes the instance once the response is sent, so jobs never finish and recordings appear to "get lost". The deployment type is chosen by the user in the Publish dialog (the agent cannot set `deploymentTarget`).
 
 ## Stack
 
