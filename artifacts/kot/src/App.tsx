@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppProvider } from '@/hooks/use-app';
 import { useLiquidLight } from '@/hooks/use-liquid-light';
 import { TopBar } from '@/components/TopBar';
@@ -8,6 +9,15 @@ import { Slides } from '@/components/Slides';
 import { How } from '@/components/How';
 import { FixSheet } from '@/components/FixSheet';
 import { Toast } from '@/components/Toast';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
 
 function AppContent() {
   useLiquidLight();
@@ -30,9 +40,11 @@ function AppContent() {
 
 function App() {
   return (
-    <AppProvider>
-      <AppContent />
-    </AppProvider>
+    <QueryClientProvider client={queryClient}>
+      <AppProvider>
+        <AppContent />
+      </AppProvider>
+    </QueryClientProvider>
   );
 }
 

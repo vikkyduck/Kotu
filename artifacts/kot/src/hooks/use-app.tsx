@@ -20,6 +20,9 @@ interface AppContextType {
   closeSheet: () => void;
   theme: Theme;
   toggleTheme: () => void;
+  activeTranscriptionId: number | null;
+  openTranscription: (id: number) => void;
+  newTranscription: () => void;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -31,6 +34,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const toastT = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [theme, setThemeState] = useState<Theme>('light');
+  const [activeTranscriptionId, setActiveTranscriptionId] = useState<number | null>(null);
 
   useEffect(() => {
     let t = '';
@@ -69,6 +73,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     window.scrollTo({ top: 0 });
   }, []);
 
+  const openTranscription = useCallback((id: number) => {
+    setActiveTranscriptionId(id);
+    setScreen('s-transcribe');
+    window.scrollTo({ top: 0 });
+  }, []);
+
+  const newTranscription = useCallback(() => {
+    setActiveTranscriptionId(null);
+    setScreen('s-transcribe');
+    window.scrollTo({ top: 0 });
+  }, []);
+
   const toast = useCallback((msg: string) => {
     setToastMsg(msg);
     if (toastT.current) clearTimeout(toastT.current);
@@ -90,7 +106,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AppContext.Provider value={{ screen, go, toast, toastMsg, sheet, openSheet, closeSheet, theme, toggleTheme }}>
+    <AppContext.Provider value={{ screen, go, toast, toastMsg, sheet, openSheet, closeSheet, theme, toggleTheme, activeTranscriptionId, openTranscription, newTranscription }}>
       {children}
     </AppContext.Provider>
   );

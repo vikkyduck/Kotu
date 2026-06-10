@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: transcriptions
+    description: Audio transcription operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,93 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /transcriptions:
+    get:
+      operationId: listTranscriptions
+      tags: [transcriptions]
+      summary: List transcriptions
+      description: Returns all saved transcriptions, newest first
+      responses:
+        "200":
+          description: A list of transcriptions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Transcription"
+  /transcriptions/{id}:
+    get:
+      operationId: getTranscription
+      tags: [transcriptions]
+      summary: Get a transcription
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: A transcription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transcription"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: updateTranscription
+      tags: [transcriptions]
+      summary: Update a transcription
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TranscriptionUpdate"
+      responses:
+        "200":
+          description: The updated transcription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transcription"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteTranscription
+      tags: [transcriptions]
+      summary: Delete a transcription
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +122,61 @@ components:
           type: string
       required:
         - status
-
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+    TranscriptSegment:
+      type: object
+      properties:
+        who:
+          type: string
+        text:
+          type: string
+      required:
+        - who
+        - text
+    Transcription:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        filename:
+          type: string
+        hideNames:
+          type: boolean
+        markSpeakers:
+          type: boolean
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptSegment"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - filename
+        - hideNames
+        - markSpeakers
+        - segments
+        - createdAt
+        - updatedAt
+    TranscriptionUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptSegment"

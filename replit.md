@@ -1,10 +1,10 @@
 # Рабочая среда (режим Кота)
 
-A warm, glassmorphic Russian-language AI "work environment" for a psychologist/lecturer named Кот — transcribe recordings, prepare lectures, and build presentations in a calm, reassuring single-page interface. All flows are currently simulated client-side (no backend).
+A warm, glassmorphic Russian-language AI "work environment" for a psychologist/lecturer named Кот — transcribe recordings, prepare lectures, and build presentations in a calm, reassuring single-page interface. Transcription is fully functional (real audio upload → OpenAI transcription → saved to Postgres). Lecture and slides flows are still simulated client-side.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/api-server run dev` — run the API server (binds to `PORT`, mounted at `/api` via the proxy)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
@@ -34,7 +34,11 @@ A warm, glassmorphic Russian-language AI "work environment" for a psychologist/l
 
 ## Architecture decisions
 
-- Frontend-only: every flow (transcription, lecture, slides) is simulated client-side with timers. No backend, no OpenAPI/codegen, no DB.
+- Transcription is backend-backed: `artifacts/kot` (React) uploads audio to `artifacts/api-server` (Express) at `/api/transcriptions/upload`, which transcribes via the OpenAI AI Integration and persists segments to Postgres (Drizzle). Lecture and slides flows remain simulated client-side with timers.
+- Contract-first: endpoints are defined in `lib/api-spec/openapi.yaml`; React Query hooks and Zod schemas are generated via `pnpm --filter @workspace/api-spec run codegen`. The upload endpoint is multipart and handled manually (not in the OpenAPI spec).
+- Transcription pipeline (`artifacts/api-server/src/lib/transcription.ts`): audio → `gpt-4o-mini-transcribe` (filename passed for format detection) → structuring pass (json_object) that splits into segments, optionally redacts patient names («скрыто») and labels speakers ("Вы"/"Собеседник").
+- OpenAI access is via the Replit AI Integration (`@workspace/integrations-openai-ai-server`), using `AI_INTEGRATIONS_OPENAI_*` env vars — no user-supplied API key.
+- Whisper has a 25 MB upload limit; the API surfaces a friendly Russian error on `LIMIT_FILE_SIZE` (413).
 - Faithful port of a fully-designed HTML prototype — the bespoke CSS design system lives in `src/index.css` rather than being rewritten as Tailwind utilities.
 - Theme switching uses a `data-theme="light|dark"` attribute on `<html>` (matching the prototype), not the shadcn `.dark` class.
 - Single-page screen switching via app context state, not the router.
@@ -42,7 +46,7 @@ A warm, glassmorphic Russian-language AI "work environment" for a psychologist/l
 ## Product
 
 A calm, humanized AI work environment (in Russian) for Кот:
-- **Расшифровать запись** (working): upload an audio recording → simulated processing → editable transcript with privacy options (hide patient names, mark speakers) and per-line "fix it" helpers.
+- **Расшифровать запись** (working, real): drag-and-drop or pick an audio recording → real transcription → editable transcript saved to the database, with privacy options (hide patient names, mark speakers). Edits auto-save on blur; "Сохранить текст" downloads a .txt. Saved recordings appear under "Продолжить начатое" on the home screen.
 - **Подготовить лекцию** (coming soon): topic + duration + optional book → generated chapters.
 - **Собрать презентацию** (coming soon): pick a lecture → generated slide grid.
 - **Как это работает**: a plain-language explainer page.

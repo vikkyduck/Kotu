@@ -1,10 +1,18 @@
 import { useApp } from '@/hooks/use-app';
 import { Icon } from '@/lib/icons';
+import { useListTranscriptions } from '@workspace/api-client-react';
 
-const HAS_HISTORY = true; // Hardcoded based on prototype
+function formatDate(value: string | Date): string {
+  const d = typeof value === 'string' ? new Date(value) : value;
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+}
 
 export function Home() {
-  const { screen, go } = useApp();
+  const { screen, go, openTranscription, newTranscription } = useApp();
+  const { data: transcriptions } = useListTranscriptions();
+
+  const history = transcriptions ?? [];
+  const hasHistory = history.length > 0;
 
   if (screen !== 's-home') return null;
 
@@ -18,13 +26,13 @@ export function Home() {
         <span className="pt"><b>Просто откройте и работайте.</b> Без ВПН и отдельных паролей, всё сохраняется само, данные остаются у вас.</span>
       </div>
 
-      <button className="task hero" onClick={() => go('s-transcribe')}>
+      <button className="task hero" onClick={() => newTranscription()}>
         <span className="ti"><span data-icon="mic"><Icon name="mic" /></span></span>
         <span className="tb"><h3>Расшифровать запись</h3><p>Аудио лекции или сеанса — превращу в готовый текст.</p></span>
         <span className="go" data-icon="arrow"><Icon name="arrow" /></span>
       </button>
 
-      {!HAS_HISTORY && (
+      {!hasHistory && (
         <p id="startHint" className="start-hint">С чего начать — загрузите запись, остальное я сделаю сама.</p>
       )}
 
@@ -40,26 +48,17 @@ export function Home() {
         <span className="wip-cta">посмотреть, как будет</span>
       </button>
 
-      {HAS_HISTORY && (
+      {hasHistory && (
         <div id="resumeBlock">
           <div className="label">Продолжить начатое</div>
           <div className="resume">
-            {/* The prototype hardcodes state flags for the resume actions. We will pass params via local component state later if needed, but since it's a static prototype, we just set the states in the components when mounted. For now, we simulate the 'resume' call. */}
-            <div className="r" onClick={() => { window.dispatchEvent(new CustomEvent('resume-transcribe')); go('s-transcribe'); }}>
-              <span className="ri" data-icon="mic"><Icon name="mic" /></span>
-              <span className="rt"><b>Сеанс, 4 июня</b><span>Расшифровка — черновик готов</span></span>
-              <span className="chev" data-icon="chevron"><Icon name="chevron" /></span>
-            </div>
-            <div className="r" onClick={() => { window.dispatchEvent(new CustomEvent('resume-lecture')); go('s-lecture'); }}>
-              <span className="ri" data-icon="pen"><Icon name="pen" /></span>
-              <span className="rt"><b>Лекция «Защитные механизмы»</b><span>Черновик почти готов — можно читать</span></span>
-              <span className="chev" data-icon="chevron"><Icon name="chevron" /></span>
-            </div>
-            <div className="r" onClick={() => { window.dispatchEvent(new CustomEvent('resume-slides')); go('s-slides'); }}>
-              <span className="ri" data-icon="deck"><Icon name="deck" /></span>
-              <span className="rt"><b>Презентация к «Защитным механизмам»</b><span>Слайды готовятся</span></span>
-              <span className="chev" data-icon="chevron"><Icon name="chevron" /></span>
-            </div>
+            {history.map((t) => (
+              <div className="r" key={t.id} onClick={() => openTranscription(t.id)}>
+                <span className="ri" data-icon="mic"><Icon name="mic" /></span>
+                <span className="rt"><b>{t.title}</b><span>Расшифровка · {formatDate(t.createdAt)}</span></span>
+                <span className="chev" data-icon="chevron"><Icon name="chevron" /></span>
+              </div>
+            ))}
           </div>
         </div>
       )}
