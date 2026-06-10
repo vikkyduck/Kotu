@@ -1,6 +1,6 @@
-# [Project name]
+# Рабочая среда (режим Кота)
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A warm, glassmorphic Russian-language AI "work environment" for a psychologist/lecturer named Кот — transcribe recordings, prepare lectures, and build presentations in a calm, reassuring single-page interface. All flows are currently simulated client-side (no backend).
 
 ## Run & Operate
 
@@ -22,15 +22,30 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/kot/` — the main web app (React + Vite), served at root path `/`
+  - `src/components/` — screen components: `Home`, `Transcribe`, `Lecture`, `Slides`, `How`, `TopBar`, `FixSheet`, `Toast`
+  - `src/hooks/use-app.tsx` — global state/navigation context
+  - `src/hooks/use-theme.ts` — light/dark theme (data-theme attribute on <html>, persisted to localStorage)
+  - `src/hooks/use-liquid-light.ts` — pointer-tracking glass highlight effect
+  - `src/lib/celebrate.ts` — particle/ring success animation
+  - `src/lib/icons.tsx` — inline SVG icon set
+  - `src/index.css` — full design system (custom properties, light/dark themes, component styles, keyframes)
+- `attached_assets/kot-prototype_*.html` — original source prototype; `kot-prototype-clean.html` is the font-stripped readable copy
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Frontend-only: every flow (transcription, lecture, slides) is simulated client-side with timers. No backend, no OpenAPI/codegen, no DB.
+- Faithful port of a fully-designed HTML prototype — the bespoke CSS design system lives in `src/index.css` rather than being rewritten as Tailwind utilities.
+- Theme switching uses a `data-theme="light|dark"` attribute on `<html>` (matching the prototype), not the shadcn `.dark` class.
+- Single-page screen switching via app context state, not the router.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+A calm, humanized AI work environment (in Russian) for Кот:
+- **Расшифровать запись** (working): upload an audio recording → simulated processing → editable transcript with privacy options (hide patient names, mark speakers) and per-line "fix it" helpers.
+- **Подготовить лекцию** (coming soon): topic + duration + optional book → generated chapters.
+- **Собрать презентацию** (coming soon): pick a lecture → generated slide grid.
+- **Как это работает**: a plain-language explainer page.
 
 ## User preferences
 

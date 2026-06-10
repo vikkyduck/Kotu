@@ -1,0 +1,47 @@
+import { Icon } from '@/lib/icons';
+import { useApp } from '@/hooks/use-app';
+
+const TITLES: Record<string, string> = {
+  's-home': '',
+  's-transcribe': 'Расшифровка',
+  's-lecture': 'Лекция',
+  's-slides': 'Презентация',
+  's-how': 'Как это работает'
+};
+
+export function TopBar() {
+  const { screen, go, theme, toggleTheme } = useApp();
+  
+  const isHome = screen === 's-home';
+
+  return (
+    <div className={`top ${!isHome ? 'sub' : ''}`} id="topbar">
+      <button className="back" id="backBtn" onClick={() => go('s-home')}>
+        <span data-icon="back"><Icon name="back" /></span>
+      </button>
+      
+      {isHome && (
+        <span className="brand" id="brand" onClick={() => go('s-home')}>
+          <span className="dot"><span data-icon="spark"><Icon name="spark" /></span></span> Рабочая среда
+        </span>
+      )}
+      
+      {!isHome && (
+        <span className="ttl" id="topTitle">{TITLES[screen]}</span>
+      )}
+      
+      <span className="sp"></span>
+      
+      {screen !== 's-how' && (
+        <button className="helpbtn" id="helpBtn" onClick={() => go('s-how')}>
+          <span data-icon="info"><Icon name="info" /></span>
+          <span className="lbl">Как это работает</span>
+        </button>
+      )}
+      
+      <button className="iconbtn" id="themeToggle" title="Светлее / темнее" onClick={toggleTheme}>
+        <span id="themeIcon" data-icon="moon"><Icon name={theme === 'dark' ? 'sun' : 'moon'} /></span>
+      </button>
+    </div>
+  );
+}
