@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -9,10 +9,9 @@ import type { TranscriptSegment } from "@workspace/db";
 
 const execFileAsync = promisify(execFile);
 
-// OpenAI's transcription endpoint rejects files over 25 MB; keep a safety margin.
-const CHUNK_SAFE_BYTES = 24 * 1024 * 1024;
 // ffmpeg re-encodes each segment to mono mp3 at 64 kbps (~8 KB/s), so a 600 s
-// segment is roughly 4.6 MB — comfortably under the limit, with predictable size.
+// segment is roughly 4.6 MB — comfortably under OpenAI's 25 MB / 25 min limits,
+// with predictable size.
 const SEGMENT_SECONDS = 600;
 
 // Higher-quality speech-to-text model. Like its "mini" sibling it caps each
@@ -38,21 +37,17 @@ export interface AudioChunk {
 }
 
 /**
- * Split a (possibly very long) recording into pieces that each stay safely under
- * the transcription size limit. Small files are returned untouched as a single
- * chunk; larger files are re-encoded and time-segmented with ffmpeg so a 2–3 hour
- * recording becomes a handful of small, independently transcribable mp3 chunks.
+ * Normalize and split any recording into mp3 pieces that each stay safely under
+ * the transcription size/duration limits. Every file is decoded and re-encoded
+ * with ffmpeg (mono 16 kHz mp3) regardless of size, so any format ffmpeg can
+ * read — m4a, mp3, wav, ogg/opus, webm, aac, amr, wma, video containers, … —
+ * becomes a format OpenAI reliably accepts. A short clip yields one chunk; a
+ * 2–3 hour recording becomes a handful of independently transcribable chunks.
  */
 export async function splitAudioIntoChunks(
   inputPath: string,
   originalName: string,
 ): Promise<AudioChunk[]> {
-  const { size } = await stat(inputPath);
-  if (size <= CHUNK_SAFE_BYTES) {
-    const buffer = await readFile(inputPath);
-    return [{ buffer, filename: originalName }];
-  }
-
   const workDir = await mkdtemp(path.join(tmpdir(), "kot-chunks-"));
   try {
     const pattern = path.join(workDir, "chunk_%03d.mp3");

@@ -20,14 +20,21 @@ import { logger } from "../../lib/logger";
 // Files are streamed to disk (not held in memory) and split with ffmpeg.
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 
-const ALLOWED_EXT = /\.(mp3|m4a|wav|mp4|ogg|oga|webm|flac|aac|mpeg|mpga)$/i;
+// Anything ffmpeg can decode is fine (it is re-encoded to mp3 before
+// transcription), so accept a broad set of audio and video containers.
+const ALLOWED_EXT =
+  /\.(mp3|mp2|m4a|m4b|mp4|mov|wav|wave|aif|aiff|aac|ogg|oga|opus|webm|mkv|flac|amr|3gp|3gpp|wma|caf|mka|mpeg|mpga)$/i;
 
 const upload = multer({
   dest: tmpdir(),
   limits: { fileSize: MAX_FILE_BYTES },
   fileFilter: (_req, file, cb) => {
-    const isAudio = file.mimetype.startsWith("audio/") || file.mimetype === "video/mp4";
-    if (isAudio || ALLOWED_EXT.test(file.originalname)) {
+    // Audio can also live inside video containers (e.g. audio-only webm reports
+    // "video/webm"), so accept any audio/* or video/* type, and fall back to a
+    // recognised file extension for browsers that send a vague mimetype.
+    const type = file.mimetype.toLowerCase();
+    const looksLikeMedia = type.startsWith("audio/") || type.startsWith("video/");
+    if (looksLikeMedia || ALLOWED_EXT.test(file.originalname)) {
       cb(null, true);
       return;
     }
