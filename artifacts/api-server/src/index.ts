@@ -19,12 +19,28 @@ if (Number.isNaN(port) || port <= 0) {
 // Heal any transcriptions left stuck in "processing" by a previous restart
 // before we start accepting new uploads.
 void reconcileStaleTranscriptions().finally(() => {
-  app.listen(port, (err) => {
-    if (err) {
-      logger.error({ err }, "Error listening on port");
-      process.exit(1);
-    }
-
+  const server = app.listen(port, () => {
     logger.info({ port }, "Server listening");
   });
+
+  server.on("error", (err) => {
+    logger.error({ err }, "Error listening on port");
+    process.exit(1);
+  });
+
+  // Release the port promptly on restart. Without an explicit shutdown a
+  // SIGTERM can leave the listening socket bound (or the process orphaned),
+  // so the next start fails with EADDRINUSE and uploads stop working.
+  let shuttingDown = false;
+  const shutdown = (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info({ signal }, "Shutting down");
+    server.close(() => process.exit(0));
+    // Don't wait forever for in-flight requests (e.g. long uploads).
+    setTimeout(() => process.exit(0), 5000).unref();
+  };
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 });
