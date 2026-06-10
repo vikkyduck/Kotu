@@ -1,6 +1,12 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { useApp } from '@/hooks/use-app';
 import { Icon } from '@/lib/icons';
-import { useListTranscriptions } from '@workspace/api-client-react';
+import {
+  useListTranscriptions,
+  useDeleteTranscription,
+  getListTranscriptionsQueryKey,
+  type Transcription,
+} from '@workspace/api-client-react';
 
 function formatDate(value: string | Date): string {
   const d = typeof value === 'string' ? new Date(value) : value;
@@ -8,11 +14,31 @@ function formatDate(value: string | Date): string {
 }
 
 export function Home() {
-  const { screen, go, openTranscription, newTranscription } = useApp();
+  const { screen, go, openTranscription, newTranscription, toast } = useApp();
   const { data: transcriptions } = useListTranscriptions();
+  const queryClient = useQueryClient();
+  const deleteTranscription = useDeleteTranscription();
 
   const history = transcriptions ?? [];
   const hasHistory = history.length > 0;
+
+  const handleDelete = (e: React.MouseEvent, t: Transcription) => {
+    e.stopPropagation();
+    const ok = window.confirm(
+      `Удалить «${t.title}»? Расшифровку нельзя будет вернуть.`,
+    );
+    if (!ok) return;
+    deleteTranscription.mutate(
+      { id: t.id },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListTranscriptionsQueryKey() });
+          toast('Расшифровка удалена');
+        },
+        onError: () => toast('Не удалось удалить. Попробуйте ещё раз.'),
+      },
+    );
+  };
 
   if (screen !== 's-home') return null;
 
@@ -63,6 +89,16 @@ export function Home() {
                 <div className="r" key={t.id} onClick={() => openTranscription(t.id)}>
                   <span className="ri" data-icon="mic"><Icon name="mic" /></span>
                   <span className="rt"><b>{t.title}</b><span>{subtitle}</span></span>
+                  <button
+                    className="rdel"
+                    type="button"
+                    aria-label="Удалить расшифровку"
+                    title="Удалить"
+                    disabled={deleteTranscription.isPending}
+                    onClick={(e) => handleDelete(e, t)}
+                  >
+                    <Icon name="trash" />
+                  </button>
                   <span className="chev" data-icon="chevron"><Icon name="chevron" /></span>
                 </div>
               );

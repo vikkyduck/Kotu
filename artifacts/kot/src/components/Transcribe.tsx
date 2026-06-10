@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   useGetTranscription,
   useUpdateTranscription,
+  useDeleteTranscription,
   getGetTranscriptionQueryKey,
   getListTranscriptionsQueryKey,
   type Transcription,
@@ -304,7 +305,7 @@ function Stepper({ view }: { view: string }) {
     <div className="stepper" id="tcSteps">
       {[{ lbl: 'Запись' }, { lbl: 'Проверка' }, { lbl: 'Готово' }].map((s, i) => {
         const done = allDone || i < n;
-        const active = allDone ? i === 2 : i === n;
+        const active = allDone ? false : i === n;
         const isLoading = active && loading;
         return (
           <React.Fragment key={i}>
@@ -330,11 +331,32 @@ function ResultView({
   toast: (msg: string) => void;
 }) {
   const { activeTranscriptionId } = useApp();
+  const queryClient = useQueryClient();
   const id = activeTranscriptionId ?? 0;
   const { data, isLoading } = useGetTranscription(id, {
     query: { enabled: id > 0, queryKey: getGetTranscriptionQueryKey(id) },
   });
   const update = useUpdateTranscription();
+  const deleteTranscription = useDeleteTranscription();
+
+  const handleDelete = () => {
+    if (!data) return;
+    const ok = window.confirm(
+      `Удалить «${data.title}»? Расшифровку нельзя будет вернуть.`,
+    );
+    if (!ok) return;
+    deleteTranscription.mutate(
+      { id },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListTranscriptionsQueryKey() });
+          toast('Расшифровка удалена');
+          onDone();
+        },
+        onError: () => toast('Не удалось удалить. Попробуйте ещё раз.'),
+      },
+    );
+  };
 
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
 
@@ -420,6 +442,14 @@ function ResultView({
           <Icon name="download" /> Сохранить текст
         </button>
         <button className="btn" onClick={onDone}>Готово</button>
+        <button
+          className="btn danger"
+          onClick={handleDelete}
+          disabled={deleteTranscription.isPending}
+          title="Удалить расшифровку"
+        >
+          <Icon name="trash" /> Удалить
+        </button>
       </div>
     </div>
   );

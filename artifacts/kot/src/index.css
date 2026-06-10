@@ -168,6 +168,10 @@ h1.hello{font-family:var(--serif);font-size:30px;font-weight:600;letter-spacing:
 .resume .rt span{font-size:12.5px;color:var(--muted)}
 .resume .chev{color:var(--muted);opacity:.55}
 .resume .chev .ic-svg{width:18px;height:18px}
+.resume .rdel{flex-shrink:0;width:34px;height:34px;border-radius:10px;border:none;background:transparent;color:var(--muted);
+  display:grid;place-items:center;cursor:pointer;opacity:.6;transition:.14s var(--ease)}
+.resume .rdel .ic-svg{width:17px;height:17px}
+.resume .rdel:hover{opacity:1;color:var(--danger,#c0392b);background:var(--panel-2)}
 
 .howlink{display:inline-flex;align-items:center;gap:7px;margin-top:26px;color:var(--accent);font-size:14px;cursor:pointer;background:none;border:none;font-family:inherit;padding:0}
 .howlink .ic-svg{width:16px;height:16px}
@@ -221,6 +225,8 @@ h1.hello{font-family:var(--serif);font-size:30px;font-weight:600;letter-spacing:
 .btn.big{width:100%;padding:18px;font-size:17px;border-radius:16px}
 .btn.ghost{border-color:transparent;background:transparent;color:var(--accent);box-shadow:none}
 .btn.ghost:hover{transform:none;background:var(--panel-2)}
+.btn.danger{color:var(--danger,#c0392b);border-color:transparent;background:transparent;box-shadow:none}
+.btn.danger:hover{background:rgba(192,57,43,.10);filter:none;transform:none}
 .btn.disabled,.btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
 .btnrow{display:flex;gap:10px;margin-top:18px}
 
