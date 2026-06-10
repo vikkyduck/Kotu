@@ -67,8 +67,8 @@ export function Transcribe() {
   }, [screen, activeTranscriptionId]);
 
   const acceptFile = (f: File) => {
-    if (f.size > 25 * 1024 * 1024) {
-      setError('Файл слишком большой — максимум 25 МБ. Попробуйте сжать запись.');
+    if (f.size > 300 * 1024 * 1024) {
+      setError('Файл слишком большой — максимум 300 МБ. Попробуйте сжать запись.');
       return;
     }
     setError(null);
@@ -96,6 +96,7 @@ export function Transcribe() {
     if (opts.spk === 'on') steps.push('Различаю, кто говорит…');
     if (opts.names === 'on') steps.push('Скрываю имена пациентов…');
     steps.push('Навожу порядок…');
+    steps.push('Длинную запись обрабатываю по частям — это может занять несколько минут…');
 
     let i = 0;
     setProcProgress(6);
@@ -188,7 +189,7 @@ export function Transcribe() {
             <div className="dz"><Icon name="upload" /></div>
             <b>Перетащите запись сюда</b>
             <div className="hint">или нажмите, чтобы выбрать файл · запись остаётся у вас</div>
-            <div className="hint">аудиофайл до 25 МБ — примерно час записи</div>
+            <div className="hint">можно длинные записи — я сама разобью запись на несколько часов</div>
           </div>
         </div>
       )}

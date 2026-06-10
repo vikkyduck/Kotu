@@ -1,3 +1,6 @@
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { rm } from "node:fs/promises";
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { eq, desc } from "drizzle-orm";
@@ -11,14 +14,22 @@ import {
   DeleteTranscriptionParams,
   ListTranscriptionsResponse,
 } from "@workspace/api-zod";
-import { transcribeAudio, structureTranscript } from "../../lib/transcription";
+import { transcribeRecording } from "../../lib/transcription";
 
-const MAX_FILE_BYTES = 25 * 1024 * 1024;
+// Long recordings are split server-side, so the practical limit is generous.
+const MAX_FILE_BYTES = 300 * 1024 * 1024;
+const MAX_FILE_MB = Math.round(MAX_FILE_BYTES / (1024 * 1024));
 
 const ALLOWED_EXT = /\.(mp3|m4a|wav|mp4|ogg|oga|webm|flac|aac|mpeg|mpga)$/i;
 
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: tmpdir(),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname) || "";
+      cb(null, `kot-upload-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+    },
+  }),
   limits: { fileSize: MAX_FILE_BYTES },
   fileFilter: (_req, file, cb) => {
     const isAudio = file.mimetype.startsWith("audio/") || file.mimetype === "video/mp4";
@@ -127,7 +138,7 @@ router.post(
         if (code === "LIMIT_FILE_SIZE") {
           res
             .status(413)
-            .json({ error: "Файл слишком большой. Максимальный размер — 25 МБ." });
+            .json({ error: `Файл слишком большой. Максимальный размер — ${MAX_FILE_MB} МБ.` });
           return;
         }
         if (err instanceof Error && err.message === "UNSUPPORTED_FILE_TYPE") {
@@ -152,21 +163,22 @@ router.post(
     const hideNames = req.body?.hideNames === "true";
     const markSpeakers = req.body?.markSpeakers === "true";
     const filename = req.file.originalname || "запись";
+    const inputPath = req.file.path;
 
     req.log.info({ filename, hideNames, markSpeakers }, "Transcribing audio");
 
-    let rawText: string;
+    let segments: TranscriptSegment[];
     try {
-      rawText = await transcribeAudio(req.file.buffer, filename);
+      segments = await transcribeRecording(inputPath, { hideNames, markSpeakers });
     } catch (err) {
       req.log.error({ err }, "Transcription failed");
       res
         .status(502)
         .json({ error: "Не удалось распознать запись. Попробуйте другой файл." });
       return;
+    } finally {
+      await rm(inputPath, { force: true }).catch(() => {});
     }
-
-    const segments = await structureTranscript(rawText, { hideNames, markSpeakers });
 
     const title = filename.replace(/\.[^.]+$/, "") || "Запись";
 
