@@ -214,7 +214,7 @@ export async function structureTranscript(
 
   if (hideNames) {
     rules.push(
-      'Скрой персональные данные: имена и фамилии людей, названия городов и адреса замени на слово «скрыто» (вместе с предлогом сохрани читаемость). Это важно для конфиденциальности пациентов.',
+      'Найди персональные данные: имена и фамилии людей, клички, названия городов и конкретные адреса. Каждое такое имя или название заключи в двойные квадратные скобки, например: [[Анна]], [[Москве]], [[доктору Лебедеву]]. НЕ удаляй и не заменяй их — только оберни в скобки. Предлоги, союзы и остальной текст оставь вне скобок. Никогда не используй двойные квадратные скобки ни для чего другого. Это нужно, чтобы потом аккуратно скрыть имена пациентов, сохранив возможность их увидеть.',
     );
   }
 
@@ -252,5 +252,51 @@ export async function structureTranscript(
     // fall through to plain-text fallback
   }
 
-  return [{ who: "", text: trimmed }];
+  // Fallback: structuring failed. Returning the raw transcript here would leak
+  // real names when hiding was requested, so mask before giving up.
+  const fallbackText = hideNames ? await maskPersonalData(trimmed) : trimmed;
+  return [{ who: "", text: fallbackText }];
+}
+
+const HAS_MARKER = /\[\[[\s\S]+?\]\]/;
+
+/**
+ * Best-effort masking for the degraded path where the structuring pass failed.
+ * Tries a dedicated model call that only wraps personal data in [[...]] markers;
+ * if that produces no markers (or throws), falls back to a conservative
+ * heuristic that wraps capitalized words mid-sentence. Over-masking is
+ * acceptable here — leaking a real patient name is not.
+ */
+async function maskPersonalData(text: string): Promise<string> {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-5.4",
+      max_completion_tokens: 8192,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Тебе дан текст на русском языке. Заключи каждое имя/фамилию человека, кличку, название города и конкретный адрес в двойные квадратные скобки, например [[Анна]], [[Москве]], [[доктору Лебедеву]]. Не удаляй и не меняй слова, ничего не добавляй — только расставь скобки вокруг персональных данных. Верни только этот текст без пояснений.",
+        },
+        { role: "user", content: text },
+      ],
+    });
+    const wrapped = response.choices[0]?.message?.content?.trim();
+    if (wrapped && HAS_MARKER.test(wrapped)) return wrapped;
+    return maskCapitalizedHeuristic(wrapped || text);
+  } catch {
+    return maskCapitalizedHeuristic(text);
+  }
+}
+
+/**
+ * Deterministic last-resort masker: wraps capitalized words that appear
+ * mid-sentence (in Russian these are almost always proper nouns). Skips words
+ * already inside [[...]] markers.
+ */
+function maskCapitalizedHeuristic(text: string): string {
+  return text.replace(
+    /([^.!?…\n[]\s+)(\p{Lu}[\p{Ll}\p{Lu}-]+)/gu,
+    (_match, before: string, word: string) => `${before}[[${word}]]`,
+  );
 }
