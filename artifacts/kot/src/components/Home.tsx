@@ -52,13 +52,21 @@ export function Home() {
         <div id="resumeBlock">
           <div className="label">Продолжить начатое</div>
           <div className="resume">
-            {history.map((t) => (
-              <div className="r" key={t.id} onClick={() => openTranscription(t.id)}>
-                <span className="ri" data-icon="mic"><Icon name="mic" /></span>
-                <span className="rt"><b>{t.title}</b><span>Расшифровка · {formatDate(t.createdAt)}</span></span>
-                <span className="chev" data-icon="chevron"><Icon name="chevron" /></span>
-              </div>
-            ))}
+            {history.map((t) => {
+              const subtitle =
+                t.status === 'processing'
+                  ? 'Расшифровываю…'
+                  : t.status === 'error'
+                    ? 'Не удалось — откройте, чтобы повторить'
+                    : `Расшифровка · ${formatDate(t.createdAt)}`;
+              return (
+                <div className="r" key={t.id} onClick={() => openTranscription(t.id)}>
+                  <span className="ri" data-icon="mic"><Icon name="mic" /></span>
+                  <span className="rt"><b>{t.title}</b><span>{subtitle}</span></span>
+                  <span className="chev" data-icon="chevron"><Icon name="chevron" /></span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

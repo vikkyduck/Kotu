@@ -1,4 +1,4 @@
-import { pgTable, serial, text, boolean, jsonb, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, boolean, jsonb, integer, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -7,6 +7,8 @@ export type TranscriptSegment = {
   text: string;
 };
 
+export type TranscriptionStatus = "processing" | "done" | "error";
+
 export const transcriptionsTable = pgTable("transcriptions", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
@@ -14,6 +16,10 @@ export const transcriptionsTable = pgTable("transcriptions", {
   hideNames: boolean("hide_names").notNull().default(false),
   markSpeakers: boolean("mark_speakers").notNull().default(false),
   segments: jsonb("segments").$type<TranscriptSegment[]>().notNull().default([]),
+  status: text("status").$type<TranscriptionStatus>().notNull().default("done"),
+  progress: integer("progress").notNull().default(100),
+  statusMessage: text("status_message").notNull().default(""),
+  error: text("error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()

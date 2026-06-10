@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { TranscriptionStatus } from './transcriptionStatus';
 import type { TranscriptSegment } from './transcriptSegment';
 
 export interface Transcription {
@@ -14,6 +15,10 @@ export interface Transcription {
   hideNames: boolean;
   markSpeakers: boolean;
   segments: TranscriptSegment[];
+  status: TranscriptionStatus;
+  progress: number;
+  statusMessage: string;
+  error?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

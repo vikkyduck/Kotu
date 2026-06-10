@@ -13,17 +13,19 @@ import { Icon } from '@/lib/icons';
 import { Celebrate } from '@/lib/celebrate';
 
 const ACCEPT = 'audio/*,.m4a,.mp3,.wav,.mp4,.ogg,.webm,.flac';
+const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
 
 function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} КБ`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} ГБ`;
 }
 
 export function Transcribe() {
   const { screen, go, toast, activeTranscriptionId, openTranscription, newTranscription } = useApp();
   const queryClient = useQueryClient();
 
-  const [view, setView] = useState<'tcUpload' | 'tcReady' | 'tcProc' | 'tcResult'>('tcUpload');
+  const [view, setView] = useState<'tcUpload' | 'tcReady'>('tcUpload');
   const [sub, setSub] = useState<string | null>('Загрузите аудио — я переведу его в текст.');
 
   const [file, setFile] = useState<File | null>(null);
@@ -31,44 +33,57 @@ export function Transcribe() {
   const [opts, setOpts] = useState({ names: 'on', spk: 'on' });
   const [optsOpen, setOptsOpen] = useState({ names: false, spk: false });
 
-  const [procStat, setProcStat] = useState('Слушаю запись…');
-  const [procProgress, setProcProgress] = useState(6);
+  // While the upload request itself is in flight (before we have a row to poll).
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const celebrated = useRef(false);
+  // Tracks the id we just created via upload, so we celebrate it on completion
+  // but never re-celebrate items reopened from the home screen.
+  const justUploadedId = useRef<number | null>(null);
 
-  const clearTimers = () => {
-    timers.current.forEach(clearTimeout);
-    timers.current = [];
-  };
-  const schedule = (fn: () => void, ms: number) => {
-    const id = setTimeout(fn, ms);
-    timers.current.push(id);
-  };
-
-  useEffect(() => () => clearTimers(), []);
+  // Poll the active transcription. Keeps refetching while the server is still
+  // processing (status === 'processing'), then stops once it's done or errored.
+  const id = activeTranscriptionId ?? 0;
+  const activeQuery = useGetTranscription(id, {
+    query: {
+      enabled: id > 0,
+      queryKey: getGetTranscriptionQueryKey(id),
+      refetchInterval: (query) =>
+        query.state.data?.status === 'processing' ? 1500 : false,
+    },
+  });
+  const active = activeQuery.data;
 
   // React to opening an existing transcription or starting a new one.
   useEffect(() => {
     if (screen !== 's-transcribe') return;
-    clearTimers();
     setError(null);
     if (activeTranscriptionId != null) {
-      celebrated.current = true; // do not celebrate for already-saved items
-      setView('tcResult');
+      // Only celebrate the recording we just finished uploading in this session.
+      if (activeTranscriptionId !== justUploadedId.current) {
+        celebrated.current = true;
+      }
       setSub(null);
     } else {
       setFile(null);
+      setUploading(false);
       setView('tcUpload');
       setSub('Загрузите аудио — я переведу его в текст.');
     }
   }, [screen, activeTranscriptionId]);
 
+  // Keep the transcriptions list fresh as the active item finishes or errors.
+  useEffect(() => {
+    if (active?.status === 'done' || active?.status === 'error') {
+      queryClient.invalidateQueries({ queryKey: getListTranscriptionsQueryKey() });
+    }
+  }, [active?.status, queryClient]);
+
   const acceptFile = (f: File) => {
-    if (f.size > 300 * 1024 * 1024) {
-      setError('Файл слишком большой — максимум 300 МБ. Попробуйте сжать запись.');
+    if (f.size > MAX_UPLOAD_BYTES) {
+      setError('Файл слишком большой — максимум 1 ГБ.');
       return;
     }
     setError(null);
@@ -86,30 +101,9 @@ export function Transcribe() {
 
   const runTranscribe = async () => {
     if (!file) return;
-    clearTimers();
-    setView('tcProc');
+    setUploading(true);
     setSub('Идёт работа — можно не ждать у экрана.');
     setError(null);
-
-    // Reassuring progress animation while the request is in flight.
-    const steps = ['Слушаю запись…', 'Записываю текст…'];
-    if (opts.spk === 'on') steps.push('Различаю, кто говорит…');
-    if (opts.names === 'on') steps.push('Скрываю имена пациентов…');
-    steps.push('Навожу порядок…');
-    steps.push('Длинную запись обрабатываю по частям — это может занять несколько минут…');
-
-    let i = 0;
-    setProcProgress(6);
-    setProcStat(steps[0]);
-    const tick = () => {
-      i++;
-      if (i < steps.length) {
-        setProcProgress(Math.min(92, Math.round((i / steps.length) * 100)));
-        setProcStat(steps[i]);
-        schedule(tick, 1400);
-      }
-    };
-    schedule(tick, 1400);
 
     try {
       const form = new FormData();
@@ -118,10 +112,9 @@ export function Transcribe() {
       form.append('markSpeakers', opts.spk === 'on' ? 'true' : 'false');
 
       const res = await fetch('/api/transcriptions/upload', { method: 'POST', body: form });
-      clearTimers();
 
       if (!res.ok) {
-        let msg = 'Не удалось расшифровать запись. Попробуйте ещё раз.';
+        let msg = 'Не удалось загрузить запись. Попробуйте ещё раз.';
         try {
           const data = await res.json();
           if (data?.error) msg = data.error;
@@ -132,40 +125,62 @@ export function Transcribe() {
       }
 
       const created = (await res.json()) as Transcription;
-      setProcProgress(100);
-      setProcStat('Готово');
 
       queryClient.setQueryData(getGetTranscriptionQueryKey(created.id), created);
       queryClient.invalidateQueries({ queryKey: getListTranscriptionsQueryKey() });
 
+      // Celebrate this one when it finishes; hand off to the polling view.
+      justUploadedId.current = created.id;
       celebrated.current = false;
-      schedule(() => {
-        openTranscription(created.id);
-      }, 450);
+      setUploading(false);
+      openTranscription(created.id);
     } catch (err) {
-      clearTimers();
+      setUploading(false);
       setError(err instanceof Error ? err.message : 'Что-то пошло не так.');
-      setView('tcReady');
       setSub('Можно попробовать ещё раз.');
     }
   };
 
+  const retry = () => {
+    justUploadedId.current = null;
+    newTranscription();
+  };
+
   if (screen !== 's-transcribe') return null;
+
+  // ---- Derive which phase to render -------------------------------------------
+  const isActive = activeTranscriptionId != null;
+  const status = active?.status;
+  const showResult = isActive && status === 'done';
+  const showError = isActive && status === 'error';
+  const showProcessing =
+    uploading || (isActive && (status === 'processing' || (!active && activeQuery.isLoading)));
+
+  const stepperView = showResult
+    ? 'tcResult'
+    : showProcessing || showError
+      ? 'tcProc'
+      : view;
+
+  const procMessage = uploading
+    ? 'Загружаю запись…'
+    : active?.statusMessage || 'Готовлю запись…';
+  const procProgress = uploading ? 4 : Math.max(4, active?.progress ?? 4);
 
   return (
     <section className="screen active" id="s-transcribe">
       <h2 className="h2">Расшифровать запись</h2>
       {sub && <p className="sub" id="tcSub">{sub}</p>}
 
-      <Stepper view={view} />
+      <Stepper view={stepperView} />
 
-      {error && view !== 'tcResult' && (
+      {error && !isActive && (
         <p className="tnote" style={{ color: 'var(--danger, #c0392b)' }}>
           <Icon name="info" /> {error}
         </p>
       )}
 
-      {view === 'tcUpload' && (
+      {!isActive && !uploading && view === 'tcUpload' && (
         <div id="tcUpload">
           <input
             ref={fileInputRef}
@@ -189,12 +204,12 @@ export function Transcribe() {
             <div className="dz"><Icon name="upload" /></div>
             <b>Перетащите запись сюда</b>
             <div className="hint">или нажмите, чтобы выбрать файл · запись остаётся у вас</div>
-            <div className="hint">можно длинные записи — я сама разобью запись на несколько часов</div>
+            <div className="hint">любой длины — даже сеанс или лекция на 2–3 часа</div>
           </div>
         </div>
       )}
 
-      {view === 'tcReady' && file && (
+      {!isActive && !uploading && view === 'tcReady' && file && (
         <div id="tcReady">
           <div className="filecard" style={{ marginBottom: '16px' }}>
             <span className="fi"><Icon name="headphones" /></span>
@@ -248,23 +263,32 @@ export function Transcribe() {
 
           <button className="btn primary big" onClick={runTranscribe}>Расшифровать запись <Icon name="arrow" /></button>
           <p style={{ textAlign: 'center', fontSize: '13px', color: 'var(--muted)', margin: '12px 0 0' }}>
-            Распознавание занимает немного времени — пара минут на запись сеанса.
+            Распознавание занимает немного времени. Длинные записи я разберу по частям — можно не ждать у экрана.
           </p>
         </div>
       )}
 
-      {view === 'tcProc' && (
+      {showProcessing && (
         <div id="tcProc">
           <div className="panel proc">
             <div className="orb"><span className="core"></span></div>
-            <p className="pstat" id="procStat">{procStat}</p>
+            <p className="pstat" id="procStat">{procMessage}</p>
             <div className="pbar"><i id="procBar" style={{ width: `${procProgress}%` }}></i></div>
-            <p className="preassure">Идёт распознавание — это может занять минуту-другую. Я сохраню готовый текст, и он будет ждать вас здесь.</p>
+            <p className="preassure">Идёт распознавание. Длинную запись я бережно разберу по частям и соберу единый текст — он будет ждать вас здесь.</p>
           </div>
         </div>
       )}
 
-      {view === 'tcResult' && (
+      {showError && (
+        <div id="tcError">
+          <p className="tnote" style={{ color: 'var(--danger, #c0392b)' }}>
+            <Icon name="info" /> {active?.error || 'Не удалось распознать запись. Попробуйте ещё раз.'}
+          </p>
+          <button className="btn primary big" onClick={retry}>Попробовать ещё раз <Icon name="arrow" /></button>
+        </div>
+      )}
+
+      {showResult && (
         <ResultView celebrated={celebrated} onDone={() => go('s-home')} toast={toast} />
       )}
     </section>
