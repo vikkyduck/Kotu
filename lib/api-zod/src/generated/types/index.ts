@@ -9,5 +9,6 @@
 export * from './error';
 export * from './healthStatus';
 export * from './transcription';
+export * from './transcriptionStatus';
 export * from './transcriptionUpdate';
 export * from './transcriptSegment';

@@ -31,6 +31,10 @@ export const ListTranscriptionsResponseItem = zod.object({
   "who": zod.string(),
   "text": zod.string()
 })),
+  "status": zod.enum(['processing', 'done', 'error']),
+  "progress": zod.number(),
+  "statusMessage": zod.string(),
+  "error": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -54,6 +58,10 @@ export const GetTranscriptionResponse = zod.object({
   "who": zod.string(),
   "text": zod.string()
 })),
+  "status": zod.enum(['processing', 'done', 'error']),
+  "progress": zod.number(),
+  "statusMessage": zod.string(),
+  "error": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -84,6 +92,10 @@ export const UpdateTranscriptionResponse = zod.object({
   "who": zod.string(),
   "text": zod.string()
 })),
+  "status": zod.enum(['processing', 'done', 'error']),
+  "progress": zod.number(),
+  "statusMessage": zod.string(),
+  "error": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })

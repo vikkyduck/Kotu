@@ -1,1 +1,2 @@
 - [OpenAI AI Integration proxy quirks](openai-integration-quirks.md) — proxy rejects TTS (/audio/speech); transcription works and detects format from filename.
+- [Long recording transcription](long-recording-transcription.md) — >25MB audio is ffmpeg-chunked + transcribed as a polled background job (status/progress on the row), not one long request.

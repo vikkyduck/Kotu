@@ -1,9 +1,8 @@
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { rm } from "node:fs/promises";
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { eq, desc } from "drizzle-orm";
+import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { db, transcriptionsTable, type TranscriptSegment } from "@workspace/db";
 import {
   GetTranscriptionParams,
@@ -14,22 +13,17 @@ import {
   DeleteTranscriptionParams,
   ListTranscriptionsResponse,
 } from "@workspace/api-zod";
-import { transcribeRecording } from "../../lib/transcription";
+import { transcribeLongAudio, ChunkError } from "../../lib/transcription";
+import { logger } from "../../lib/logger";
 
-// Long recordings are split server-side, so the practical limit is generous.
-const MAX_FILE_BYTES = 300 * 1024 * 1024;
-const MAX_FILE_MB = Math.round(MAX_FILE_BYTES / (1024 * 1024));
+// Long recordings (2–3 hours) are split server-side, so allow large uploads.
+// Files are streamed to disk (not held in memory) and split with ffmpeg.
+const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 
 const ALLOWED_EXT = /\.(mp3|m4a|wav|mp4|ogg|oga|webm|flac|aac|mpeg|mpga)$/i;
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: tmpdir(),
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname) || "";
-      cb(null, `kot-upload-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
-    },
-  }),
+  dest: tmpdir(),
   limits: { fileSize: MAX_FILE_BYTES },
   fileFilter: (_req, file, cb) => {
     const isAudio = file.mimetype.startsWith("audio/") || file.mimetype === "video/mp4";
@@ -129,6 +123,52 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
+/**
+ * Process an uploaded recording in the background: split into chunks, transcribe,
+ * stitch, and persist progress on the row so the client can poll it. The uploaded
+ * temp file is always cleaned up at the end.
+ */
+async function processTranscription(
+  id: number,
+  inputPath: string,
+  filename: string,
+  opts: { hideNames: boolean; markSpeakers: boolean },
+): Promise<void> {
+  try {
+    const segments = await transcribeLongAudio(
+      inputPath,
+      filename,
+      opts,
+      async ({ progress, message }) => {
+        await db
+          .update(transcriptionsTable)
+          .set({ progress, statusMessage: message })
+          .where(eq(transcriptionsTable.id, id));
+      },
+    );
+
+    await db
+      .update(transcriptionsTable)
+      .set({ segments, status: "done", progress: 100, statusMessage: "", error: null })
+      .where(eq(transcriptionsTable.id, id));
+
+    logger.info({ id, segments: segments.length }, "Transcription finished");
+  } catch (err) {
+    const userMessage =
+      err instanceof ChunkError
+        ? err.userMessage
+        : "Не удалось распознать запись. Попробуйте другой файл.";
+    logger.error({ err, id }, "Transcription failed");
+    await db
+      .update(transcriptionsTable)
+      .set({ status: "error", statusMessage: "", error: userMessage })
+      .where(eq(transcriptionsTable.id, id))
+      .catch((dbErr) => logger.error({ dbErr, id }, "Failed to persist error state"));
+  } finally {
+    await rm(inputPath, { force: true }).catch(() => {});
+  }
+}
+
 router.post(
   "/transcriptions/upload",
   (req, res, next) => {
@@ -138,7 +178,7 @@ router.post(
         if (code === "LIMIT_FILE_SIZE") {
           res
             .status(413)
-            .json({ error: `Файл слишком большой. Максимальный размер — ${MAX_FILE_MB} МБ.` });
+            .json({ error: "Файл слишком большой. Максимальный размер — 1 ГБ." });
           return;
         }
         if (err instanceof Error && err.message === "UNSUPPORTED_FILE_TYPE") {
@@ -164,28 +204,27 @@ router.post(
     const markSpeakers = req.body?.markSpeakers === "true";
     const filename = req.file.originalname || "запись";
     const inputPath = req.file.path;
-
-    req.log.info({ filename, hideNames, markSpeakers }, "Transcribing audio");
-
-    let segments: TranscriptSegment[];
-    try {
-      segments = await transcribeRecording(inputPath, { hideNames, markSpeakers });
-    } catch (err) {
-      req.log.error({ err }, "Transcription failed");
-      res
-        .status(502)
-        .json({ error: "Не удалось распознать запись. Попробуйте другой файл." });
-      return;
-    } finally {
-      await rm(inputPath, { force: true }).catch(() => {});
-    }
-
     const title = filename.replace(/\.[^.]+$/, "") || "Запись";
+
+    req.log.info({ filename, hideNames, markSpeakers }, "Queued transcription");
 
     const [row] = await db
       .insert(transcriptionsTable)
-      .values({ title, filename, hideNames, markSpeakers, segments })
+      .values({
+        title,
+        filename,
+        hideNames,
+        markSpeakers,
+        segments: [] as TranscriptSegment[],
+        status: "processing",
+        progress: 4,
+        statusMessage: "Готовлю запись…",
+      })
       .returning();
+
+    // Kick off processing without blocking the response — long recordings can take
+    // several minutes, far longer than a single request should stay open.
+    void processTranscription(row.id, inputPath, filename, { hideNames, markSpeakers });
 
     res.status(201).json(GetTranscriptionResponse.parse(row));
   },

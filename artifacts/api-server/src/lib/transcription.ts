@@ -1,76 +1,62 @@
-import { spawn } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { toFile } from "openai";
 import { openai } from "@workspace/integrations-openai-ai-server/audio";
 import type { TranscriptSegment } from "@workspace/db";
+
+const execFileAsync = promisify(execFile);
+
+// OpenAI's transcription endpoint rejects files over 25 MB; keep a safety margin.
+const CHUNK_SAFE_BYTES = 24 * 1024 * 1024;
+// ffmpeg re-encodes each segment to mono mp3 at 64 kbps (~8 KB/s), so a 600 s
+// segment is roughly 4.6 MB — comfortably under the limit, with predictable size.
+const SEGMENT_SECONDS = 600;
 
 // Higher-quality speech-to-text model. Like its "mini" sibling it caps each
 // request at 1500 seconds (25 minutes), so longer recordings must be split.
 const TRANSCRIBE_MODEL = "gpt-4o-transcribe";
 
-// Length of each audio chunk. Kept well under the model's 25-minute limit so
-// even imprecise split boundaries stay safe.
-const CHUNK_SECONDS = 600;
-
-// How many chunks to transcribe / structure at once. Keeps long recordings
-// fast enough to finish within a single request without hammering the API.
-const CONCURRENCY = 3;
-
-function runFfmpeg(args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
-    let stderr = "";
-    proc.stderr.on("data", (d: Buffer) => {
-      stderr += d.toString();
-    });
-    proc.on("error", reject);
-    proc.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`ffmpeg exited with code ${code}: ${stderr.slice(-500)}`));
-      }
-    });
+/**
+ * Transcribe a single audio chunk that is already safely under the size/duration
+ * limits. The filename is passed through so the model can detect the format.
+ */
+async function transcribeAudio(buffer: Buffer, filename: string): Promise<string> {
+  const file = await toFile(buffer, filename);
+  const response = await openai.audio.transcriptions.create({
+    file,
+    model: TRANSCRIBE_MODEL,
   });
+  return response.text ?? "";
+}
+
+export interface AudioChunk {
+  buffer: Buffer;
+  filename: string;
 }
 
 /**
- * Run an async mapper over items with a bounded number of concurrent calls,
- * preserving input order in the results.
+ * Split a (possibly very long) recording into pieces that each stay safely under
+ * the transcription size limit. Small files are returned untouched as a single
+ * chunk; larger files are re-encoded and time-segmented with ffmpeg so a 2–3 hour
+ * recording becomes a handful of small, independently transcribable mp3 chunks.
  */
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  async function worker(): Promise<void> {
-    for (;;) {
-      const idx = next++;
-      if (idx >= items.length) return;
-      results[idx] = await fn(items[idx]!, idx);
-    }
+export async function splitAudioIntoChunks(
+  inputPath: string,
+  originalName: string,
+): Promise<AudioChunk[]> {
+  const { size } = await stat(inputPath);
+  if (size <= CHUNK_SAFE_BYTES) {
+    const buffer = await readFile(inputPath);
+    return [{ buffer, filename: originalName }];
   }
-  const count = Math.max(1, Math.min(limit, items.length));
-  const workers = Array.from({ length: count }, () => worker());
-  await Promise.all(workers);
-  return results;
-}
 
-/**
- * Normalize the recording to mono 16 kHz MP3 and split it into time-based
- * chunks small enough for the transcription model. 16 kHz mono is exactly what
- * speech models consume internally, so this shrinks the data dramatically
- * without hurting transcription quality. Returns ordered chunk paths; the
- * caller is responsible for removing the returned directory.
- */
-async function splitIntoChunks(inputPath: string): Promise<{ dir: string; files: string[] }> {
-  const dir = await mkdtemp(path.join(tmpdir(), "kot-chunks-"));
+  const workDir = await mkdtemp(path.join(tmpdir(), "kot-chunks-"));
   try {
-    await runFfmpeg([
+    const pattern = path.join(workDir, "chunk_%03d.mp3");
+    await execFileAsync("ffmpeg", [
       "-hide_banner",
       "-loglevel",
       "error",
@@ -81,34 +67,117 @@ async function splitIntoChunks(inputPath: string): Promise<{ dir: string; files:
       "1",
       "-ar",
       "16000",
+      "-c:a",
+      "libmp3lame",
       "-b:a",
       "64k",
       "-f",
       "segment",
       "-segment_time",
-      String(CHUNK_SECONDS),
-      path.join(dir, "chunk-%04d.mp3"),
+      String(SEGMENT_SECONDS),
+      "-reset_timestamps",
+      "1",
+      pattern,
     ]);
-    const files = (await readdir(dir))
-      .filter((f) => f.endsWith(".mp3"))
-      .sort()
-      .map((f) => path.join(dir, f));
-    return { dir, files };
-  } catch (err) {
-    // Don't leak the temp dir if ffmpeg (or readdir) fails.
-    await rm(dir, { recursive: true, force: true });
-    throw err;
+
+    const files = (await readdir(workDir)).filter((f) => f.endsWith(".mp3")).sort();
+    if (files.length === 0) {
+      throw new Error("ffmpeg produced no audio chunks");
+    }
+
+    const base = originalName.replace(/\.[^.]+$/, "") || "запись";
+    const chunks: AudioChunk[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const buffer = await readFile(path.join(workDir, files[i]));
+      chunks.push({ buffer, filename: `${base}_part${i + 1}.mp3` });
+    }
+    return chunks;
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
   }
 }
 
-async function transcribeChunk(filePath: string): Promise<string> {
-  const buf = await readFile(filePath);
-  const file = await toFile(buf, path.basename(filePath));
-  const response = await openai.audio.transcriptions.create({
-    file,
-    model: TRANSCRIBE_MODEL,
-  });
-  return response.text ?? "";
+/**
+ * Error carrying a friendly, user-facing Russian message describing which part of
+ * a long recording failed and at what stage.
+ */
+export class ChunkError extends Error {
+  readonly userMessage: string;
+  constructor(part: number, total: number, verb: string, cause: unknown) {
+    super(`chunk ${part}/${total} failed to ${verb}`);
+    this.name = "ChunkError";
+    this.cause = cause;
+    this.userMessage =
+      total > 1
+        ? `Не удалось ${verb} часть ${part} из ${total}. Попробуйте загрузить запись ещё раз.`
+        : `Не удалось ${verb} запись. Попробуйте другой файл.`;
+  }
+}
+
+export interface TranscribeProgress {
+  progress: number;
+  message: string;
+}
+
+/**
+ * Transcribe a recording of any length: split into chunks, transcribe and
+ * structure each chunk with the same privacy/speaker options, then stitch the
+ * resulting segments back together in order. Reports calm progress via the
+ * optional callback. Throws a {@link ChunkError} if a chunk fails.
+ */
+export async function transcribeLongAudio(
+  inputPath: string,
+  originalName: string,
+  opts: StructureOptions,
+  onProgress?: (p: TranscribeProgress) => void | Promise<void>,
+): Promise<TranscriptSegment[]> {
+  await onProgress?.({ progress: 6, message: "Готовлю запись…" });
+
+  const chunks = await splitAudioIntoChunks(inputPath, originalName);
+  const total = chunks.length;
+  const multi = total > 1;
+
+  const all: TranscriptSegment[] = [];
+  for (let i = 0; i < total; i++) {
+    const human = `${i + 1} из ${total}`;
+    // Spread chunk work across the 10–92% band; save/finalize happens after.
+    const bandStart = 10 + Math.round((i / total) * 82);
+    const bandHalf = bandStart + Math.round((0.5 / total) * 82);
+
+    await onProgress?.({
+      progress: bandStart,
+      message: multi ? `Слушаю часть ${human}…` : "Слушаю запись…",
+    });
+
+    let rawText: string;
+    try {
+      rawText = await transcribeAudio(chunks[i].buffer, chunks[i].filename);
+    } catch (err) {
+      throw new ChunkError(i + 1, total, "распознать", err);
+    }
+
+    if (rawText.trim() === "") continue; // silence in this part — skip it
+
+    await onProgress?.({
+      progress: bandHalf,
+      message: multi ? `Навожу порядок в части ${human}…` : "Навожу порядок…",
+    });
+
+    let segs: TranscriptSegment[];
+    try {
+      segs = await structureTranscript(rawText, opts);
+    } catch (err) {
+      throw new ChunkError(i + 1, total, "оформить", err);
+    }
+    all.push(...segs);
+  }
+
+  if (all.length === 0) {
+    all.push({ who: "", text: "В записи не удалось распознать речь." });
+  }
+
+  await onProgress?.({ progress: 96, message: "Сохраняю текст…" });
+  return all;
 }
 
 interface StructureOptions {
@@ -184,40 +253,4 @@ export async function structureTranscript(
   }
 
   return [{ who: "", text: trimmed }];
-}
-
-/**
- * Full pipeline for a recording of any length: split into safe chunks,
- * transcribe each chunk (in parallel, in order), then structure each chunk's
- * text and stitch the resulting segments back together into one transcript.
- */
-export async function transcribeRecording(
-  inputPath: string,
-  options: StructureOptions,
-): Promise<TranscriptSegment[]> {
-  const { dir, files } = await splitIntoChunks(inputPath);
-  try {
-    if (files.length === 0) {
-      return [{ who: "", text: "В записи не удалось распознать речь." }];
-    }
-
-    const texts = await mapWithConcurrency(files, CONCURRENCY, (f) => transcribeChunk(f));
-    const nonEmpty = texts.filter((t) => t.trim() !== "");
-
-    if (nonEmpty.length === 0) {
-      return [{ who: "", text: "В записи не удалось распознать речь." }];
-    }
-
-    const segmentChunks = await mapWithConcurrency(nonEmpty, CONCURRENCY, (t) =>
-      structureTranscript(t, options),
-    );
-    const all = segmentChunks.flat();
-
-    if (all.length === 0) {
-      return [{ who: "", text: "В записи не удалось распознать речь." }];
-    }
-    return all;
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
 }

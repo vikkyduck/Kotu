@@ -18,6 +18,15 @@ export interface TranscriptSegment {
   text: string;
 }
 
+export type TranscriptionStatus = typeof TranscriptionStatus[keyof typeof TranscriptionStatus];
+
+
+export const TranscriptionStatus = {
+  processing: 'processing',
+  done: 'done',
+  error: 'error',
+} as const;
+
 export interface Transcription {
   id: number;
   title: string;
@@ -25,6 +34,10 @@ export interface Transcription {
   hideNames: boolean;
   markSpeakers: boolean;
   segments: TranscriptSegment[];
+  status: TranscriptionStatus;
+  progress: number;
+  statusMessage: string;
+  error?: string | null;
   createdAt: string;
   updatedAt: string;
 }
