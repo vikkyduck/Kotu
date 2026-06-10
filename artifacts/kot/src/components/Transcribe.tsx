@@ -226,7 +226,7 @@ export function Transcribe() {
                 <Icon name="check" />
               </span>
               <div className="st">
-                <p id="txtNames" dangerouslySetInnerHTML={{ __html: opts.names === 'on' ? 'Скрою имена и города пациентов — в тексте будет «<b>скрыто</b>».' : 'Оставлю текст как есть — имена скрывать не буду.' }} />
+                <p id="txtNames" dangerouslySetInnerHTML={{ __html: opts.names === 'on' ? 'Скрою имена и города пациентов — в тексте будет «<b>имя скрыто</b>», но вы сможете посмотреть их по клику.' : 'Оставлю текст как есть — имена скрывать не буду.' }} />
                 <button className="chg" onClick={() => setOptsOpen(s => ({ ...s, names: !s.names }))}>
                   {opts.names === 'on' ? 'это моя лекция, скрывать не нужно' : 'скрыть имена'}
                 </button>
@@ -386,8 +386,10 @@ function ResultView({
 
   const downloadText = () => {
     if (!data) return;
+    const reveal = (t: string) =>
+      t.replace(/\[\[([\s\S]+?)\]\]/g, data.hideNames ? 'имя скрыто' : '$1');
     const body = segments
-      .map((s) => (s.who ? `${s.who}: ${s.text}` : s.text))
+      .map((s) => (s.who ? `${s.who}: ${reveal(s.text)}` : reveal(s.text)))
       .join('\n\n');
     const blob = new Blob([body], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -417,23 +419,20 @@ function ResultView({
         <div><h3>Готово — вот ваша расшифровка</h3><p>Уже сохранена. Можно спокойно читать и править.</p></div>
       </div>
       <p className="tnote"><Icon name="info" /> Если слово распознано неверно — просто исправьте его прямо в тексте, как в обычном документе. Всё сохраняется само.</p>
+      {data.hideNames && (
+        <p className="tnote"><Icon name="eye" /> Имена пациентов скрыты. Нажмите «имя скрыто», чтобы увидеть — это видно только вам.</p>
+      )}
 
       <div className="panel" id="transcript">
         {segments.map((l, idx) => (
-          <div className="tline" key={idx}>
-            {data.markSpeakers && l.who && (
-              <div className={`who ${l.who !== 'Вы' ? 'b' : ''}`}>{l.who}</div>
-            )}
-            <div
-              className="txt"
-              contentEditable
-              suppressContentEditableWarning
-              spellCheck={false}
-              onBlur={(e) => saveSegment(idx, e.currentTarget.textContent ?? '')}
-            >
-              {l.text}
-            </div>
-          </div>
+          <TranscriptLine
+            key={idx}
+            seg={l}
+            index={idx}
+            showWho={!!data.markSpeakers}
+            hideNames={!!data.hideNames}
+            onSave={saveSegment}
+          />
         ))}
       </div>
 
@@ -451,6 +450,109 @@ function ResultView({
           <Icon name="trash" /> Удалить
         </button>
       </div>
+    </div>
+  );
+}
+
+type Token = { type: 'text'; value: string } | { type: 'name'; value: string };
+
+// Split transcript text into plain runs and [[name]] markers (which carry the
+// real, hideable personal data).
+function parseTokens(text: string): Token[] {
+  const tokens: Token[] = [];
+  const re = /\[\[([\s\S]+?)\]\]/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) tokens.push({ type: 'text', value: text.slice(last, m.index) });
+    tokens.push({ type: 'name', value: m[1] });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) tokens.push({ type: 'text', value: text.slice(last) });
+  return tokens;
+}
+
+function TranscriptLine({
+  seg,
+  index,
+  showWho,
+  hideNames,
+  onSave,
+}: {
+  seg: TranscriptSegment;
+  index: number;
+  showWho: boolean;
+  hideNames: boolean;
+  onSave: (index: number, text: string) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Build the editable content imperatively so contentEditable stays uncontrolled
+  // and the masked name chips render as atomic, non-editable elements.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.replaceChildren();
+    for (const tok of parseTokens(seg.text)) {
+      if (tok.type === 'text') {
+        el.appendChild(document.createTextNode(tok.value));
+      } else if (hideNames) {
+        const span = document.createElement('span');
+        span.className = 'hidden-name';
+        span.setAttribute('contenteditable', 'false');
+        span.dataset.name = tok.value;
+        span.title = 'нажмите, чтобы увидеть — виден только вам';
+        span.textContent = 'имя скрыто';
+        span.addEventListener('click', () => {
+          const shown = span.classList.toggle('shown');
+          span.textContent = shown
+            ? `${span.dataset.name} · виден только вам`
+            : 'имя скрыто';
+        });
+        el.appendChild(span);
+      } else {
+        el.appendChild(document.createTextNode(tok.value));
+      }
+    }
+  }, [seg.text, hideNames]);
+
+  const serialize = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.nodeValue ?? '';
+    if (node instanceof HTMLElement) {
+      if (node.classList.contains('hidden-name')) return `[[${node.dataset.name ?? ''}]]`;
+      if (node.tagName === 'BR') return '\n';
+      let inner = '';
+      node.childNodes.forEach((c) => {
+        inner += serialize(c);
+      });
+      return /^(DIV|P)$/.test(node.tagName) ? `\n${inner}` : inner;
+    }
+    return '';
+  };
+
+  const handleBlur = () => {
+    const el = ref.current;
+    if (!el) return;
+    let text = '';
+    el.childNodes.forEach((n) => {
+      text += serialize(n);
+    });
+    onSave(index, text.replace(/^\n+/, ''));
+  };
+
+  return (
+    <div className="tline">
+      {showWho && seg.who && (
+        <div className={`who ${seg.who !== 'Вы' ? 'b' : ''}`}>{seg.who}</div>
+      )}
+      <div
+        ref={ref}
+        className="txt"
+        contentEditable
+        suppressContentEditableWarning
+        spellCheck={false}
+        onBlur={handleBlur}
+      />
     </div>
   );
 }

@@ -282,6 +282,8 @@ h1.hello{font-family:var(--serif);font-size:30px;font-weight:600;letter-spacing:
 .tline .who .tc{color:var(--muted);font-weight:400;margin-left:8px;font-variant-numeric:tabular-nums}
 .tline .txt{font-size:15.5px;line-height:1.6;outline:none;border-radius:7px;padding:3px 7px;margin:-3px -7px;transition:.14s var(--ease)}
 .tline .txt:focus{background:var(--panel-2);box-shadow:0 0 0 2px var(--accent-soft)}
+.hidden-name{background:var(--accent-soft);color:var(--accent-ink);border-radius:6px;padding:1px 7px;font-size:13.5px;cursor:pointer;white-space:nowrap;user-select:none}
+.hidden-name.shown{background:var(--amber-soft);color:var(--amber);white-space:normal}
 .tline .fix{margin-top:8px;display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--accent);
   cursor:pointer;background:none;border:none;font-family:inherit;padding:0;opacity:.0;transition:.14s var(--ease)}
 .tline:hover .fix{opacity:1}
