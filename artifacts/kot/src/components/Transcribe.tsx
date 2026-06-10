@@ -188,6 +188,7 @@ export function Transcribe() {
             <div className="dz"><Icon name="upload" /></div>
             <b>Перетащите запись сюда</b>
             <div className="hint">или нажмите, чтобы выбрать файл · запись остаётся у вас</div>
+            <div className="hint">аудиофайл до 25 МБ — примерно час записи</div>
           </div>
         </div>
       )}
