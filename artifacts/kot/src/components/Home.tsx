@@ -14,6 +14,14 @@ function formatDate(value: string | Date): string {
   return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
 }
 
+function greeting(): string {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return 'Доброе утро, Кот.';
+  if (hour >= 12 && hour < 18) return 'Добрый день, Кот.';
+  if (hour >= 18 && hour < 23) return 'Добрый вечер, Кот.';
+  return 'Доброй ночи, Кот.';
+}
+
 export function Home() {
   const { screen, go, toast, openTranscription, newTranscription } = useApp();
   const { data: transcriptions } = useListTranscriptions();
@@ -46,7 +54,7 @@ export function Home() {
 
   return (
     <section className="screen active" id="s-home">
-      <h1 className="hello">Добрый вечер, Кот.</h1>
+      <h1 className="hello">{greeting()}</h1>
       <p className="lead">С чего начнём сегодня?</p>
 
       <div className="promise">
