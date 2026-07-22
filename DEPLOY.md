@@ -20,3 +20,11 @@
 
 **Вернуться на облачную транскрибацию**: `AI_INTEGRATIONS_OPENAI_BASE_URL=https://206.189.181.64:8443/v1` + `systemctl restart kotu`.
 **Качество/скорость**: base ≈ 0.5× длительности записи на этом CPU; точность ниже gpt-4o-transcribe. Модель покрупнее (`small`) в 2 ГБ RAM не влезает — нужен апгрейд тарифа.
+
+## Апгрейд: faster-whisper large-v3-turbo (2026-07-22, вечер)
+
+- Тариф VDS поднят до 8 CPU / 12 ГБ RAM / 100 ГБ NVMe (2900 ₽/мес, оплачен год)
+- Движок заменён на **faster-whisper** (CTranslate2 int8) с моделью **large-v3-turbo** в БАТЧЕВОМ режиме (`BatchedInferencePipeline`, batch=8) — на QEMU-vCPU этой ноды батчинг даёт 4–5x против последовательного декодера (RTF 0.20 против ~1.0)
+- Замер end-to-end через Кота: запись 63 мин → **15 мин 11 сек** (вкл. gpt-оформление); полтора часа ≈ 21–22 мин
+- env сервиса: `WHISPER_MODEL=large-v3-turbo`, `WHISPER_BATCH=8`, `HF_HOME=/opt/whisper/cache` (модель с Hugging Face), MemoryMax=8G
+- Прежний вариант (openai/whisper base) больше не используется; venv общий
