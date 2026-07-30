@@ -17,7 +17,10 @@ const SEGMENT_SECONDS = 600;
 
 // Higher-quality speech-to-text model. Like its "mini" sibling it caps each
 // request at 1500 seconds (25 minutes), so longer recordings must be split.
-const TRANSCRIBE_MODEL = "gpt-4o-transcribe";
+// Модели задаются в конфигурации, а не в коде: поменять модель можно правкой
+// одной строки в .env и перезапуском, без пересборки приложения.
+const TRANSCRIBE_MODEL = process.env["MODEL_TRANSCRIBE"] ?? "gpt-4o-transcribe";
+const STRUCTURE_MODEL = process.env["MODEL_STRUCTURE"] ?? "gpt-5.4";
 
 /**
  * Transcribe a single audio chunk that is already safely under the size/duration
@@ -229,7 +232,7 @@ export async function structureTranscript(
   );
 
   const response = await openai.chat.completions.create({
-    model: "gpt-5.4",
+    model: STRUCTURE_MODEL,
     max_completion_tokens: 8192,
     response_format: { type: "json_object" },
     messages: [
