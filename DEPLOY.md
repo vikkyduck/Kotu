@@ -66,6 +66,7 @@
 | `/v1/*` | OpenAI (обратная совместимость, так настроено приложение) |
 | `/anthropic/*` | Claude — тексты лекций |
 | `/gemini/*` | Gemini — длинные документы, картинки |
+| `/perplexity/*` | Perplexity — поиск источников |
 
 Ключи: `AI_INTEGRATIONS_OPENAI_API_KEY` (есть), `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` — вводятся
 скриптом `./set-ai-key.sh` (вслепую, с живой проверкой). Правило двух зон не меняется:
