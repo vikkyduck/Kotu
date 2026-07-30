@@ -12,14 +12,16 @@ set -euo pipefail
 SERVER="${SERVER_USER:-root}@${SERVER_HOST:-5.129.198.180}"
 
 echo "Какой ключ подключаем?"
-echo "  1) Claude (Anthropic) — тексты лекций, оформление"
+echo "  1) Claude (Anthropic) — анализ текста, написание лекций, проверка достоверности"
 echo "  2) Gemini (Google)    — длинные документы, картинки"
-read -rp "Введите 1 или 2: " CHOICE
+echo "  3) Perplexity         — поиск источников с ссылками"
+read -rp "Введите 1, 2 или 3: " CHOICE
 
 case "$CHOICE" in
-  1) VAR=ANTHROPIC_API_KEY; NAME="Claude";;
-  2) VAR=GEMINI_API_KEY;    NAME="Gemini";;
-  *) echo "❌ Нужно 1 или 2. Ничего не изменено."; exit 1;;
+  1) VAR=ANTHROPIC_API_KEY;  NAME="Claude";;
+  2) VAR=GEMINI_API_KEY;     NAME="Gemini";;
+  3) VAR=PERPLEXITY_API_KEY; NAME="Perplexity";;
+  *) echo "❌ Нужно 1, 2 или 3. Ничего не изменено."; exit 1;;
 esac
 
 printf "Вставьте ключ %s и нажмите Enter — ввод не отображается: " "$NAME"
@@ -39,14 +41,20 @@ printf '%s' "$KEY" | ssh "$SERVER" "
   systemctl restart kotu
 
   echo '   Проверяю ключ живым запросом…'
-  if [ '$VAR' = 'ANTHROPIC_API_KEY' ]; then
-    CODE=\$(curl -s -o /dev/null -w '%{http_code}' -m 30 \
-      -H \"x-api-key: \$KEY\" -H 'anthropic-version: 2023-06-01' \
-      http://127.0.0.1:8444/anthropic/v1/models || echo 000)
-  else
-    CODE=\$(curl -s -o /dev/null -w '%{http_code}' -m 30 \
-      \"http://127.0.0.1:8444/gemini/v1beta/models?key=\$KEY\" || echo 000)
-  fi
+  case '$VAR' in
+    ANTHROPIC_API_KEY)
+      CODE=\$(curl -s -o /dev/null -w '%{http_code}' -m 30 \
+        -H \"x-api-key: \$KEY\" -H 'anthropic-version: 2023-06-01' \
+        http://127.0.0.1:8444/anthropic/v1/models || echo 000) ;;
+    GEMINI_API_KEY)
+      CODE=\$(curl -s -o /dev/null -w '%{http_code}' -m 30 \
+        \"http://127.0.0.1:8444/gemini/v1beta/models?key=\$KEY\" || echo 000) ;;
+    PERPLEXITY_API_KEY)
+      CODE=\$(curl -s -o /dev/null -w '%{http_code}' -m 60 \
+        -H \"Authorization: Bearer \$KEY\" -H 'content-type: application/json' \
+        -d '{\"model\":\"sonar\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}' \
+        http://127.0.0.1:8444/perplexity/chat/completions || echo 000) ;;
+  esac
 
   case \"\$CODE\" in
     200) echo '   ✅ Ключ принят — $NAME доступен из приложения' ;;
