@@ -1,10 +1,11 @@
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
-import { db, usersTable } from "@workspace/db";
+import { db, usersTable, sessionsTable } from "@workspace/db";
 import {
   SESSION_COOKIE,
   createSession,
   destroySession,
+  hashPassword,
   verifyPassword,
   tooManyAttempts,
   registerFailedAttempt,
@@ -64,6 +65,47 @@ router.post("/auth/logout", async (req, res) => {
 router.get("/me", requireAuth, (req, res) => {
   const user = req.user!;
   res.json({ id: user.id, name: user.name, email: user.email, role: user.role });
+});
+
+router.post("/auth/password", requireAuth, async (req, res) => {
+  const user = req.user!;
+  const current = typeof req.body?.current === "string" ? req.body.current : "";
+  const next = typeof req.body?.next === "string" ? req.body.next : "";
+
+  if (next.length < 10) {
+    res.status(400).json({ message: "Новый пароль короче 10 символов" });
+    return;
+  }
+  if (next === current) {
+    res.status(400).json({ message: "Новый пароль совпадает со старым" });
+    return;
+  }
+
+  const ok = await verifyPassword(current, user.passwordHash);
+  if (!ok) {
+    registerFailedAttempt(req.ip ?? "unknown");
+    res.status(401).json({ message: "Текущий пароль неверен" });
+    return;
+  }
+
+  await db
+    .update(usersTable)
+    .set({ passwordHash: await hashPassword(next) })
+    .where(eq(usersTable.id, user.id));
+
+  // Смена пароля обрывает все сессии — и на других устройствах тоже.
+  // Если пароль меняют из-за подозрения на утечку, чужой доступ должен умереть.
+  await db.delete(sessionsTable).where(eq(sessionsTable.userId, user.id));
+
+  const { token, expiresAt } = await createSession(user.id);
+  res.cookie(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: isHttps,
+    expires: expiresAt,
+    path: "/",
+  });
+  res.json({ ok: true });
 });
 
 export default router;

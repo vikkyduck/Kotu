@@ -6,6 +6,8 @@ const TITLES: Record<string, string> = {
   's-transcribe': 'Расшифровка',
   's-lecture': 'Лекция',
   's-slides': 'Презентация',
+  's-library': 'Библиотека',
+  's-profile': 'Профиль',
   's-how': 'Как это работает'
 };
 
@@ -42,6 +44,12 @@ export function TopBar() {
       <button className="iconbtn" id="themeToggle" title="Светлее / темнее" onClick={toggleTheme}>
         <span id="themeIcon" data-icon="moon"><Icon name={theme === 'dark' ? 'sun' : 'moon'} /></span>
       </button>
+
+      {screen !== 's-profile' && (
+        <button className="iconbtn" title="Профиль и пароль" onClick={() => go('s-profile')}>
+          <span data-icon="lock"><Icon name="lock" /></span>
+        </button>
+      )}
     </div>
   );
 }

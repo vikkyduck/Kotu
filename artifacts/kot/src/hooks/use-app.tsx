@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 
-type ScreenId = 's-home' | 's-transcribe' | 's-library' | 's-lecture' | 's-slides' | 's-how';
+type ScreenId = 's-home' | 's-transcribe' | 's-library' | 's-lecture' | 's-slides' | 's-how' | 's-profile';
 type Theme = 'light' | 'dark';
 
 interface FixSheetState {

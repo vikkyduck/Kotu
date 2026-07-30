@@ -7,6 +7,7 @@ import { TopBar } from '@/components/TopBar';
 import { Home } from '@/components/Home';
 import { Transcribe } from '@/components/Transcribe';
 import { Library } from '@/components/Library';
+import { Profile } from '@/components/Profile';
 import { Lecture } from '@/components/Lecture';
 import { Slides } from '@/components/Slides';
 import { How } from '@/components/How';
@@ -32,6 +33,7 @@ function AppContent() {
         <Home />
         <Transcribe />
         <Library />
+        <Profile />
         <Lecture />
         <Slides />
         <How />
