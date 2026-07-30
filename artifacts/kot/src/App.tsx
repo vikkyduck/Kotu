@@ -6,6 +6,7 @@ import { useLiquidLight } from '@/hooks/use-liquid-light';
 import { TopBar } from '@/components/TopBar';
 import { Home } from '@/components/Home';
 import { Transcribe } from '@/components/Transcribe';
+import { Library } from '@/components/Library';
 import { Lecture } from '@/components/Lecture';
 import { Slides } from '@/components/Slides';
 import { How } from '@/components/How';
@@ -30,6 +31,7 @@ function AppContent() {
       <div className="wrap">
         <Home />
         <Transcribe />
+        <Library />
         <Lecture />
         <Slides />
         <How />

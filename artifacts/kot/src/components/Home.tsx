@@ -72,6 +72,12 @@ export function Home() {
         <p id="startHint" className="start-hint">С чего начать — загрузите запись, остальное я сделаю сама.</p>
       )}
 
+      <button className="task hero" onClick={() => go('s-library')}>
+        <span className="ti"><span data-icon="book"><Icon name="book" /></span></span>
+        <span className="tb"><h3>Библиотека</h3><p>Книги и статьи, на которые буду опираться в лекциях.</p></span>
+        <span className="go" data-icon="arrow"><Icon name="arrow" /></span>
+      </button>
+
       <div className="soon-label">Скоро здесь появятся</div>
       <button className="task wip" onClick={() => go('s-lecture')}>
         <span className="ti"><span data-icon="pen"><Icon name="pen" /></span></span>

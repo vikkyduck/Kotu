@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { purgeExpiredSessions } from "./lib/auth";
 import { requeueOrphans, startWorker } from "./lib/jobs";
 import { registerTranscribeHandler } from "./lib/handlers/transcribe";
+import { registerIngestHandler } from "./lib/handlers/ingest";
 
 const rawPort = process.env["PORT"];
 
@@ -21,6 +22,7 @@ if (Number.isNaN(port) || port <= 0) {
 void purgeExpiredSessions().catch((err) => logger.warn({ err }, "Не удалось почистить сессии"));
 
 registerTranscribeHandler();
+registerIngestHandler();
 
 // Задачи, оборванные прошлым перезапуском, возвращаем в очередь и продолжаем
 // работу — ради этого очередь и заведена.
