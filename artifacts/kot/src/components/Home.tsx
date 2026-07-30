@@ -78,12 +78,13 @@ export function Home() {
         <span className="go" data-icon="arrow"><Icon name="arrow" /></span>
       </button>
 
-      <div className="soon-label">Скоро здесь появятся</div>
-      <button className="task wip" onClick={() => go('s-lecture')}>
+      <button className="task hero" onClick={() => go('s-lecture')}>
         <span className="ti"><span data-icon="pen"><Icon name="pen" /></span></span>
-        <span className="tb"><span className="th-row"><h3>Подготовить лекцию</h3><span className="soon">в процессе сборки</span></span><p>Соберу материал и напишу полный текст выступления.</p></span>
-        <span className="wip-cta">посмотреть, как будет</span>
+        <span className="tb"><h3>Подготовить лекцию</h3><p>Соберу материал из библиотеки и напишу полный текст выступления.</p></span>
+        <span className="go" data-icon="arrow"><Icon name="arrow" /></span>
       </button>
+
+      <div className="soon-label">Скоро здесь появятся</div>
       <button className="task wip" onClick={() => go('s-slides')}>
         <span className="ti"><span data-icon="deck"><Icon name="deck" /></span></span>
         <span className="tb"><span className="th-row"><h3>Собрать презентацию</h3><span className="soon">в процессе сборки</span></span><p>Подготовлю слайды с картинками к вашей лекции.</p></span>

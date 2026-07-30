@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
-import { eq, desc } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { tmpdir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { db, transcriptionsTable, type TranscriptSegment } from "@workspace/db";
@@ -49,10 +49,11 @@ const upload = multer({
 
 const router: IRouter = Router();
 
-router.get("/transcriptions", async (_req, res): Promise<void> => {
+router.get("/transcriptions", async (req, res): Promise<void> => {
   const rows = await db
     .select()
     .from(transcriptionsTable)
+    .where(eq(transcriptionsTable.ownerId, req.user!.id))
     .orderBy(desc(transcriptionsTable.createdAt));
   res.json(ListTranscriptionsResponse.parse(rows));
 });
@@ -67,7 +68,12 @@ router.get("/transcriptions/:id", async (req, res): Promise<void> => {
   const [row] = await db
     .select()
     .from(transcriptionsTable)
-    .where(eq(transcriptionsTable.id, params.data.id));
+    .where(
+      and(
+        eq(transcriptionsTable.id, params.data.id),
+        eq(transcriptionsTable.ownerId, req.user!.id),
+      ),
+    );
 
   if (!row) {
     res.status(404).json({ error: "Расшифровка не найдена" });
@@ -104,7 +110,12 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
   const [row] = await db
     .update(transcriptionsTable)
     .set(updates)
-    .where(eq(transcriptionsTable.id, params.data.id))
+    .where(
+      and(
+        eq(transcriptionsTable.id, params.data.id),
+        eq(transcriptionsTable.ownerId, req.user!.id),
+      ),
+    )
     .returning();
 
   if (!row) {
@@ -124,7 +135,12 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
 
   const [row] = await db
     .delete(transcriptionsTable)
-    .where(eq(transcriptionsTable.id, params.data.id))
+    .where(
+      and(
+        eq(transcriptionsTable.id, params.data.id),
+        eq(transcriptionsTable.ownerId, req.user!.id),
+      ),
+    )
     .returning();
 
   if (!row) {
@@ -177,6 +193,7 @@ router.post(
     const [row] = await db
       .insert(transcriptionsTable)
       .values({
+        ownerId: req.user!.id,
         title,
         filename,
         hideNames,

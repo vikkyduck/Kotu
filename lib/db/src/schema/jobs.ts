@@ -1,6 +1,6 @@
 import { pgTable, bigserial, integer, text, jsonb, timestamp, index } from "drizzle-orm/pg-core";
 
-export type JobKind = "transcribe" | "doc.ingest";
+export type JobKind = "transcribe" | "doc.ingest" | "lecture.plan" | "lecture.write";
 export type JobStatus = "queued" | "running" | "done" | "error";
 
 /**

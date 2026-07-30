@@ -562,3 +562,32 @@ input.field:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px v
 .forgot-box{margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
 .forgot-box p{font-size:13.5px;color:var(--ink-2);line-height:1.55;margin:0 0 13px}
 .forgot-box .btn{width:100%}
+
+/* ── Лекция ───────────────────────────────────────────────────────────── */
+.plan-num{display:flex;align-items:center;justify-content:center;width:28px;height:28px;flex-shrink:0;
+  border-radius:9px;background:var(--accent-soft);color:var(--accent);font-size:13px;font-weight:600}
+.plan-head{font-size:15px;font-weight:600;line-height:1.35}
+.lec-item{cursor:pointer;text-align:left;width:100%;font:inherit;color:inherit}
+.lec-item:hover{background:var(--panel-2)}
+.inline-link{color:var(--accent);cursor:pointer;text-decoration:underline}
+
+.lec-body{margin-top:6px}
+.lec-section{padding:20px 0;border-bottom:1px solid var(--line)}
+.lec-section:last-child{border-bottom:none}
+.lec-head{font-family:var(--serif);font-size:19px;font-weight:600;margin:0 0 12px;line-height:1.3}
+.lec-edited{font-size:11px;font-weight:500;color:var(--accent);background:var(--accent-soft);
+  padding:3px 8px;border-radius:20px;margin-left:9px;vertical-align:middle}
+.lec-para{font-size:16px;line-height:1.72;margin:0 0 15px;color:var(--ink)}
+.lec-edit{min-height:280px;font-size:15px;line-height:1.65}
+.lec-actions{display:flex;gap:9px;margin-top:12px}
+
+.lec-sources{margin-top:16px;font-size:13.5px}
+.lec-sources summary{cursor:pointer;color:var(--accent);font-weight:500;padding:6px 0}
+.lec-sources ol{margin:8px 0 0;padding-left:20px;color:var(--ink-2)}
+.lec-sources li{margin-bottom:11px;line-height:1.5}
+.lec-sources li b{display:block;color:var(--ink);font-weight:600;margin-bottom:3px}
+
+@media (max-width:520px){
+  .lec-head{font-size:17.5px}
+  .lec-para{font-size:15.5px;line-height:1.68}
+}

@@ -11,6 +11,11 @@ export type TranscriptionStatus = "processing" | "done" | "error";
 
 export const transcriptionsTable = pgTable("transcriptions", {
   id: serial("id").primaryKey(),
+  /**
+   * Владелец записи. Расшифровка сеанса — данные о здоровье: каждый запрос
+   * обязан ограничиваться своими записями, иначе любой вошедший видит чужие.
+   */
+  ownerId: integer("owner_id").notNull(),
   title: text("title").notNull(),
   filename: text("filename").notNull(),
   hideNames: boolean("hide_names").notNull().default(false),

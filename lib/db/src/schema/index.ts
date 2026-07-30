@@ -4,3 +4,4 @@ export * from "./users";
 export * from "./jobs";
 export * from "./documents";
 export * from "./password-resets";
+export * from "./lectures";
