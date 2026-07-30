@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import multer from "multer";
 import { eq, desc } from "drizzle-orm";
 import { tmpdir } from "node:os";
-import { rm } from "node:fs/promises";
+import { mkdirSync } from "node:fs";
 import { db, transcriptionsTable, type TranscriptSegment } from "@workspace/db";
 import {
   GetTranscriptionParams,
@@ -13,8 +13,7 @@ import {
   DeleteTranscriptionParams,
   ListTranscriptionsResponse,
 } from "@workspace/api-zod";
-import { transcribeLongAudio, ChunkError } from "../../lib/transcription";
-import { logger } from "../../lib/logger";
+import { enqueue } from "../../lib/jobs";
 
 // Long recordings (2–3 hours) are split server-side, so allow large uploads.
 // Files are streamed to disk (not held in memory) and split with ffmpeg.
@@ -25,8 +24,13 @@ const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const ALLOWED_EXT =
   /\.(mp3|mp2|m4a|m4b|mp4|mov|wav|wave|aif|aiff|aac|ogg|oga|opus|webm|mkv|flac|amr|3gp|3gpp|wma|caf|mka|mpeg|mpga)$/i;
 
+// Загруженное аудио должно пережить перезапуск сервера: задача из очереди может
+// взяться за него уже после деплоя, а системный /tmp к тому времени вычистят.
+const UPLOAD_DIR = process.env["UPLOAD_DIR"] ?? (process.env["NODE_ENV"] === "production" ? "/opt/kotu/uploads" : tmpdir());
+mkdirSync(UPLOAD_DIR, { recursive: true });
+
 const upload = multer({
-  dest: tmpdir(),
+  dest: UPLOAD_DIR,
   limits: { fileSize: MAX_FILE_BYTES },
   fileFilter: (_req, file, cb) => {
     // Audio can also live inside video containers (e.g. audio-only webm reports
@@ -130,52 +134,6 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
-/**
- * Process an uploaded recording in the background: split into chunks, transcribe,
- * stitch, and persist progress on the row so the client can poll it. The uploaded
- * temp file is always cleaned up at the end.
- */
-async function processTranscription(
-  id: number,
-  inputPath: string,
-  filename: string,
-  opts: { hideNames: boolean; markSpeakers: boolean },
-): Promise<void> {
-  try {
-    const segments = await transcribeLongAudio(
-      inputPath,
-      filename,
-      opts,
-      async ({ progress, message }) => {
-        await db
-          .update(transcriptionsTable)
-          .set({ progress, statusMessage: message })
-          .where(eq(transcriptionsTable.id, id));
-      },
-    );
-
-    await db
-      .update(transcriptionsTable)
-      .set({ segments, status: "done", progress: 100, statusMessage: "", error: null })
-      .where(eq(transcriptionsTable.id, id));
-
-    logger.info({ id, segments: segments.length }, "Transcription finished");
-  } catch (err) {
-    const userMessage =
-      err instanceof ChunkError
-        ? err.userMessage
-        : "Не удалось распознать запись. Попробуйте другой файл.";
-    logger.error({ err, id }, "Transcription failed");
-    await db
-      .update(transcriptionsTable)
-      .set({ status: "error", statusMessage: "", error: userMessage })
-      .where(eq(transcriptionsTable.id, id))
-      .catch((dbErr) => logger.error({ dbErr, id }, "Failed to persist error state"));
-  } finally {
-    await rm(inputPath, { force: true }).catch(() => {});
-  }
-}
-
 router.post(
   "/transcriptions/upload",
   (req, res, next) => {
@@ -229,9 +187,9 @@ router.post(
       })
       .returning();
 
-    // Kick off processing without blocking the response — long recordings can take
-    // several minutes, far longer than a single request should stay open.
-    void processTranscription(row.id, inputPath, filename, { hideNames, markSpeakers });
+    // Работа уходит в очередь в базе: ответ не ждёт расшифровку, а сама задача
+    // переживает перезапуск сервера и при сбое повторяется.
+    await enqueue("transcribe", row.id, { inputPath, filename, hideNames, markSpeakers });
 
     res.status(201).json(GetTranscriptionResponse.parse(row));
   },

@@ -1,7 +1,8 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { reconcileStaleTranscriptions } from "./lib/reconcile";
 import { purgeExpiredSessions } from "./lib/auth";
+import { requeueOrphans, startWorker } from "./lib/jobs";
+import { registerTranscribeHandler } from "./lib/handlers/transcribe";
 
 const rawPort = process.env["PORT"];
 
@@ -17,11 +18,20 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-// Heal any transcriptions left stuck in "processing" by a previous restart
-// before we start accepting new uploads.
 void purgeExpiredSessions().catch((err) => logger.warn({ err }, "Не удалось почистить сессии"));
 
-void reconcileStaleTranscriptions().finally(() => {
+registerTranscribeHandler();
+
+// Задачи, оборванные прошлым перезапуском, возвращаем в очередь и продолжаем
+// работу — ради этого очередь и заведена.
+void requeueOrphans()
+  .then((n) => {
+    if (n > 0) logger.info({ count: n }, "Вернул в очередь прерванные задачи");
+  })
+  .catch((err) => logger.error({ err }, "Не смог вернуть задачи в очередь"))
+  .finally(() => startWorker());
+
+void Promise.resolve().finally(() => {
   const server = app.listen(port, () => {
     logger.info({ port }, "Server listening");
   });
