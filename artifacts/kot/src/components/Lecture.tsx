@@ -1,127 +1,440 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/hooks/use-app';
 import { Icon } from '@/lib/icons';
 
-const CHAPTERS = [
-  {h:'Глава 1 · Что мы защищаем и от чего',txt:'Начнём с простого вопроса: зачем психике вообще защищаться? Вытеснение — это не забывание, а тихая, постоянная работа: психика удерживает невыносимое вне поля сознания. И всё же вытесненное не исчезает — оно возвращается в оговорках, снах, симптомах…'},
-  {h:'Глава 2 · Проекция и проективная идентификация',txt:'Здесь важно не спутать два близких механизма. При проекции человек приписывает другому собственные чувства. Кляйн идёт дальше: при проективной идентификации он бессознательно вынуждает другого эти чувства пережить — и это уже разговор не об одном человеке, а о двоих…'},
-  {h:'Глава 3 · Защиты, держащие самооценку',txt:'Идеализация и обесценивание ходят парой. Они оберегают хрупкое чувство собственного «я» от встречи с тем, что человек и любим, и ненавидим одновременно. В клинике это видно особенно ясно…'},
+interface Doc {
+  id: number;
+  title: string;
+  status: string;
+}
+
+interface PlanItem {
+  heading: string;
+  abstract: string;
+}
+
+interface Section {
+  id: number;
+  ord: number;
+  heading: string;
+  text: string;
+  status: string;
+  editedByHuman: boolean;
+}
+
+interface Source {
+  id: number;
+  sectionId: number | null;
+  title: string;
+  quote: string;
+}
+
+interface LectureFull {
+  id: number;
+  title: string;
+  plan: PlanItem[] | null;
+  planApproved: boolean;
+  status: 'planning' | 'plan_ready' | 'writing' | 'ready' | 'error';
+  statusMessage: string;
+  error: string | null;
+  sections: Section[];
+  sources: Source[];
+}
+
+interface LectureListItem {
+  id: number;
+  title: string;
+  status: string;
+}
+
+const AUDIENCES = ['студенты', 'коллеги', 'смешанная'];
+const DURATIONS = [
+  { label: '1 час', value: 60 },
+  { label: '2–3 часа', value: 150 },
+  { label: '5–6 часов', value: 330 },
 ];
 
 export function Lecture() {
-  const { screen, go, toast, openSheet } = useApp();
-  const [view, setView] = useState<'lecForm'|'lecJob'|'lecResult'>('lecForm');
-  const [topic, setTopic] = useState('');
-  const [hours, setHours] = useState('5–6 часов');
+  const { screen, go, toast } = useApp();
+  const [list, setList] = useState<LectureListItem[]>([]);
+  const [docs, setDocs] = useState<Doc[]>([]);
+  const [openId, setOpenId] = useState<number | null>(null);
+  const [lecture, setLecture] = useState<LectureFull | null>(null);
 
-  useEffect(() => {
-    const handleResume = () => {
-      setView('lecResult');
-    };
-    window.addEventListener('resume-lecture', handleResume);
-    return () => window.removeEventListener('resume-lecture', handleResume);
+  const [topic, setTopic] = useState('');
+  const [audience, setAudience] = useState('студенты');
+  const [duration, setDuration] = useState(150);
+  const [picked, setPicked] = useState<number[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<number | null>(null);
+  const [draft, setDraft] = useState('');
+
+  const loadList = useCallback(async () => {
+    const [l, d] = await Promise.all([
+      fetch('/api/lectures').then((r) => (r.ok ? r.json() : [])),
+      fetch('/api/documents').then((r) => (r.ok ? r.json() : [])),
+    ]);
+    setList(l);
+    setDocs((d as Doc[]).filter((x) => x.status === 'ready'));
+  }, []);
+
+  const loadOne = useCallback(async (id: number) => {
+    const res = await fetch(`/api/lectures/${id}`);
+    if (res.ok) setLecture(await res.json());
   }, []);
 
   useEffect(() => {
+    if (screen !== 's-lecture') return;
+    void loadList();
+  }, [screen, loadList]);
+
+  useEffect(() => {
     if (screen !== 's-lecture') {
-      setView('lecForm');
+      setOpenId(null);
+      setEditing(null);
     }
   }, [screen]);
 
-  const startLecture = () => {
-    if (!topic.trim()) {
+  useEffect(() => {
+    if (openId === null) {
+      setLecture(null);
+      return;
+    }
+    void loadOne(openId);
+  }, [openId, loadOne]);
+
+  // Пока идёт работа — подтягиваем состояние, чтобы прогресс двигался сам.
+  useEffect(() => {
+    if (openId === null || !lecture) return;
+    if (lecture.status !== 'planning' && lecture.status !== 'writing') return;
+    const t = setInterval(() => void loadOne(openId), 4000);
+    return () => clearInterval(t);
+  }, [openId, lecture, loadOne]);
+
+  const create = async () => {
+    if (topic.trim() === '') {
       toast('Расскажите в двух словах, о чём лекция');
       return;
     }
-    setView('lecJob');
+    if (picked.length === 0) {
+      toast('Выберите, на что опереться из библиотеки');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch('/api/lectures', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic, audience, durationMin: duration, documentIds: picked }),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        setTopic('');
+        setPicked([]);
+        await loadList();
+        setOpenId(created.id);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast(data.message ?? 'Не удалось начать лекцию');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const approve = async () => {
+    if (!lecture) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/lectures/${lecture.id}/plan/approve`, { method: 'POST' });
+      if (res.ok) {
+        toast('Пишу главы. Можно закрыть страницу.');
+        await loadOne(lecture.id);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast(data.message ?? 'Не удалось запустить');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dropChapter = async (index: number) => {
+    if (!lecture?.plan) return;
+    const plan = lecture.plan.filter((_, i) => i !== index);
+    const res = await fetch(`/api/lectures/${lecture.id}/plan`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan }),
+    });
+    if (res.ok) await loadOne(lecture.id);
+    else toast('Не удалось изменить план');
+  };
+
+  const saveSection = async (section: Section) => {
+    if (!lecture) return;
+    const res = await fetch(`/api/lectures/${lecture.id}/sections/${section.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: draft }),
+    });
+    if (res.ok) {
+      setEditing(null);
+      toast('Правка сохранена');
+      await loadOne(lecture.id);
+    } else {
+      toast('Не удалось сохранить');
+    }
   };
 
   if (screen !== 's-lecture') return null;
 
-  return (
-    <section className="screen active" id="s-lecture">
-      <h2 className="h2">Подготовить лекцию</h2>
-      <p className="sub">Расскажите своими словами, о чём лекция — остальное я возьму на себя.</p>
-      <div className="wip-note"><Icon name="clock" /> Этот раздел ещё готовится. Показываю, как он будет работать — можно спокойно посмотреть.</div>
+  // ── Открытая лекция ─────────────────────────────────────────────────────
+  if (lecture) {
+    const working = lecture.status === 'planning' || lecture.status === 'writing';
 
-      {view === 'lecForm' && (
-        <div id="lecForm">
-          <div className="panel">
-            <div className="fieldlbl">О чём будет лекция?</div>
-            <textarea 
-              className="topic" 
-              value={topic}
-              onChange={e => setTopic(e.target.value)}
-              placeholder="Например: защитные механизмы личности — для студентов второго курса. Хочу начать с Фрейда и дойти до современных взглядов, с клиническими примерами."
-            />
+    return (
+      <section className="screen active" id="s-lecture">
+        <button className="btn ghost back-link" onClick={() => setOpenId(null)}>
+          <Icon name="back" /> К списку лекций
+        </button>
 
-            <div className="fieldlbl">Примерно на сколько часов?</div>
-            <div className="pills">
-              {['1 час', '2–3 часа', '5–6 часов'].map(h => (
-                <span key={h} className={`pill-opt ${hours === h ? 'on' : ''}`} onClick={() => setHours(h)}>{h}</span>
-              ))}
-            </div>
+        <h2 className="h2">{lecture.title}</h2>
 
-            <div className="fieldlbl">Опереться на ваши книги? <span style={{ fontWeight: 400, color: 'var(--muted)' }}>— по желанию</span></div>
-            <div className="filecard" style={{ cursor: 'pointer' }} onClick={() => toast('Здесь можно будет загрузить книги')}>
-              <span className="fi"><Icon name="book" /></span>
-              <div><b>Загрузить книги</b><span>Если не нужно — просто пропустите</span></div>
-              <span className="chev" style={{ marginLeft: 'auto', color: 'var(--muted)' }}><Icon name="chevron" /></span>
-            </div>
-          </div>
-          <button className="btn primary big" onClick={startLecture}>Начать готовить лекцию <Icon name="arrow" /></button>
-        </div>
-      )}
+        {lecture.status === 'error' && (
+          <div className="panel"><p className="doc-meta bad">{lecture.error}</p></div>
+        )}
 
-      {view === 'lecJob' && (
-        <div id="lecJob">
+        {working && (
           <div className="panel bigjob">
             <div className="bi"><Icon name="clock" /></div>
-            <p className="pstat" style={{ fontFamily: 'var(--serif)', fontSize: '19px', fontWeight: 600, margin: '0 0 8px' }}>Принялась за работу</p>
-            <p className="preassure" style={{ marginBottom: '6px' }}>Полный текст лекции — это большая работа, на несколько часов. Я соберу хороший черновик и пришлю уведомление, когда он будет готов.</p>
-            <p className="preassure"><b>Можно закрыть страницу и спокойно отдыхать.</b></p>
+            <p className="pstat">{lecture.statusMessage || 'Работаю…'}</p>
+            <p className="preassure">
+              Это займёт время. <b>Можно закрыть страницу</b> — работа не пропадёт.
+            </p>
           </div>
-          <button className="btn big" onClick={() => setView('lecResult')}>Посмотреть, как будет выглядеть черновик <Icon name="arrow" /></button>
-          <button className="btn ghost big" onClick={() => go('s-home')}>На главную</button>
+        )}
+
+        {/* План на утверждение — точка, где автор остаётся автором */}
+        {lecture.status === 'plan_ready' && lecture.plan && (
+          <>
+            <p className="sub">
+              Посмотрите план. Лишние главы можно убрать — и только потом я напишу текст.
+            </p>
+            <div className="doc-list">
+              {lecture.plan.map((p, i) => (
+                <div key={i} className="doc-card">
+                  <span className="plan-num">{i + 1}</span>
+                  <div className="doc-body">
+                    <b className="plan-head">{p.heading}</b>
+                    <span className="doc-meta">{p.abstract}</span>
+                  </div>
+                  <button
+                    className="btn ghost doc-del"
+                    title="Убрать главу"
+                    onClick={() => void dropChapter(i)}
+                  >
+                    <Icon name="trash" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              className="btn primary big"
+              disabled={busy}
+              onClick={() => void approve()}
+              style={{ marginTop: 18 }}
+            >
+              {busy ? 'Запускаю…' : 'Утвердить и написать'} <Icon name="arrow" />
+            </button>
+          </>
+        )}
+
+        {/* Готовые главы */}
+        {lecture.sections.length > 0 && lecture.status !== 'plan_ready' && (
+          <div className="lec-body">
+            {lecture.sections.map((s) => {
+              const sources = lecture.sources.filter((x) => x.sectionId === s.id);
+              return (
+                <div key={s.id} className="lec-section">
+                  <h3 className="lec-head">
+                    {s.ord + 1}. {s.heading}
+                    {s.editedByHuman && <span className="lec-edited">правлено вами</span>}
+                  </h3>
+
+                  {s.status === 'writing' && <p className="doc-meta busy">пишется…</p>}
+                  {s.status === 'pending' && <p className="doc-meta">в очереди</p>}
+
+                  {editing === s.id ? (
+                    <>
+                      <textarea
+                        className="topic lec-edit"
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                      />
+                      <div className="lec-actions">
+                        <button className="btn primary" onClick={() => void saveSection(s)}>
+                          Сохранить
+                        </button>
+                        <button className="btn ghost" onClick={() => setEditing(null)}>
+                          Отмена
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    s.text !== '' && (
+                      <>
+                        {s.text.split(/\n\s*\n/).map((para, i) => (
+                          <p key={i} className="lec-para">{para}</p>
+                        ))}
+                        <div className="lec-actions">
+                          <button
+                            className="btn ghost"
+                            onClick={() => {
+                              setEditing(s.id);
+                              setDraft(s.text);
+                            }}
+                          >
+                            <Icon name="edit" /> Править
+                          </button>
+                        </div>
+                      </>
+                    )
+                  )}
+
+                  {sources.length > 0 && (
+                    <details className="lec-sources">
+                      <summary>Источники ({sources.length})</summary>
+                      <ol>
+                        {sources.map((src) => (
+                          <li key={src.id}>
+                            <b>{src.title}</b>
+                            <span>{src.quote.slice(0, 220)}…</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </details>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {lecture.status === 'ready' && (
+          <a
+            className="btn big"
+            href={`/api/lectures/${lecture.id}/export`}
+            style={{ marginTop: 18 }}
+          >
+            <Icon name="download" /> Скачать текстом
+          </a>
+        )}
+      </section>
+    );
+  }
+
+  // ── Список и форма ──────────────────────────────────────────────────────
+  return (
+    <section className="screen active" id="s-lecture">
+      <button className="btn ghost back-link" onClick={() => go('s-home')}>
+        <Icon name="back" /> Назад
+      </button>
+
+      <h2 className="h2">Подготовить лекцию</h2>
+      <p className="sub">Расскажите своими словами, о чём лекция — остальное я возьму на себя.</p>
+
+      {list.length > 0 && (
+        <div className="doc-list" style={{ marginBottom: 22 }}>
+          {list.map((l) => (
+            <button key={l.id} className="doc-card lec-item" onClick={() => setOpenId(l.id)}>
+              <span className="doc-ico"><Icon name="pen" /></span>
+              <div className="doc-body">
+                <b className="doc-title">{l.title}</b>
+                <span className="doc-meta">
+                  {l.status === 'ready'
+                    ? 'готова'
+                    : l.status === 'plan_ready'
+                      ? 'план ждёт вашего решения'
+                      : l.status === 'error'
+                        ? 'ошибка'
+                        : 'в работе…'}
+                </span>
+              </div>
+              <span className="chev"><Icon name="chevron" /></span>
+            </button>
+          ))}
         </div>
       )}
 
-      {view === 'lecResult' && (
-        <div id="lecResult">
-          <div className="done-head">
-            <span className="dh-ic"><Icon name="check" /></span>
-            <div><h3>Готово — черновик лекции собран</h3><p>Уже сохранён. Читайте как свой текст.</p></div>
-          </div>
-          <p className="tnote"><Icon name="info" /> Это черновик-основа. Читайте как ваш собственный текст — а если где-то не так, нажмите «поправить» и скажите своими словами. Вы ничего не испортите.</p>
-          
-          <div className="panel" id="chapters">
-            {CHAPTERS.map((c, i) => (
-              <div className="chap" key={i}>
-                <h4>{c.h}</h4>
-                <p id={`chap-txt-${i}`}>{c.txt}</p>
-                <button className="fix" style={{ opacity: 1, display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--accent)', cursor: 'pointer', background: 'none', border: 'none', fontFamily: 'inherit', padding: 0 }}
-                  onClick={() => {
-                    const el = document.getElementById(`chap-txt-${i}`);
-                    if (el) el.style.opacity = '0.55';
-                    openSheet('Что поправить в этой главе?', 'B', () => {
-                      if (el) el.style.opacity = '1';
-                    });
-                  }}
-                >
-                  <Icon name="edit" /> поправить своими словами
-                </button>
-              </div>
+      <div className="panel">
+        <div className="fieldlbl">О чём будет лекция?</div>
+        <textarea
+          className="topic"
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+          placeholder="Например: защитные механизмы личности — для студентов второго курса. Начать с Фрейда и дойти до современных взглядов, с клиническими примерами."
+        />
+
+        <div className="fieldlbl">Для кого?</div>
+        <div className="pills">
+          {AUDIENCES.map((a) => (
+            <span
+              key={a}
+              className={`pill-opt ${audience === a ? 'on' : ''}`}
+              onClick={() => setAudience(a)}
+            >
+              {a}
+            </span>
+          ))}
+        </div>
+
+        <div className="fieldlbl">Примерно на сколько часов?</div>
+        <div className="pills">
+          {DURATIONS.map((d) => (
+            <span
+              key={d.value}
+              className={`pill-opt ${duration === d.value ? 'on' : ''}`}
+              onClick={() => setDuration(d.value)}
+            >
+              {d.label}
+            </span>
+          ))}
+        </div>
+
+        <div className="fieldlbl">На что опереться из библиотеки?</div>
+        {docs.length === 0 ? (
+          <p className="doc-meta">
+            Библиотека пуста —{' '}
+            <span className="inline-link" onClick={() => go('s-library')}>
+              загрузите книги
+            </span>
+            , и лекция будет опираться на них.
+          </p>
+        ) : (
+          <div className="pills">
+            {docs.map((d) => (
+              <span
+                key={d.id}
+                className={`pill-opt ${picked.includes(d.id) ? 'on' : ''}`}
+                onClick={() =>
+                  setPicked((p) => (p.includes(d.id) ? p.filter((x) => x !== d.id) : [...p, d.id]))
+                }
+              >
+                {d.title}
+              </span>
             ))}
           </div>
+        )}
+      </div>
 
-          <div className="btnrow">
-            <button className="btn primary" style={{ flex: 1 }} onClick={() => toast('Лекция сохранена в ваших файлах')}>
-              <Icon name="download" /> Сохранить лекцию
-            </button>
-            <button className="btn" onClick={() => go('s-home')}>Готово</button>
-          </div>
-        </div>
-      )}
+      <button
+        className="btn primary big"
+        disabled={busy || docs.length === 0}
+        onClick={() => void create()}
+      >
+        {busy ? 'Начинаю…' : 'Составить план'} <Icon name="arrow" />
+      </button>
     </section>
   );
 }

@@ -3,6 +3,7 @@ import healthRouter from "./health";
 import authRouter from "./auth";
 import transcriptionsRouter from "./transcriptions";
 import documentsRouter from "./documents";
+import lecturesRouter from "./lectures";
 import { requireAuth } from "../middlewares/require-auth";
 
 const router: IRouter = Router();
@@ -15,5 +16,6 @@ router.use(authRouter);
 router.use(requireAuth);
 router.use(transcriptionsRouter);
 router.use(documentsRouter);
+router.use(lecturesRouter);
 
 export default router;

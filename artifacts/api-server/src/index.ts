@@ -4,6 +4,7 @@ import { purgeExpiredSessions } from "./lib/auth";
 import { requeueOrphans, startWorker } from "./lib/jobs";
 import { registerTranscribeHandler } from "./lib/handlers/transcribe";
 import { registerIngestHandler } from "./lib/handlers/ingest";
+import { registerLectureHandlers } from "./lib/handlers/lecture";
 
 const rawPort = process.env["PORT"];
 
@@ -23,6 +24,7 @@ void purgeExpiredSessions().catch((err) => logger.warn({ err }, "Не удало
 
 registerTranscribeHandler();
 registerIngestHandler();
+registerLectureHandlers();
 
 // Задачи, оборванные прошлым перезапуском, возвращаем в очередь и продолжаем
 // работу — ради этого очередь и заведена.
