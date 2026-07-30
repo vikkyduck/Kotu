@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { toFile } from "openai";
 import { openai } from "@workspace/integrations-openai-ai-server/audio";
 import type { TranscriptSegment } from "@workspace/db";
+import { maskText, unmaskText } from "./privacy";
 
 const execFileAsync = promisify(execFile);
 
@@ -194,6 +195,16 @@ export async function structureTranscript(
     return [{ who: "", text: "В записи не удалось распознать речь." }];
   }
 
+  // Персональные данные прячем ЛОКАЛЬНО до отправки в зарубежную модель:
+  // наружу уходит текст с метками, настоящие имена остаются на сервере.
+  let payload = trimmed;
+  let nameMap: Record<string, string> = {};
+  if (hideNames) {
+    const masked = await maskText(trimmed);
+    payload = masked.masked;
+    nameMap = masked.map;
+  }
+
   const rules: string[] = [
     "Ты помогаешь психологу аккуратно оформить расшифровку аудиозаписи на русском языке.",
     "Не выдумывай и не добавляй слов, которых нет в записи. Только аккуратно оформи уже сказанное: расставь знаки препинания, раздели на осмысленные реплики и абзацы, убери слова-паразиты только если это явно мусор распознавания.",
@@ -209,7 +220,7 @@ export async function structureTranscript(
 
   if (hideNames) {
     rules.push(
-      'Найди персональные данные: имена и фамилии людей, клички, названия городов и конкретные адреса. Каждое такое имя или название заключи в двойные квадратные скобки, например: [[Анна]], [[Москве]], [[доктору Лебедеву]]. НЕ удаляй и не заменяй их — только оберни в скобки. Предлоги, союзы и остальной текст оставь вне скобок. Никогда не используй двойные квадратные скобки ни для чего другого. Это нужно, чтобы потом аккуратно скрыть имена пациентов, сохранив возможность их увидеть.',
+      'В тексте уже стоят метки вида [[PER1]], [[LOC1]] — за ними скрыты имена людей и названия мест. Переноси эти метки в ответ ДОСЛОВНО и на то же место: не переводи, не склоняй, не раскрывай и не придумывай новых меток. Больше двойные квадратные скобки ни для чего не используй.',
     );
   }
 
@@ -223,7 +234,7 @@ export async function structureTranscript(
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: rules.join("\n") },
-      { role: "user", content: trimmed },
+      { role: "user", content: payload },
     ],
   });
 
@@ -235,9 +246,11 @@ export async function structureTranscript(
     const clean: TranscriptSegment[] = segments
       .map((s) => {
         const seg = s as Record<string, unknown>;
+        const text = typeof seg.text === "string" ? seg.text : "";
         return {
           who: typeof seg.who === "string" ? seg.who : "",
-          text: typeof seg.text === "string" ? seg.text : "",
+          // Возвращаем настоящие имена на место меток — уже на нашем сервере.
+          text: hideNames ? unmaskText(text, nameMap) : text,
         };
       })
       .filter((s) => s.text.trim() !== "");
@@ -247,51 +260,8 @@ export async function structureTranscript(
     // fall through to plain-text fallback
   }
 
-  // Fallback: structuring failed. Returning the raw transcript here would leak
-  // real names when hiding was requested, so mask before giving up.
-  const fallbackText = hideNames ? await maskPersonalData(trimmed) : trimmed;
+  // Оформление не удалось — отдаём то, что отправляли, вернув имена на место.
+  // Повторно за границу ничего не шлём.
+  const fallbackText = hideNames ? unmaskText(payload, nameMap) : trimmed;
   return [{ who: "", text: fallbackText }];
-}
-
-const HAS_MARKER = /\[\[[\s\S]+?\]\]/;
-
-/**
- * Best-effort masking for the degraded path where the structuring pass failed.
- * Tries a dedicated model call that only wraps personal data in [[...]] markers;
- * if that produces no markers (or throws), falls back to a conservative
- * heuristic that wraps capitalized words mid-sentence. Over-masking is
- * acceptable here — leaking a real patient name is not.
- */
-async function maskPersonalData(text: string): Promise<string> {
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-5.4",
-      max_completion_tokens: 8192,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Тебе дан текст на русском языке. Заключи каждое имя/фамилию человека, кличку, название города и конкретный адрес в двойные квадратные скобки, например [[Анна]], [[Москве]], [[доктору Лебедеву]]. Не удаляй и не меняй слова, ничего не добавляй — только расставь скобки вокруг персональных данных. Верни только этот текст без пояснений.",
-        },
-        { role: "user", content: text },
-      ],
-    });
-    const wrapped = response.choices[0]?.message?.content?.trim();
-    if (wrapped && HAS_MARKER.test(wrapped)) return wrapped;
-    return maskCapitalizedHeuristic(wrapped || text);
-  } catch {
-    return maskCapitalizedHeuristic(text);
-  }
-}
-
-/**
- * Deterministic last-resort masker: wraps capitalized words that appear
- * mid-sentence (in Russian these are almost always proper nouns). Skips words
- * already inside [[...]] markers.
- */
-function maskCapitalizedHeuristic(text: string): string {
-  return text.replace(
-    /([^.!?…\n[]\s+)(\p{Lu}[\p{Ll}\p{Lu}-]+)/gu,
-    (_match, before: string, word: string) => `${before}[[${word}]]`,
-  );
 }
