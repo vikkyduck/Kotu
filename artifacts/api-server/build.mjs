@@ -49,7 +49,8 @@ async function buildAll() {
       "pg-native",
       "oracledb",
       "mongodb-client-encryption",
-      "nodemailer",
+      // nodemailer намеренно НЕ исключён: на сервере нет node_modules,
+      // туда уезжает только бандл — значит почта должна быть внутри него.
       "handlebars",
       "knex",
       "typeorm",

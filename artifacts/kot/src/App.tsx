@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppProvider } from '@/hooks/use-app';
 import { Login } from '@/components/Login';
+import { ResetPassword } from '@/components/ResetPassword';
 import { useLiquidLight } from '@/hooks/use-liquid-light';
 import { TopBar } from '@/components/TopBar';
 import { Home } from '@/components/Home';
@@ -50,6 +51,11 @@ function AppContent() {
  */
 function AuthGate() {
   const [state, setState] = useState<'checking' | 'in' | 'out'>('checking');
+  // Ссылка из письма приходит как /?reset=<токен> — своего роутера в
+  // приложении нет, поэтому читаем адрес напрямую.
+  const [resetToken, setResetToken] = useState<string | null>(() =>
+    new URLSearchParams(window.location.search).get('reset'),
+  );
 
   const check = useCallback(async () => {
     try {
@@ -63,6 +69,20 @@ function AuthGate() {
   useEffect(() => {
     void check();
   }, [check]);
+
+  if (resetToken) {
+    return (
+      <ResetPassword
+        token={resetToken}
+        onDone={() => {
+          // Убираем токен из адресной строки, чтобы он не остался в истории.
+          window.history.replaceState(null, '', window.location.pathname);
+          setResetToken(null);
+          setState('out');
+        }}
+      />
+    );
+  }
 
   if (state === 'checking') return null;
   if (state === 'out') return <Login onSuccess={() => setState('in')} />;
