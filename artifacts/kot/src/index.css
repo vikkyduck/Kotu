@@ -553,3 +553,6 @@ input.field:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px v
   .doc-card{padding:12px 13px;gap:11px}
   .doc-title{font-size:14.5px}
 }
+
+/* ── Профиль ──────────────────────────────────────────────────────────── */
+.profile-card{display:flex;align-items:center;gap:13px;padding:16px}
