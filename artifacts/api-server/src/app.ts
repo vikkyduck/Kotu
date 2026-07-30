@@ -1,4 +1,5 @@
 import express, { type Express } from "express";
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
@@ -26,6 +27,7 @@ app.use(
   }),
 );
 app.use(cors());
+app.use(cookieParser());
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 
