@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { reconcileStaleTranscriptions } from "./lib/reconcile";
+import { purgeExpiredSessions } from "./lib/auth";
 
 const rawPort = process.env["PORT"];
 
@@ -18,6 +19,8 @@ if (Number.isNaN(port) || port <= 0) {
 
 // Heal any transcriptions left stuck in "processing" by a previous restart
 // before we start accepting new uploads.
+void purgeExpiredSessions().catch((err) => logger.warn({ err }, "Не удалось почистить сессии"));
+
 void reconcileStaleTranscriptions().finally(() => {
   const server = app.listen(port, () => {
     logger.info({ port }, "Server listening");

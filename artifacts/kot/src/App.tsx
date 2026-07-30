@@ -1,5 +1,7 @@
+import { useState, useEffect, useCallback } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppProvider } from '@/hooks/use-app';
+import { Login } from '@/components/Login';
 import { useLiquidLight } from '@/hooks/use-liquid-light';
 import { TopBar } from '@/components/TopBar';
 import { Home } from '@/components/Home';
@@ -38,11 +40,36 @@ function AppContent() {
   );
 }
 
+/**
+ * Пускает в приложение только после входа. Пока идёт проверка сессии —
+ * пустой экран: мигать формой входа перед уже залогиненным человеком незачем.
+ */
+function AuthGate() {
+  const [state, setState] = useState<'checking' | 'in' | 'out'>('checking');
+
+  const check = useCallback(async () => {
+    try {
+      const res = await fetch('/api/me');
+      setState(res.ok ? 'in' : 'out');
+    } catch {
+      setState('out');
+    }
+  }, []);
+
+  useEffect(() => {
+    void check();
+  }, [check]);
+
+  if (state === 'checking') return null;
+  if (state === 'out') return <Login onSuccess={() => setState('in')} />;
+  return <AppContent />;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AppProvider>
-        <AppContent />
+        <AuthGate />
       </AppProvider>
     </QueryClientProvider>
   );
