@@ -31,15 +31,17 @@ printf '%s' "$KEY" | ssh "$SERVER" '
   sleep 2
   systemctl is-active kotu >/dev/null && echo "   сервис kotu: работает"
 
-  # Проверка: достучится ли VDS до api.openai.com с этим ключом
-  CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 15 \
-    -H "Authorization: Bearer $KEY" https://api.openai.com/v1/models || echo "000")
+  # Проверяем ключ ТАК ЖЕ, как ходит приложение — через транзит на дроплете.
+  # Прямой запрос к api.openai.com с российского адреса всегда даёт 403,
+  # и раньше эта проверка пугала ложной тревогой.
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 30 \
+    -H "Authorization: Bearer $KEY" http://127.0.0.1:8444/v1/models || echo "000")
   case "$CODE" in
-    200) echo "   ✅ OpenAI доступен НАПРЯМУЮ с сервера — прокси не нужен, транскрибация должна работать" ;;
-    401) echo "   ❌ OpenAI ответил 401 — ключ не принят (проверьте, что скопирован целиком)" ;;
-    403) echo "   ⚠️  OpenAI ответил 403 — российский IP заблокирован, нужен прокси (CF Worker)" ;;
-    000) echo "   ⚠️  api.openai.com не отвечает с сервера — нужен прокси (CF Worker)" ;;
-    *)   echo "   ⚠️  OpenAI ответил кодом $CODE — покажите это Клоду" ;;
+    200) echo "   ✅ Ключ принят — OpenAI доступен из приложения" ;;
+    401) echo "   ❌ Ключ не принят (проверьте, что скопирован целиком)" ;;
+    403) echo "   ⚠️  403 через транзит — похоже, транзит на дроплете отдаёт запрос напрямую. Покажите Клоду" ;;
+    000) echo "   ⚠️  Нет ответа — проверьте, жив ли транзит: systemctl status openai-proxy на дроплете" ;;
+    *)   echo "   ⚠️  Ответ $CODE — покажите это Клоду" ;;
   esac
 '
 unset KEY
