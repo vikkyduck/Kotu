@@ -513,3 +513,43 @@ input.field:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px v
 .login-wrap{max-width:400px;margin:0 auto;padding:14vh 18px 40px}
 .login-err{color:var(--danger,#c0392b);font-size:14.5px;margin:14px 0 0;text-align:center}
 .login-note{color:var(--ink-2);font-size:13.5px;margin:18px 0 0;text-align:center;line-height:1.5}
+
+/* ── Библиотека ───────────────────────────────────────────────────────── */
+.back-link{padding:8px 0;margin-bottom:10px;font-size:14.5px}
+.dim{opacity:.6}
+
+.dropzone{display:flex;align-items:center;gap:14px;padding:20px;margin-bottom:16px;cursor:pointer;
+  background:var(--panel);border:1.5px dashed var(--line);border-radius:var(--r-lg);transition:.16s var(--ease)}
+.dropzone:hover,.dropzone.over{border-color:var(--accent);background:var(--panel-2)}
+.dropzone.over{box-shadow:0 0 0 4px var(--accent-soft)}
+.dz-icon{display:flex;align-items:center;justify-content:center;width:42px;height:42px;flex-shrink:0;
+  border-radius:12px;background:var(--accent-soft);color:var(--accent)}
+.dz-icon .ic-svg{width:20px;height:20px}
+.dz-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.dz-text b{font-size:15.5px}
+.dz-text span{font-size:13px;color:var(--ink-2)}
+
+.doc-uploading{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--ink-2);padding:14px 16px}
+.doc-uploading .ic-svg{width:17px;height:17px;flex-shrink:0}
+
+.doc-list{display:flex;flex-direction:column;gap:10px}
+.doc-card{display:flex;align-items:center;gap:13px;padding:14px 16px;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow-sm)}
+.doc-card.error{border-color:var(--danger,#c0392b)}
+.doc-ico{display:flex;align-items:center;justify-content:center;width:36px;height:36px;flex-shrink:0;
+  border-radius:10px;background:var(--panel-2);color:var(--ink-2)}
+.doc-ico .ic-svg{width:17px;height:17px}
+.doc-body{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.doc-title{font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-meta{font-size:12.5px;color:var(--ink-2)}
+.doc-meta.busy{color:var(--accent)}
+.doc-meta.bad{color:var(--danger,#c0392b)}
+.doc-del{flex-shrink:0;padding:9px 12px;font-size:13.5px}
+.doc-del .ic-svg{width:16px;height:16px}
+
+@media (max-width:520px){
+  .dropzone{padding:16px;gap:11px}
+  .dz-text b{font-size:14.5px}
+  .doc-card{padding:12px 13px;gap:11px}
+  .doc-title{font-size:14.5px}
+}

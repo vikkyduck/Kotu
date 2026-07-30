@@ -14,6 +14,7 @@ import {
   ListTranscriptionsResponse,
 } from "@workspace/api-zod";
 import { enqueue } from "../../lib/jobs";
+import { decodeUploadName } from "../../lib/filename";
 
 // Long recordings (2–3 hours) are split server-side, so allow large uploads.
 // Files are streamed to disk (not held in memory) and split with ffmpeg.
@@ -167,7 +168,7 @@ router.post(
 
     const hideNames = req.body?.hideNames === "true";
     const markSpeakers = req.body?.markSpeakers === "true";
-    const filename = req.file.originalname || "запись";
+    const filename = decodeUploadName(req.file.originalname) || "запись";
     const inputPath = req.file.path;
     const title = filename.replace(/\.[^.]+$/, "") || "Запись";
 

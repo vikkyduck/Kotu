@@ -2,3 +2,4 @@
 export * from "./transcriptions";
 export * from "./users";
 export * from "./jobs";
+export * from "./documents";
