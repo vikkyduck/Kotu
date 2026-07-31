@@ -1,8 +1,6 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { eq, and, desc } from "drizzle-orm";
-import { tmpdir } from "node:os";
-import { mkdirSync } from "node:fs";
 import { db, transcriptionsTable, type TranscriptSegment } from "@workspace/db";
 import {
   GetTranscriptionParams,
@@ -14,6 +12,7 @@ import {
   ListTranscriptionsResponse,
 } from "@workspace/api-zod";
 import { enqueue } from "../../lib/jobs";
+import { UPLOAD_DIR } from "../../lib/paths";
 import { syncTranscriptionDoc, deleteTranscriptionDoc } from "../../lib/transcript-doc";
 import { decodeUploadName } from "../../lib/filename";
 
@@ -28,8 +27,6 @@ const ALLOWED_EXT =
 
 // Загруженное аудио должно пережить перезапуск сервера: задача из очереди может
 // взяться за него уже после деплоя, а системный /tmp к тому времени вычистят.
-const UPLOAD_DIR = process.env["UPLOAD_DIR"] ?? (process.env["NODE_ENV"] === "production" ? "/opt/kotu/uploads" : tmpdir());
-mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const upload = multer({
   dest: UPLOAD_DIR,

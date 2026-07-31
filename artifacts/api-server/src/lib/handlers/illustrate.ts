@@ -17,6 +17,7 @@ import { ask, type ImageAttachment } from "../claude";
 import { geminiJson } from "../gemini";
 import { renderIllustration } from "../images";
 import { registerHandler } from "../jobs";
+import { DECKS_DIR } from "../paths";
 import { deckToLibrary } from "../work-doc";
 import { logger } from "../logger";
 
@@ -29,12 +30,6 @@ const MAX_IMAGES = 12;
  * Картинки лежат на диске, а не в базе: их десятки мегабайт на колоду.
  * В проде — постоянный каталог, в разработке — tmp, чтобы не мусорить.
  */
-const DECKS_DIR =
-  process.env["DECKS_DIR"] ??
-  (process.env["NODE_ENV"] === "production"
-    ? "/opt/kotu/decks"
-    : path.join(os.tmpdir(), "kotu-decks"));
-
 interface IllustratePayload {
   slideIds?: number[];
   instruction?: string;
