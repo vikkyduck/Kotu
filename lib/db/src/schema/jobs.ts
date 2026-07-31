@@ -6,7 +6,8 @@ export type JobKind =
   | "lecture.plan"
   | "lecture.write"
   | "deck.storyboard"
-  | "deck.illustrate";
+  | "deck.illustrate"
+  | "deck.reslide";
 export type JobStatus = "queued" | "running" | "done" | "error";
 
 /**

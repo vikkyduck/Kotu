@@ -906,3 +906,84 @@ input.field,textarea.topic,.sheet textarea{font-size:16px}
 /* Хлебная крошка как цель переноса: подсветка объясняет, что сюда можно */
 .crumb-drop.drop-over{border-color:var(--accent-strong);background:var(--accent-soft);
   border-radius:var(--r-md)}
+
+/* ── Слайд крупно ─────────────────────────────────────────────────────────
+   Пластина 16:9 повторяет макеты экспорта (api-server/src/lib/pdf.ts, лист
+   960×540). Размеры — в cqw, поэтому один и тот же слайд верен и в колонке
+   телефона, и на весь экран: меняется только множитель. */
+.stg{position:relative;width:100%;aspect-ratio:16/9;container-type:inline-size;
+  overflow:hidden;display:flex;font-family:var(--sans);color:#e5d8c1}
+.stg-vert{flex-direction:column}
+.stg-row{display:flex;width:100%;height:100%;align-items:stretch;min-width:0}
+.stg-row.rev{flex-direction:row-reverse}
+.stg-col{display:flex;flex-direction:column;flex:1;min-width:0;gap:1.6cqw;overflow:hidden}
+.stg-mid{justify-content:center}
+/* Музейное поле 0.85in от листа 960pt — те же 6.4% ширины */
+.stg-pad{padding:6.4cqw}
+.stg-plate{position:relative;overflow:hidden;align-self:stretch;min-width:0}
+.stg-band{overflow:hidden;width:100%;position:relative}
+.stg-img{width:100%;height:100%;object-fit:cover;display:block}
+.stg-display{font-family:var(--serif);font-weight:600;line-height:1.06;
+  letter-spacing:-.015em;overflow-wrap:anywhere}
+.stg-body{line-height:1.35;overflow-wrap:anywhere;margin:0}
+.stg-eyebrow{text-transform:uppercase;letter-spacing:.24em;font-weight:500}
+.stg-flow{display:flex;flex-direction:column;gap:1.1cqw;flex:1;min-height:0;overflow:hidden}
+.stg-bullet{display:flex;gap:1.3cqw;line-height:1.25}
+.stg-dia{font-family:var(--serif);flex-shrink:0}
+.stg-quote{flex:1}
+.stg-cols{display:flex;flex:1;min-height:0;gap:3cqw;margin-top:.8cqw;border-color:#65594e}
+.stg-cell{flex:1;min-width:0;display:flex;flex-direction:column;gap:1cqw}
+.stg-cell+.stg-cell{border-left:1px solid;border-color:inherit;padding-left:3cqw}
+.stg-folio{position:absolute;left:6.4cqw;bottom:3.4cqw;letter-spacing:.2em}
+.stg-cap{position:absolute;left:3cqw;right:3cqw;bottom:2.4cqw;text-align:center;
+  text-transform:uppercase;letter-spacing:.18em}
+.stg-flowbox{display:flex;flex-direction:column;flex:1;min-height:0;
+  justify-content:center;align-items:center}
+.stg-step{display:flex;flex-direction:column;align-items:center;width:52%}
+.stg-node{border:1px solid;padding:1.4cqw 2cqw;width:100%;text-align:center;
+  display:flex;flex-direction:column;gap:.4cqw;justify-content:center;min-width:0}
+.stg-arrow{line-height:1;font-size:2.2cqw;padding:.5cqw 0}
+.stg-pillars{display:flex;gap:2.4cqw;flex:1;min-height:0;align-items:stretch;padding:1.5cqw 0}
+.stg-pillars .stg-node{flex:1;text-align:left}
+
+/* ── Окно просмотра слайда ────────────────────────────────────────────────
+   Ниже листа правок (z-index 60): лист может открыться поверх. */
+.vw{position:fixed;inset:0;z-index:50;background:var(--bg);
+  display:flex;flex-direction:column;animation:ovf .18s var(--ease)}
+.vw-top{display:flex;align-items:center;gap:12px;padding:10px 14px;
+  border-bottom:1px solid var(--line);background:var(--topbar-bg);flex-shrink:0}
+.vw-count{flex:1;min-width:0;font-size:13px;color:var(--ink-2);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vw-nav{display:flex;gap:8px}
+.vw-nav .iconbtn:disabled{opacity:.35;cursor:default}
+.vw-body{flex:1;overflow-y:auto;padding:16px 14px 20px;
+  max-width:820px;width:100%;margin:0 auto;-webkit-overflow-scrolling:touch}
+.vw-stagewrap{position:relative;border:1px solid var(--line);border-radius:var(--r-md);
+  overflow:hidden;margin-bottom:var(--sp-2)}
+.vw-mark{position:absolute;right:8px;top:8px;font-size:11px;letter-spacing:.04em;
+  padding:4px 8px;border-radius:var(--r-sm);background:var(--accent);color:#e5d8c1}
+.vw-panel{margin-bottom:var(--sp-2)}
+.vw-panel-h{font-family:var(--serif);font-size:19px;font-weight:600;margin-bottom:10px}
+.vw-field{display:block;margin-bottom:12px}
+.vw-field .fieldlbl{display:block}
+.vw-card{margin-bottom:12px}
+.vw-card .field{margin-bottom:6px}
+.vw-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+/* Поля внутри окна короче обычных: их тут много, и всё должно быть видно */
+.vw textarea.topic{min-height:0}
+.vw select.field{width:100%;border:1px solid var(--line);background:var(--bg);
+  color:var(--ink);border-radius:var(--r-sm);padding:11px 12px;font:inherit;font-size:16px}
+.vw-foot{display:flex;gap:10px;padding:12px 14px calc(12px + env(safe-area-inset-bottom));
+  border-top:1px solid var(--line);background:var(--topbar-bg);flex-shrink:0}
+/* Открыть слайд из раскадровки — тихой кнопкой в строке номера */
+.sb-open{margin-left:auto;background:none;border:none;cursor:pointer;
+  color:var(--accent-strong);font:inherit;font-size:11px;letter-spacing:.04em;
+  display:inline-flex;align-items:center;gap:5px;padding:6px 2px}
+.sb-open .ic-svg{width:14px;height:14px}
+.sb-open:hover{color:var(--ink)}
+@media(min-width:760px){
+  .vw-body{padding:22px 20px 28px}
+  /* На большом экране пластина не уезжает: автор печатает и видит слайд.
+     На телефоне липкой её не делаем — там весь экран нужен полям. */
+  .vw-stagewrap{position:sticky;top:0;z-index:2;background:var(--bg)}
+}

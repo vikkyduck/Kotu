@@ -101,7 +101,17 @@ router.get("/decks/:id", async (req, res): Promise<void> => {
     .from(deckImagesTable)
     .where(eq(deckImagesTable.deckId, deck.id));
 
-  res.json({ ...deck, slides, images });
+  // Палитра нужна фронту, чтобы показать слайд крупно в цветах серии, а не
+  // «примерно похоже». Отдаём только цвета: промпты стиля — не дело браузера.
+  const [pack] = deck.stylePackId
+    ? await db
+        .select({ palette: stylePacksTable.palette })
+        .from(stylePacksTable)
+        .where(eq(stylePacksTable.id, deck.stylePackId))
+        .limit(1)
+    : [];
+
+  res.json({ ...deck, slides, images, palette: pack?.palette ?? null });
 });
 
 router.post("/decks", async (req, res): Promise<void> => {
@@ -292,6 +302,53 @@ router.post("/decks/:id/approve", async (req, res): Promise<void> => {
   await db
     .update(decksTable)
     .set({ status: "drawing", statusMessage: "В очереди…", error: null })
+    .where(eq(decksTable.id, deck.id));
+  res.status(202).json({ ok: true });
+});
+
+/**
+ * Переделать текст слайда словами автора. Правка руками — это PATCH выше;
+ * здесь автор объясняет, что не так, а формулирует модель.
+ */
+router.post("/decks/:id/slides/:sid/rewrite", async (req, res): Promise<void> => {
+  const deck = await loadDeck(req.params.id, req.user!.id);
+  if (!deck) {
+    res.status(404).json({ message: "Презентация не найдена" });
+    return;
+  }
+  if (deck.status !== "ready" && deck.status !== "storyboard_ready") {
+    res.status(409).json({ message: "Подождите, я ещё работаю" });
+    return;
+  }
+
+  const sid = Number(req.params.sid);
+  const [slide] = Number.isInteger(sid)
+    ? await db
+        .select({ id: deckSlidesTable.id })
+        .from(deckSlidesTable)
+        .where(and(eq(deckSlidesTable.id, sid), eq(deckSlidesTable.deckId, deck.id)))
+        .limit(1)
+    : [];
+  if (!slide) {
+    res.status(404).json({ message: "Слайд не найден" });
+    return;
+  }
+
+  const instruction =
+    typeof req.body?.instruction === "string" ? req.body.instruction.trim().slice(0, 2000) : "";
+  if (instruction === "") {
+    res.status(400).json({ message: "Скажите, что изменить" });
+    return;
+  }
+
+  // Сначала задача, потом статус: упади enqueue после смены статуса —
+  // колода зависла бы в «работаю» без задачи в очереди.
+  await enqueue("deck.reslide", deck.id, { slideId: slide.id, instruction, back: deck.status });
+  // Сообщение сразу по делу: оно же становится заголовком панели работы,
+  // и «раскладываю по слайдам» на правке одного слайда пугало бы зря.
+  await db
+    .update(decksTable)
+    .set({ status: "storyboarding", statusMessage: "Переделываю слайд…", error: null })
     .where(eq(decksTable.id, deck.id));
   res.status(202).json({ ok: true });
 });

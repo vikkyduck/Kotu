@@ -1,63 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/hooks/use-app';
 import { Icon } from '@/lib/icons';
-
-type DeckStatus = 'storyboarding' | 'storyboard_ready' | 'drawing' | 'ready' | 'error';
+import { SlideViewer } from './SlideViewer';
+import {
+  LAYOUT_RU,
+  type DeckStatus,
+  type DeckFull,
+  type DeckImage,
+  type DiagramSpec,
+} from '@/lib/deck';
 
 interface DeckListItem {
   id: number;
   title: string;
   status: DeckStatus;
-}
-
-interface SlideContent {
-  eyebrow?: string;
-  title?: string;
-  subtitle?: string;
-  bullets?: string[];
-  cards?: { title: string; body: string }[];
-  quote?: string;
-  attribution?: string;
-  question?: string;
-  plate?: string;
-}
-
-/** Схема diagram-слайда, которую рисует код (контракт — lib/db, DiagramSpec). */
-interface DiagramSpec {
-  kind: 'flow' | 'pillars';
-  items: { label: string; sub?: string }[];
-}
-
-interface DeckSlide {
-  id: number;
-  ord: number;
-  layout: string;
-  content: SlideContent;
-  notes: string;
-  imageBrief: string | null;
-  imageSide: 'left' | 'right';
-  imageId: number | null;
-  imageStatus: 'none' | 'queued' | 'drawing' | 'ready' | 'error';
-  diagramSpec: DiagramSpec | null;
-}
-
-interface DeckImage {
-  id: number;
-  slideId: number;
-  attempt: number;
-  status: 'drawing' | 'ready' | 'rejected' | 'error';
-  verdict: string | null;
-}
-
-interface DeckFull {
-  id: number;
-  title: string;
-  status: DeckStatus;
-  statusMessage: string;
-  error: string | null;
-  stylePackId: number | null;
-  slides: DeckSlide[];
-  images: DeckImage[];
 }
 
 /** Стилевой пакет из GET /style-packs — фронту нужны только id и имя. */
@@ -79,17 +35,6 @@ interface DocItem {
   kind: string;
   status: string;
 }
-
-const LAYOUT_RU: Record<string, string> = {
-  cover: 'Обложка',
-  divider: 'Разделитель',
-  theory: 'Теория',
-  quote: 'Цитата',
-  clinical: 'Клинический фрагмент',
-  comparison: 'Сопоставление',
-  final: 'Финал',
-  diagram: 'Схема',
-};
 
 const DOC_KIND_RU: Record<string, string> = {
   book: 'книга',
@@ -155,6 +100,8 @@ export function Slides() {
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
   const [deck, setDeck] = useState<DeckFull | null>(null);
+  /** Какой слайд открыт крупно — индекс в колоде; null = просмотр закрыт. */
+  const [openSlide, setOpenSlide] = useState<number | null>(null);
 
   const [pickedLecture, setPickedLecture] = useState<number | null>(null);
   const [docsList, setDocsList] = useState<DocItem[]>([]);
@@ -236,6 +183,7 @@ export function Slides() {
       setDeck(null);
       return;
     }
+    setOpenSlide(null);
     void loadOne(openId);
   }, [openId, loadOne]);
 
@@ -349,6 +297,27 @@ export function Slides() {
       } else {
         const data = await res.json().catch(() => ({}));
         toast(data.message ?? 'Не удалось запустить перерисовку');
+      }
+    } catch {
+      toast('Нет связи с сервером. Попробуйте ещё раз.');
+    }
+  };
+
+  /** Переделать текст слайда словами автора — работает и до, и после рисования. */
+  const rewrite = async (sid: number, instruction: string) => {
+    if (!deck) return;
+    try {
+      const res = await fetch(`/api/decks/${deck.id}/slides/${sid}/rewrite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instruction }),
+      });
+      if (res.ok) {
+        toast('Переделываю слайд — покажу, когда будет готово');
+        await loadOne(deck.id);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast(data.message ?? 'Не удалось переделать слайд');
       }
     } catch {
       toast('Нет связи с сервером. Попробуйте ещё раз.');
@@ -470,15 +439,21 @@ export function Slides() {
           </div>
         )}
 
+        {/* Ошибка правки колоду не роняет: статус остаётся рабочим, но сказать
+            автору, что не вышло, надо — иначе указание пропадает молча. */}
+        {deck.status !== 'error' && deck.error && (
+          <p className="tnote bad"><Icon name="info" /> {deck.error}</p>
+        )}
+
         {working && (
           <div className="panel bigjob">
             <div className="bi"><Icon name="clock" /></div>
+            {/* Заголовок — из сообщения о ходе работы: «рисую образ 2 из 5»
+                и «переделываю слайд» точнее общей фразы про раскладку. */}
             <p className="pstat">
-              {deck.status === 'drawing' ? 'Рисую образы' : 'Раскладываю по слайдам'}
+              {deck.statusMessage ||
+                (deck.status === 'drawing' ? 'Рисую образы' : 'Раскладываю по слайдам')}
             </p>
-            {deck.statusMessage !== '' && (
-              <p className="preassure" style={{ marginBottom: 6 }}>{deck.statusMessage}</p>
-            )}
             <p className="preassure">
               <b>Можно закрыть страницу.</b> Работа не пропадёт.
             </p>
@@ -489,13 +464,16 @@ export function Slides() {
         {deck.status === 'storyboard_ready' && (
           <>
             <p className="sub">
-              Посмотрите раскадровку. Образы можно править, убирать и добавлять —
-              рисовать начну только после утверждения.
+              Посмотрите раскадровку. Любой слайд можно открыть крупно и переделать —
+              руками или словами. Рисовать начну только после утверждения.
             </p>
             {deck.slides.map((s, i) => (
               <div key={s.id} className="panel sb-slide">
                 <div className="sb-num">
                   {String(i + 1).padStart(2, '0')} · {LAYOUT_RU[s.layout] ?? s.layout}
+                  <button className="sb-open" onClick={() => setOpenSlide(i)}>
+                    <Icon name="eye" /> открыть слайд
+                  </button>
                 </div>
                 {(s.content.title || s.content.quote) && (
                   <h3 className="sb-title">{s.content.title || s.content.quote}</h3>
@@ -588,8 +566,8 @@ export function Slides() {
               <p className="doc-meta" style={{ marginBottom: 10 }}>Стиль: {packName}</p>
             )}
             <p className="tnote">
-              <Icon name="info" /> Не нравится образ — нажмите на слайд и скажите своими
-              словами, что изменить.
+              <Icon name="info" /> Нажмите на слайд — он откроется крупно. Там можно
+              править текст руками или сказать словами, что переделать.
             </p>
 
             <div className="sgrid">
@@ -597,18 +575,7 @@ export function Slides() {
                 const doubted = lastImage.get(s.id)?.status === 'rejected';
                 const canRedraw = s.imageBrief !== null;
                 return (
-                  <div
-                    key={s.id}
-                    className={`slide ${canRedraw ? '' : 'still'}`}
-                    onClick={
-                      canRedraw
-                        ? () =>
-                            openSheet('Что изменить в этом образе?', 'C', (txt) =>
-                              void redraw(s.id, txt),
-                            )
-                        : undefined
-                    }
-                  >
+                  <div key={s.id} className="slide" onClick={() => setOpenSlide(i)}>
                     {s.imageId !== null ? (
                       <div className="th th-img">
                         <img
@@ -633,9 +600,9 @@ export function Slides() {
                       {s.imageStatus === 'error' ? (
                         <><Icon name="loop" /> образ не нарисовался — нажмите</>
                       ) : canRedraw ? (
-                        <><Icon name="edit" /> нажмите, чтобы изменить</>
+                        <><Icon name="eye" /> открыть и изменить</>
                       ) : (
-                        <>{LAYOUT_RU[s.layout] ?? s.layout}</>
+                        <><Icon name="eye" /> {LAYOUT_RU[s.layout] ?? s.layout}</>
                       )}
                     </div>
                   </div>
@@ -656,6 +623,21 @@ export function Slides() {
               </a>
             </div>
           </>
+        )}
+
+        {/* Слайд крупно — поверх экрана: правки руками и указание нейронке.
+            Индекс, а не id: стрелками автор ходит по колоде, не закрывая окно. */}
+        {openSlide !== null && deck.slides[openSlide] && (
+          <SlideViewer
+            deck={deck}
+            index={openSlide}
+            onIndex={setOpenSlide}
+            onClose={() => setOpenSlide(null)}
+            patchSlide={patchSlide}
+            redraw={redraw}
+            rewrite={rewrite}
+            toast={toast}
+          />
         )}
       </section>
     );
