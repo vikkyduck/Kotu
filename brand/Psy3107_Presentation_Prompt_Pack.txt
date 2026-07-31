@@ -1,0 +1,377 @@
+PSY3107 — PRESENTATION IMAGE & SLIDE PROMPT PACK
+Версия 1.0 · Академический сюрреализм и винтажная гравюра
+
+======================================================================
+1. КАК ИСПОЛЬЗОВАТЬ
+======================================================================
+
+Для генерации отдельной картинки:
+1) загрузите PDF-брендбук;
+2) при возможности приложите 1–3 эталонных изображения из брендбука;
+3) выберите функцию слайда: обложка, разделитель, теория, цитата,
+   клинический фрагмент, сравнение или финал;
+4) вставьте MASTER IMAGE PROMPT;
+5) замените переменные в квадратных скобках;
+6) добавьте NEGATIVE PROMPT;
+7) попросите сгенерировать только изображение — без текста и логотипа.
+
+Для генерации всей презентации:
+1) загрузите PDF-брендбук и этот TXT-файл;
+2) вставьте WHOLE DECK INSTRUCTION из раздела 10;
+3) приложите содержание презентации;
+4) укажите формат 16:9 и количество слайдов.
+
+Главный принцип:
+НЕ КОПИРОВАТЬ ОДИН СЮЖЕТ. СОХРАНЯТЬ ОДИН ВИЗУАЛЬНЫЙ ЯЗЫК.
+
+
+======================================================================
+2. НЕИЗМЕННЫЕ КОНСТАНТЫ СТИЛЯ
+======================================================================
+
+Движение: «Архивный сон».
+
+Визуальный язык:
+- винтажная академическая гравюра;
+- офорт на меди, акватинта, уголь, тушь;
+- перекрёстная штриховка и видимый печатный нажим;
+- старая текстурированная бумага;
+- сюрреалистический архивный коллаж;
+- двойная экспозиция и фрагментация;
+- анатомическая убедительность;
+- интеллектуальная и немного меланхоличная атмосфера;
+- тайна без хоррора и оккультизма.
+
+Палитра:
+- Archive Black — #1D1E24
+- Deep Indigo — #232638
+- Charcoal — #2B292B
+- Aged Paper — #D8C7A7
+- Deep Sepia — #C4AD87
+- Etching Ink — #302B27
+- Burnt Umber — #7B432F
+- Museum Indigo — #677184
+- Dried Carmine — #955A52
+- Dull Gold — только как редкий микроакцент
+
+Исторические ориентиры:
+- Альбрехт Дюрер — качество линии и штриховки;
+- Джованни Баттиста Пиранези — сложность и давление пространства;
+- Одилон Редон — сновидческая дымка и символическая тишина;
+- Макс Эрнст — коллажная странность.
+
+Используйте ориентиры как сочетание качеств, а не как копирование
+конкретного произведения.
+
+
+======================================================================
+3. MASTER IMAGE PROMPT — ENGLISH
+======================================================================
+
+[SUBJECT AND PSYCHOANALYTIC IDEA], visualized as a plate from an
+imaginary late-19th-century psychoanalytic atlas. Vintage academic
+copper etching and surrealist archival collage on aged textured paper.
+Fine hand-drawn lines, dense cross-hatching, aquatint shadows, charcoal
+and ink details, restrained watercolor washes. Anatomical precision
+gradually transforms into [SECOND METAPHOR: botanical roots / straight
+labyrinth / geological layers / empty study / neural branches / archive
+fragments]. Layered double exposure, carefully controlled
+fragmentation, convincing historical printmaking materiality.
+
+Muted museum palette: sepia, deep indigo, burnt umber and charcoal gray,
+with one tiny muted carmine OR dull-gold accent. Intellectual,
+contemplative, sophisticated, dreamlike and slightly melancholic, but
+never frightening. A feeling of psychological depth and historical
+archive. Meticulously crafted, refined, tactile, high detail.
+
+Presentation composition, [ASPECT RATIO]. Place the main visual mass
+[LEFT / RIGHT / CENTER-LOW]. Preserve [35–45%] quiet low-detail aged
+paper as a safe area for slide typography on the [LEFT / RIGHT / TOP].
+No lettering inside the image.
+
+
+======================================================================
+4. MASTER IMAGE PROMPT — РУССКИЙ КАРКАС
+======================================================================
+
+[СЮЖЕТ И ПСИХОАНАЛИТИЧЕСКАЯ ИДЕЯ] как лист из несуществующего
+психоаналитического атласа конца XIX века. Винтажная академическая
+гравюра на меди, офорт, акватинта и сюрреалистический архивный коллаж
+на старой текстурированной бумаге. Тонкий ручной штрих, перекрёстная
+штриховка, уголь и тушь, сдержанные акварельные размывки. Анатомическая
+точность постепенно переходит в [КОРНИ / ПРЯМОУГОЛЬНЫЙ ЛАБИРИНТ /
+ГЕОЛОГИЧЕСКИЕ СЛОИ / ПУСТОЙ КАБИНЕТ / НЕЙРОННЫЕ ВЕТВИ / АРХИВНЫЕ
+ФРАГМЕНТЫ]. Двойная экспозиция, выверенная фрагментация, убедительная
+материальность старой печати.
+
+Приглушённая музейная палитра: сепия, глубокий индиго, жжёная умбра
+и угольно-серый; одна крошечная точка приглушённого кармина ИЛИ
+тусклого золота. Интеллектуально, созерцательно, изысканно,
+сновидчески, немного меланхолично, но не страшно. Психологическая
+глубина и ощущение исторического архива.
+
+Композиция для презентации [16:9 / 4:5 / 3:2]. Основная визуальная
+масса находится [СЛЕВА / СПРАВА / ВНИЗУ ПО ЦЕНТРУ]. Сохранить
+[35–45%] спокойного поля старой бумаги без активных деталей
+на [ЛЕВОЙ / ПРАВОЙ / ВЕРХНЕЙ] стороне под типографику.
+Не добавлять текст внутрь изображения.
+
+
+======================================================================
+5. NEGATIVE PROMPT
+======================================================================
+
+cartoon, anime, manga, 3d render, CGI, cheerful, cute, childlike,
+bright colors, saturated colors, neon, corporate Memphis art,
+flat vector illustration, simplistic, photorealism, glossy surfaces,
+plastic, stock photography, smiling consultant, motivational poster,
+low resolution, blurry, text, letters, typography, logo, watermark,
+gore, horror, occult symbols, demonic imagery, jump scare,
+cracked face used as horror, gears inside the brain, glowing eye,
+steampunk cliché, fantasy portal, arches, archways, cathedral arches,
+repeating ornamental frames, excessive gold, excessive red,
+multiple competing metaphors, cluttered composition
+
+
+======================================================================
+6. ГОТОВЫЕ ПРОМПТЫ ДЛЯ ИЗОБРАЖЕНИЙ
+======================================================================
+
+6.1. ОБЛОЖКА ПРЕЗЕНТАЦИИ · 16:9
+
+An androgynous anatomical profile from a late-19th-century medical
+atlas, the cranial section revealing a straight-walled labyrinth and
+delicate vascular roots that continue into a quiet psychological
+landscape. Vintage copper etching, aquatint, charcoal, ink and faint
+watercolor wash on aged paper. The figure occupies the right 58% of
+the frame; the left 42% is calm, low-detail paper for a large title.
+Muted sepia, deep indigo, burnt umber and charcoal, one tiny muted
+carmine point. Sophisticated, contemplative, dreamlike, not frightening.
+16:9, no text.
+
+6.2. РАЗДЕЛИТЕЛЬ · 16:9
+
+A fragment of a classical plaster profile merging with an anatomical
+brain section, archive paper layers and a straight geometric labyrinth.
+The object occupies the far right third; the left two-thirds dissolve
+into quiet indigo aquatint and aged paper. Museum-grade vintage
+engraving, cross-hatching, surreal collage, restrained watercolor mist.
+Intellectual, melancholy, mysterious without horror. 16:9, no text.
+
+6.3. ТЕОРЕТИЧЕСКИЙ СЛАЙД · 3:2
+
+An anatomical brain cutaway becoming geological strata and a
+rectilinear labyrinth, rendered as a scholarly plate from an imaginary
+psychoanalytic atlas. Clear central structure, dense detail on the
+right, calm paper margin on the left for explanatory text. Fine
+copper-engraving linework, aquatint shadow, sepia and deep indigo.
+No horror, no gears, no glowing eye, no text.
+
+6.4. ЦИТАТА · 16:9
+
+An engraved hand and forearm resting at the lower left, with nerves
+slowly becoming botanical roots and thin ink branches. The right 45%
+is quiet aged paper with a very soft indigo wash for a quotation.
+Vintage academic etching, aquatint, intimate and contemplative,
+one tiny dull-gold accent, no text.
+
+6.5. КЛИНИЧЕСКИЙ ФРАГМЕНТ · 16:9
+
+A late-19th-century psychoanalytic study with two empty chairs and a
+writing desk. The room gradually dissolves into botanical plates,
+neural branches and indigo dream mist. The scene feels recently
+occupied, not abandoned or frightening. Wide composition with calm
+upper-left space for a short clinical fragment. Fine etching and
+aquatint on aged paper, no text.
+
+6.6. СРАВНЕНИЕ ДВУХ ПОНЯТИЙ · 16:9
+
+A single archival plate divided by a subtle paper seam: on one side,
+an anatomically precise profile with visible neural roots; on the other,
+the same structure becomes a straight labyrinth and geological layers.
+The halves belong to one image, not a modern split-screen infographic.
+Muted sepia and deep indigo, vintage engraving, contemplative,
+no labels, no text.
+
+6.7. ФИНАЛЬНЫЙ СЛАЙД · 16:9
+
+A quiet archival desk after a reading session: one open blank folio,
+a graphite pencil, a small specimen jar and a faint botanical-neural
+shadow drifting across the paper. Most of the frame remains calm and
+empty for a final statement. Vintage etching and aquatint, restrained
+sepia and indigo, subtle dull-gold point, no text.
+
+
+======================================================================
+7. ПРАВИЛА КОМПОЗИЦИИ СЛАЙДОВ
+======================================================================
+
+- Формат: 16:9.
+- Один слайд — один доминирующий архивный лист.
+- Изображение занимает 40–60% слайда.
+- Безопасное поле под текст: не менее 35% ширины.
+- Заголовок и изображение не конкурируют по детализации.
+- Основной текст располагается только на спокойном фоне.
+- Активная фактура не должна находиться под мелким текстом.
+- В одном изображении соединяются максимум две метафорические системы.
+- Красный или золотой акцент — один на слайд и очень маленький.
+- Изображение всегда генерируется без текста; текст добавляется
+  в PowerPoint, Keynote, Google Slides или Figma.
+- Не повторять профиль, мозг, глаз или лабиринт на каждом слайде.
+- Чередовать: человек / интерьер / объект / анатомический фрагмент /
+  пустое поле / архивный натюрморт.
+
+
+======================================================================
+8. ТИПОГРАФИКА
+======================================================================
+
+Основная пара:
+- Display: Cormorant Garamond Semibold.
+- Body/UI: Manrope Regular / Medium.
+
+Надёжная системная замена:
+- Display: Georgia.
+- Body/UI: Arial или Aptos.
+
+Иерархия для 16:9:
+- Обложка: 56–72 pt.
+- Заголовок слайда: 34–44 pt.
+- Крупная цитата: 30–40 pt.
+- Подзаголовок: 22–26 pt.
+- Основной текст: 18–22 pt.
+- Подпись / folio: 11–13 pt.
+
+Правила:
+- левое выравнивание;
+- короткие заголовки;
+- максимум 6–8 строк основного текста;
+- длина строки 45–65 знаков;
+- не ставить белый текст прямо на детализированную гравюру;
+- использовать римскую нумерацию для разделов и арабскую для folio.
+
+
+======================================================================
+9. МАКЕТЫ СЛАЙДОВ
+======================================================================
+
+ОБЛОЖКА
+- текст слева 42%;
+- изображение справа 58%;
+- название в 2–4 строки;
+- маленькая строка темы / автора;
+- один folio внизу.
+
+РАЗДЕЛИТЕЛЬ
+- короткое название раздела;
+- 60–70% спокойного поля;
+- изображение как фрагмент или край архивной пластины;
+- без основного текста.
+
+ТЕОРИЯ
+- заголовок и тезис слева;
+- одна крупная гравюра справа;
+- 3–5 коротких пунктов или один абзац;
+- подпись к изображению как музейный folio.
+
+ЦИТАТА
+- одна цитата до 35 слов;
+- маленький источник;
+- изображение занимает противоположный край;
+- много воздуха.
+
+КЛИНИЧЕСКИЙ ФРАГМЕНТ
+- короткий фрагмент в спокойной бумажной колонке;
+- изображение интерьера или объекта, не портрет;
+- вопрос к материалу выделяется умброй, но не помещается в карточку.
+
+СРАВНЕНИЕ
+- одна общая гравюра с естественным швом;
+- два текстовых столбца;
+- не использовать интерфейсные карточки, таблицу или яркий split-screen.
+
+ФИНАЛ
+- один вывод;
+- один спокойный архивный объект;
+- без «Спасибо за внимание»;
+- завершить вопросом, принципом или направлением дальнейшего чтения.
+
+
+======================================================================
+10. WHOLE DECK INSTRUCTION — ДЛЯ НЕЙРОСЕТИ
+======================================================================
+
+Используй приложенный брендбук Psy3107 как обязательный визуальный
+источник. Создай презентацию 16:9 на русском языке по предоставленному
+содержанию.
+
+Сохраняй систему «Архивный сон»: винтажная академическая гравюра,
+сюрреалистический архивный коллаж, старая бумага, сепия, глубокий
+индиго, жжёная умбра и угольный серый. Кармин или тусклое золото —
+только редкий микроакцент.
+
+Каждый слайд должен иметь одну ясную функцию и один главный тезис.
+Не делай dashboard, UI-kit, набор одинаковых карточек или современную
+корпоративную инфографику. Используй один доминирующий архивный образ,
+широкое спокойное поле под текст и музейную типографику.
+
+Для каждого слайда сначала определи его тип: обложка, разделитель,
+теория, цитата, клинический фрагмент, сравнение или финал. Затем выбери
+подходящий макет из брендбука.
+
+Изображения генерируй отдельно, без текста и логотипов. Сохраняй
+анатомическую убедительность, ручную штриховку, акватинту и бумажную
+материальность. Не повторяй один и тот же сюжет на всех слайдах.
+Чередуй человека, интерьер, объект, анатомический фрагмент и пустой
+архивный натюрморт.
+
+Запрещены: cartoon, anime, 3D, corporate Memphis, яркие и насыщенные
+цвета, фотореализм, стоковые люди, мозг из шестерёнок, светящийся глаз,
+хоррор, gore, оккультные символы, арки, текст внутри изображений,
+водяные знаки.
+
+Типографика: Cormorant Garamond для заголовков, Manrope для текста.
+Если шрифты недоступны — Georgia и Arial/Aptos. Не уменьшай основной
+текст ниже 18 pt. Не размещай мелкий текст поверх активной фактуры.
+
+Перед финализацией проверь:
+1) все слайды выглядят частью одного найденного атласа;
+2) сюжетные изображения различаются;
+3) на каждом слайде есть безопасное поле для чтения;
+4) кармин и золото не используются одновременно;
+5) нет арок, 3D, неона, фотoreализма и визуального хоррора;
+6) текст не встроен в изображения;
+7) презентация остаётся понятной без декоративного объяснения.
+
+
+======================================================================
+11. КОРОТКАЯ КОМАНДА ДЛЯ ГЕНЕРАЦИИ ОДНОГО СЛАЙДА
+======================================================================
+
+Создай слайд 16:9 в системе Psy3107 «Архивный сон».
+Тип слайда: [ТИП].
+Главный тезис: [ТЕЗИС].
+Текст: [ТЕКСТ].
+Изображение: [СЮЖЕТ].
+
+Используй макет и визуальные правила из приложенного брендбука.
+Сгенерируй изображение без текста, оставив [СЛЕВА / СПРАВА]
+не менее 40% спокойного поля под типографику. Добавь текст средствами
+слайда. Не используй арки, cartoon, anime, 3D, яркие цвета,
+фотореализм, шестерёнки, светящиеся глаза и хоррор.
+
+
+======================================================================
+12. ФИНАЛЬНАЯ ПРОВЕРКА СХОЖЕСТИ
+======================================================================
+
+Результат соответствует Psy3107, если:
+- выглядит как музейный лист, а не цифровая иллюстрация;
+- странность рождается из точности, а не из спецэффекта;
+- бумага, штрих и акватинта материально убедительны;
+- изображение сновидческое, но не страшное;
+- палитра приглушённая;
+- композиция оставляет место для текста;
+- отсутствуют арки и буквальные психотерапевтические клише;
+- серия разнообразна по сюжетам, но едина по технике.
+
