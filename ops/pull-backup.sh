@@ -14,8 +14,10 @@ set -euo pipefail
 SERVER=${SERVER:-root@5.129.198.180}
 DEST=${DEST:-"$HOME/kotu-backups"}
 
+# Внимание: зеркало синхронизируется с --delete, поэтому в $DEST нельзя
+# держать ничего своего — лишнее будет стёрто. Лог поэтому лежит снаружи.
 mkdir -p "$DEST"
-echo "==> Забираю бэкап с $SERVER в $DEST"
+echo "==> $(date '+%d.%m.%Y %H:%M') — забираю бэкап с $SERVER в $DEST"
 rsync -az --delete "$SERVER:/opt/backups/" "$DEST/"
 
 echo
