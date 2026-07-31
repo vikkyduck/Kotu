@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/hooks/use-app';
+import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
 import { Icon } from '@/lib/icons';
 
 interface Doc {
@@ -64,13 +65,16 @@ export function Lecture() {
   const openId = activeLectureId;
   const [lecture, setLecture] = useState<LectureFull | null>(null);
 
-  const [topic, setTopic] = useState('');
+  // Бриф — тоже черновик: он ценнее всего, что есть на этом экране.
+  const [topic, setTopic, clearTopic] = useDraft('lecture-topic', screen === 's-lecture');
   const [audience, setAudience] = useState('студенты');
   const [duration, setDuration] = useState(150);
   const [picked, setPicked] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
+
+  useUnsavedWarning(screen === 's-lecture' && openId === null && topic.trim() !== '');
 
   const loadDocs = useCallback(async () => {
     const d = await fetch('/api/documents').then((r) => (r.ok ? r.json() : []));
@@ -132,7 +136,7 @@ export function Lecture() {
       });
       if (res.ok) {
         const created = await res.json();
-        setTopic('');
+        clearTopic();
         setPicked([]);
         openLecture(created.id);
       } else {
@@ -354,6 +358,11 @@ export function Lecture() {
           onChange={(e) => setTopic(e.target.value)}
           placeholder="Например: защитные механизмы личности — для студентов второго курса. Начать с Фрейда и дойти до современных взглядов, с клиническими примерами."
         />
+        {topic.trim() !== '' && (
+          <p className="draft-note">
+            <Icon name="check" /> Черновик сохранён в этом браузере — вкладку можно закрыть.
+          </p>
+        )}
 
         <div className="fieldlbl">Для кого?</div>
         <div className="pills">

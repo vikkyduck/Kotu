@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/hooks/use-app';
+import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
 import { Icon } from '@/lib/icons';
 import { SlideViewer } from './SlideViewer';
 import {
@@ -91,7 +92,9 @@ export function Slides() {
   const [pickedLecture, setPickedLecture] = useState<number | null>(null);
   const [docsList, setDocsList] = useState<DocItem[]>([]);
   const [pickedDoc, setPickedDoc] = useState<number | null>(null);
-  const [rawText, setRawText] = useState('');
+  // Вставленный текст — черновик: до нажатия кнопки сервер о нём не знает,
+  // поэтому он переживает закрытие вкладки сам.
+  const [rawText, setRawText, clearRawText] = useDraft('deck-text', screen === 's-slides');
   const [busy, setBusy] = useState(false);
 
   // Стиль серии: список доступных пакетов и явный выбор автора.
@@ -140,6 +143,7 @@ export function Slides() {
 
   // Форма новой презентации — то, что видно, когда ничего не открыто.
   const creating = openId === null;
+  useUnsavedWarning(screen === 's-slides' && creating && rawText.trim() !== '');
 
   useEffect(() => {
     if (screen === 's-slides' && creating) void loadLectures();
@@ -214,7 +218,7 @@ export function Slides() {
       });
       if (res.ok) {
         const created = await res.json();
-        setRawText('');
+        clearRawText();
         setPickedLecture(null);
         setPickedPack(null);
         openDeck(created.id);
@@ -696,6 +700,12 @@ export function Slides() {
             onChange={(e) => setRawText(e.target.value)}
             placeholder="Вставьте текст выступления — хотя бы пару абзацев."
           />
+          {rawText.trim() !== '' && (
+            <p className="draft-note">
+              <Icon name="check" /> Черновик сохранён в этом браузере — вкладку можно закрыть.
+              На сервер текст уедет, когда нажмёте кнопку.
+            </p>
+          )}
 
           {/* Стиль серии показываем, только когда есть из чего выбирать */}
           {packs.length > 1 && (
