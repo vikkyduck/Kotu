@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { purgeExpiredSessions } from "./lib/auth";
 import { requeueOrphans, startWorker } from "./lib/jobs";
+import { sweepTranscriptionsToLibrary } from "./lib/transcript-doc";
 import { registerTranscribeHandler } from "./lib/handlers/transcribe";
 import { registerIngestHandler } from "./lib/handlers/ingest";
 import { registerLectureHandlers } from "./lib/handlers/lecture";
@@ -38,6 +39,14 @@ void requeueOrphans()
   })
   .catch((err) => logger.error({ err }, "Не смог вернуть задачи в очередь"))
   .finally(() => startWorker());
+
+// Готовые расшифровки без библиотечной копии: бэкфилл старых и самолечение
+// после сбоев. Идемпотентно, поэтому просто на каждом старте.
+void sweepTranscriptionsToLibrary()
+  .then((n) => {
+    if (n > 0) logger.info({ count: n }, "Отправил расшифровки в библиотеку");
+  })
+  .catch((err) => logger.error({ err }, "Сверка расшифровок с библиотекой не удалась"));
 
 void Promise.resolve().finally(() => {
   const server = app.listen(port, () => {

@@ -6,7 +6,7 @@ type Theme = 'light' | 'dark';
 interface FixSheetState {
   isOpen: boolean;
   title: string;
-  kind: 'A' | 'B' | 'C';
+  kind: 'A' | 'B' | 'C' | 'N';
   callback: ((text: string) => void) | null;
 }
 
@@ -16,7 +16,7 @@ interface AppContextType {
   toast: (msg: string) => void;
   toastMsg: string | null;
   sheet: FixSheetState;
-  openSheet: (title: string, kind: 'A' | 'B' | 'C', cb: (text: string) => void) => void;
+  openSheet: (title: string, kind: 'A' | 'B' | 'C' | 'N', cb: (text: string) => void) => void;
   closeSheet: () => void;
   theme: Theme;
   toggleTheme: () => void;
@@ -97,7 +97,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const openSheet = useCallback((title: string, kind: 'A' | 'B' | 'C', cb: (text: string) => void) => {
+  const openSheet = useCallback((title: string, kind: 'A' | 'B' | 'C' | 'N', cb: (text: string) => void) => {
     setSheet({ isOpen: true, title, kind, callback: cb });
   }, []);
 

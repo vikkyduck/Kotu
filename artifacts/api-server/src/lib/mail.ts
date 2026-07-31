@@ -35,7 +35,7 @@ export async function sendMail(to: string, subject: string, text: string, html: 
     throw new Error("Почта не настроена: нет SMTP_USER или SMTP_PASS");
   }
   const info = await getTransport().sendMail({
-    from: `"Рабочая среда" <${FROM}>`,
+    from: `"Psy Библиотека" <${FROM}>`,
     to,
     subject,
     text,
@@ -47,7 +47,7 @@ export async function sendMail(to: string, subject: string, text: string, html: 
 
 /** Письмо со ссылкой на сброс. Просто, коротко и без лишних обещаний. */
 export function resetEmail(name: string, link: string): { subject: string; text: string; html: string } {
-  const subject = "Восстановление пароля — Рабочая среда";
+  const subject = "Восстановление пароля — Psy Библиотека";
   const text = [
     `${name}, здравствуйте.`,
     "",

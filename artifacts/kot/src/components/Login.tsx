@@ -62,7 +62,7 @@ export function Login({ onSuccess }: LoginProps) {
       <CatLine className="login-cat" />
       <div className="login-mark" aria-hidden="true"><span></span></div>
       <p className="login-eyebrow">Psy3107</p>
-      <h1 className="hello">Рабочая среда</h1>
+      <h1 className="hello">Psy Библиотека</h1>
       <p className="lead">Войдите, чтобы продолжить.</p>
 
       <form className="panel" onSubmit={submit}>
