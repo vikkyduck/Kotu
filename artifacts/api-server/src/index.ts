@@ -8,6 +8,7 @@ import { registerIngestHandler } from "./lib/handlers/ingest";
 import { registerLectureHandlers } from "./lib/handlers/lecture";
 import { registerStoryboardHandler } from "./lib/handlers/storyboard";
 import { registerIllustrateHandler } from "./lib/handlers/illustrate";
+import { registerReslideHandler } from "./lib/handlers/reslide";
 
 const rawPort = process.env["PORT"];
 
@@ -30,6 +31,7 @@ registerIngestHandler();
 registerLectureHandlers();
 registerStoryboardHandler();
 registerIllustrateHandler();
+registerReslideHandler();
 
 // Задачи, оборванные прошлым перезапуском, возвращаем в очередь и продолжаем
 // работу — ради этого очередь и заведена.
