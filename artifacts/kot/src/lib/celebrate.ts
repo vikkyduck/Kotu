@@ -6,7 +6,6 @@ export const Celebrate = (() => {
   let dpr = 1;
   let parts: any[] = [];
   let rings: any[] = [];
-  let seals: any[] = [];
   let raf = 0;
   let last = 0;
 
@@ -35,14 +34,10 @@ export const Celebrate = (() => {
   }
 
   function pal() {
-    const d = document.documentElement.getAttribute('data-theme') === 'dark';
-    return [
-      d ? [156, 146, 240] : [91, 80, 176],
-      d ? [185, 174, 247] : [124, 112, 200],
-      d ? [212, 202, 255] : [150, 138, 224],
-      [212, 180, 122],
-      d ? [236, 233, 252] : [112, 100, 186]
-    ];
+    const paperTheme = document.documentElement.getAttribute('data-theme') === 'light';
+    return paperTheme
+      ? [[48, 43, 39], [123, 67, 47], [138, 106, 59], [103, 113, 132], [94, 89, 82]]
+      : [[216, 199, 167], [196, 173, 135], [176, 141, 87], [182, 124, 90], [103, 113, 132]];
   }
 
   const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -99,7 +94,7 @@ export const Celebrate = (() => {
       return true;
     });
     
-    if (parts.length || rings.length || seals.length) {
+    if (parts.length || rings.length) {
       raf = requestAnimationFrame(loop);
     } else {
       raf = 0;
@@ -136,7 +131,7 @@ export const Celebrate = (() => {
   function ring(x: number, y: number, o: any = {}) {
     init();
     if (!cv) return;
-    const d = document.documentElement.getAttribute('data-theme') === 'dark';
+    const paperTheme = document.documentElement.getAttribute('data-theme') === 'light';
     rings.push({
       x, y,
       r0: o.r0 || 6,
@@ -144,7 +139,7 @@ export const Celebrate = (() => {
       dur: o.dur || 0.7,
       w: o.w || 2.5,
       a: o.a || 0.5,
-      c: o.c || (d ? '156,146,240' : '91,80,176'),
+      c: o.c || (paperTheme ? '123,67,47' : '216,199,167'),
       t: 0
     });
     start();
@@ -156,16 +151,9 @@ export const Celebrate = (() => {
       emit(x, y, 30, { smin: 90, smax: 240, up: 34 });
     },
     success(x: number, y: number) {
-      const d = document.documentElement.getAttribute('data-theme') === 'dark';
       ring(x, y, { r0: 32, r1: 170, dur: 0.95, w: 3 });
       ring(x, y, { r0: 32, r1: 250, dur: 1.25, w: 1.4, a: 0.28 });
       emit(x, y, 66, { smin: 130, smax: 360, up: 20 });
-      seals.push({
-        x, y, R: 38, dur: 1.75,
-        c1: d ? '139,128,230' : '91,80,176',
-        c2: d ? '92,80,180' : '77,67,150',
-        t: 0
-      });
       start();
     }
   };

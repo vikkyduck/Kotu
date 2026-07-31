@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApp } from '@/hooks/use-app';
 import { Icon } from '@/lib/icons';
+import { CatLine } from '@/lib/cat';
 import {
   useListTranscriptions,
   useDeleteTranscription,
@@ -149,6 +150,9 @@ export function Home() {
           </div>
         </div>
       )}
+
+      {/* Кот свернулся в конце страницы — фирменный штрих автора */}
+      <CatLine className="home-cat" />
     </section>
   );
 }

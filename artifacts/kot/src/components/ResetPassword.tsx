@@ -62,8 +62,8 @@ export function ResetPassword({ token, onDone }: ResetPasswordProps) {
   if (state === 'invalid') {
     return (
       <div className="login-wrap">
-        <h1 className="hello" style={{ textAlign: 'center' }}>Ссылка не работает</h1>
-        <p className="lead" style={{ textAlign: 'center' }}>
+        <h1 className="hello">Ссылка не работает</h1>
+        <p className="lead">
           Скорее всего, она устарела или её уже использовали.
         </p>
         <button className="btn primary big" onClick={onDone}>
@@ -77,8 +77,8 @@ export function ResetPassword({ token, onDone }: ResetPasswordProps) {
   if (state === 'done') {
     return (
       <div className="login-wrap">
-        <h1 className="hello" style={{ textAlign: 'center' }}>Пароль изменён</h1>
-        <p className="lead" style={{ textAlign: 'center' }}>Теперь войдите с новым паролем.</p>
+        <h1 className="hello">Пароль изменён</h1>
+        <p className="lead">Теперь войдите с новым паролем.</p>
         <button className="btn primary big" onClick={onDone}>
           Войти
         </button>
@@ -88,8 +88,8 @@ export function ResetPassword({ token, onDone }: ResetPasswordProps) {
 
   return (
     <div className="login-wrap">
-      <h1 className="hello" style={{ textAlign: 'center' }}>Новый пароль</h1>
-      <p className="lead" style={{ textAlign: 'center' }}>Придумайте пароль — и снова в работу.</p>
+      <h1 className="hello">Новый пароль</h1>
+      <p className="lead">Придумайте пароль — и снова в работу.</p>
 
       <form className="panel" onSubmit={submit}>
         <div className="fieldlbl">Новый пароль</div>
@@ -113,7 +113,7 @@ export function ResetPassword({ token, onDone }: ResetPasswordProps) {
           required
         />
 
-        <button className="btn primary big" type="submit" disabled={busy} style={{ marginTop: 20 }}>
+        <button className="btn primary big login-submit" type="submit" disabled={busy}>
           {busy ? 'Сохраняю…' : 'Сохранить и войти'}
         </button>
 
