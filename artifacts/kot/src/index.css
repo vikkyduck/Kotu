@@ -1028,3 +1028,15 @@ input.field,textarea.topic,.sheet textarea{font-size:16px}
    а не как абзацы. Целиком имя видно в подсказке и на экране самой работы. */
 .doc-title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
   overflow:hidden}
+
+/* ── Поиск по библиотеке ──────────────────────────────────────────────────
+   Ищет по смыслу во всём: в книгах, расшифровках, своих лекциях и колодах. */
+input.field.lib-search{margin:0 0 var(--sp-2)}
+.hits{margin-bottom:var(--sp-3)}
+.hit{margin-bottom:10px}
+.hit-head{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.hit-quote{margin:0 0 8px;font-size:14px;line-height:1.5;color:var(--ink-2);
+  padding-left:12px;border-left:1px solid var(--line)}
+.hit-where{color:var(--accent-strong)}
+/* Кнопка «сделать из этого» — тем же тихим тоном, что и папка с корзиной */
+.doc-use .ic-svg{width:16px;height:16px}

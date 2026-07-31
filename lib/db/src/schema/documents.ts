@@ -12,7 +12,16 @@ import {
 import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
 
-export type DocumentKind = "book" | "article" | "note" | "transcript" | "deck";
+export type DocumentKind =
+  | "book"
+  | "article"
+  | "note"
+  | "transcript"
+  // Своя работа автора, попавшая в поиск: текст готовой лекции и текст
+  // готовой презентации. Отдельной карточкой в списке не показываются —
+  // их представляет сама лекция или колода.
+  | "deck"
+  | "lecture";
 export type DocumentStatus = "uploaded" | "parsing" | "ready" | "error";
 
 /** Папка библиотеки — способ автора раскладывать материал по темам. */
@@ -47,6 +56,12 @@ export const documentsTable = pgTable("documents", {
    * материал должен лежать в одном месте.
    */
   deckId: integer("deck_id"),
+  /**
+   * Для kind='lecture' — из какой лекции собран текст. Готовая лекция это
+   * такой же материал, как книга: на неё опираются следующие лекции и из неё
+   * собирают презентации, поэтому она попадает в поиск сама.
+   */
+  lectureId: integer("lecture_id"),
   /** Путь к исходному файлу на диске сервера. */
   sourcePath: text("source_path").notNull(),
   mime: text("mime").notNull(),
@@ -67,6 +82,10 @@ export const documentsTable = pgTable("documents", {
   byDeck: uniqueIndex("documents_deck_uniq")
     .on(t.deckId)
     .where(sql`deck_id IS NOT NULL`),
+  // И одна лекция — одна.
+  byLecture: uniqueIndex("documents_lecture_uniq")
+    .on(t.lectureId)
+    .where(sql`lecture_id IS NOT NULL`),
 }));
 
 export type Folder = typeof foldersTable.$inferSelect;

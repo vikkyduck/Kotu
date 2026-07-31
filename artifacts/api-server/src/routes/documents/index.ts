@@ -1,11 +1,12 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { tmpdir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { db, documentsTable, docChunksTable, foldersTable } from "@workspace/db";
 import { enqueue } from "../../lib/jobs";
+import { embedAll } from "../../lib/embeddings";
 import { ownFolderId } from "../../lib/folders";
 import { decodeUploadName } from "../../lib/filename";
 
@@ -327,5 +328,64 @@ export async function searchLibrary(
     score: Number(r.score),
   }));
 }
+
+/**
+ * Поиск по всей библиотеке — для человека, а не только для лекций. Ищет по
+ * книгам, расшифровкам, готовым лекциям и презентациям: всё, что попало в
+ * индекс. Фрагменты группируем по материалу — автору важно, ГДЕ нашлось.
+ */
+router.get("/search", async (req, res): Promise<void> => {
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  if (q.length < 2) {
+    res.json({ results: [] });
+    return;
+  }
+
+  const [vector] = await embedAll([q], undefined, "query");
+  if (!vector) {
+    res.status(503).json({ message: "Поиск сейчас недоступен — попробуйте чуть позже" });
+    return;
+  }
+
+  const hits = await searchLibrary(req.user!.id, vector, q, 24);
+  const docIds = [...new Set(hits.map((h) => h.documentId))];
+  const docs = docIds.length
+    ? await db
+        .select({
+          id: documentsTable.id,
+          kind: documentsTable.kind,
+          lectureId: documentsTable.lectureId,
+          deckId: documentsTable.deckId,
+          transcriptionId: documentsTable.transcriptionId,
+        })
+        .from(documentsTable)
+        .where(inArray(documentsTable.id, docIds))
+    : [];
+  const byId = new Map(docs.map((d) => [d.id, d]));
+
+  // По три лучших фрагмента на материал: страница выдачи должна читаться,
+  // а не превращаться в простыню из одной книги.
+  const grouped = new Map<number, { documentId: number; title: string; kind: string;
+    lectureId: number | null; deckId: number | null; transcriptionId: number | null;
+    score: number; quotes: { text: string; heading: string | null }[] }>();
+  for (const h of hits) {
+    const doc = byId.get(h.documentId);
+    if (!doc) continue;
+    const g = grouped.get(h.documentId) ?? {
+      documentId: h.documentId,
+      title: h.title,
+      kind: doc.kind,
+      lectureId: doc.lectureId,
+      deckId: doc.deckId,
+      transcriptionId: doc.transcriptionId,
+      score: h.score,
+      quotes: [],
+    };
+    if (g.quotes.length < 3) g.quotes.push({ text: h.text.slice(0, 600), heading: h.heading });
+    grouped.set(h.documentId, g);
+  }
+
+  res.json({ results: [...grouped.values()].sort((a, b) => b.score - a.score).slice(0, 8) });
+});
 
 export default router;

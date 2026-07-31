@@ -10,6 +10,7 @@ import {
 import { askJson } from "../claude";
 import { sanitizeSlideContent } from "../slide-content";
 import { registerHandler } from "../jobs";
+import { deckToLibrary } from "../work-doc";
 import { logger } from "../logger";
 
 /**
@@ -119,6 +120,9 @@ async function run(job: Job): Promise<void> {
     .update(decksTable)
     .set({ status: payload.back, statusMessage: "", error: null })
     .where(eq(decksTable.id, deckId));
+
+  // Текст изменился — копия в поиске не должна отставать.
+  await deckToLibrary(deckId).catch(() => undefined);
 
   logger.info({ deckId, slideId: slide.id }, "Слайд переделан по указанию автора");
 }

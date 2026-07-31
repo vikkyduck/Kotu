@@ -5,8 +5,16 @@ import { Icon } from '@/lib/icons';
 interface Doc {
   id: number;
   title: string;
+  kind: string;
   status: string;
 }
+
+/** Подпись у материала: своя работа должна быть отличима от книги. */
+const DOC_KIND_RU: Record<string, string> = {
+  transcript: 'расшифровка',
+  lecture: 'лекция',
+  deck: 'презентация',
+};
 
 interface PlanItem {
   heading: string;
@@ -51,7 +59,7 @@ const DURATIONS = [
 export function Lecture() {
   // Какую лекцию открыть, решает библиотека: инструмент — это действие,
   // а не ещё один список сделанного.
-  const { screen, go, toast, activeLectureId, openLecture } = useApp();
+  const { screen, go, toast, activeLectureId, openLecture, lectureSeed } = useApp();
   const [docs, setDocs] = useState<Doc[]>([]);
   const openId = activeLectureId;
   const [lecture, setLecture] = useState<LectureFull | null>(null);
@@ -78,6 +86,13 @@ export function Lecture() {
     if (screen !== 's-lecture') return;
     void loadDocs();
   }, [screen, loadDocs]);
+
+  // Пришли из библиотеки («написать лекцию на основе этого») — материал
+  // в опоре уже отмечен.
+  useEffect(() => {
+    if (screen !== 's-lecture' || openId !== null || !lectureSeed) return;
+    setPicked(lectureSeed.documentIds);
+  }, [screen, openId, lectureSeed]);
 
   useEffect(() => {
     if (screen !== 's-lecture') setEditing(null);
@@ -386,6 +401,7 @@ export function Lecture() {
                 }
               >
                 {d.title}
+                {DOC_KIND_RU[d.kind] ? ` · ${DOC_KIND_RU[d.kind]}` : ''}
               </span>
             ))}
           </div>
