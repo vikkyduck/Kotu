@@ -1,30 +1,33 @@
 import { logger } from "./logger";
 
 /**
- * Векторы для поиска по смыслу. Идут через тот же транзит, что и остальные
- * модели (зона Б: книги и статьи — не персональные данные).
+ * Векторы для поиска по смыслу — ЛОКАЛЬНО, на этом же сервере (kotu-embed,
+ * multilingual-e5-large). Индексация библиотеки не покидает Россию вовсе:
+ * за границу тексты уходят только позже, в промптах лекций (зона Б).
  *
- * Модель зафиксирована в конфигурации и НЕ должна меняться на живой библиотеке:
- * векторы разных моделей несопоставимы, после смены нужна полная переиндексация.
+ * Модель зафиксирована и НЕ должна меняться на живой библиотеке: векторы
+ * разных моделей несопоставимы, после смены нужна полная переиндексация.
  */
-const MODEL = process.env["MODEL_EMBEDDING"] ?? "text-embedding-3-small";
-const BASE_URL = process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"] ?? "http://127.0.0.1:8444/v1";
-const API_KEY = process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "";
+const EMBED_URL = process.env["EMBED_URL"] ?? "http://127.0.0.1:9030/embed";
 
-/** За раз отправляем пачку — так дешевле и быстрее, чем по одному фрагменту. */
-const BATCH = 64;
+/** За раз отправляем пачку — модель на CPU, но пачкой всё равно быстрее. */
+const BATCH = 32;
 
-export const EMBEDDING_DIMENSIONS = 1536;
+export const EMBEDDING_DIMENSIONS = 1024;
 
-async function embedBatch(texts: string[]): Promise<number[][]> {
-  const res = await fetch(`${BASE_URL}/embeddings`, {
+/**
+ * У E5 префиксы обязательны и разные: фрагмент индексируется как «passage»,
+ * а поисковый запрос — как «query». Перепутать — значит уронить качество.
+ */
+export type EmbedKind = "passage" | "query";
+
+async function embedBatch(texts: string[], kind: EmbedKind): Promise<number[][]> {
+  const res = await fetch(EMBED_URL, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${API_KEY}`,
-    },
-    body: JSON.stringify({ model: MODEL, input: texts }),
-    signal: AbortSignal.timeout(120_000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ texts, kind }),
+    // CPU неспешный: толстая пачка длинных фрагментов может считаться минуты.
+    signal: AbortSignal.timeout(600_000),
   });
 
   if (!res.ok) {
@@ -32,22 +35,23 @@ async function embedBatch(texts: string[]): Promise<number[][]> {
     throw new Error(`Эмбеддинги: ответ ${res.status} ${body.slice(0, 200)}`);
   }
 
-  const data = (await res.json()) as { data: { index: number; embedding: number[] }[] };
-  // Порядок в ответе формально не гарантирован — раскладываем по index.
-  const out: number[][] = new Array(texts.length);
-  for (const item of data.data) out[item.index] = item.embedding;
-  return out;
+  const data = (await res.json()) as { vectors: number[][] };
+  if (!Array.isArray(data.vectors) || data.vectors.length !== texts.length) {
+    throw new Error("Эмбеддинги: сервис вернул не то число векторов");
+  }
+  return data.vectors;
 }
 
 /** Считает векторы для всех фрагментов, сообщая о продвижении. */
 export async function embedAll(
   texts: string[],
   onProgress?: (done: number, total: number) => Promise<void> | void,
+  kind: EmbedKind = "passage",
 ): Promise<number[][]> {
   const result: number[][] = [];
   for (let i = 0; i < texts.length; i += BATCH) {
     const slice = texts.slice(i, i + BATCH);
-    const vectors = await embedBatch(slice);
+    const vectors = await embedBatch(slice, kind);
     result.push(...vectors);
     await onProgress?.(Math.min(i + BATCH, texts.length), texts.length);
     logger.debug({ done: result.length, total: texts.length }, "Эмбеддинги посчитаны");

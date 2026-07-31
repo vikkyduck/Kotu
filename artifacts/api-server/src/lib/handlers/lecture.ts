@@ -34,7 +34,7 @@ async function findExcerpts(
   documentIds: number[],
   limit: number,
 ): Promise<Excerpt[]> {
-  const [vector] = await embedAll([query]);
+  const [vector] = await embedAll([query], undefined, "query");
   const found = await searchLibrary(ownerId, vector, query, limit, documentIds);
   return found.map((f, i) => ({
     n: i + 1,
