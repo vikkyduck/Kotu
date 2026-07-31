@@ -3,6 +3,7 @@ import {
   serial,
   integer,
   text,
+  boolean,
   jsonb,
   timestamp,
   index,
@@ -51,10 +52,20 @@ export const decksTable = pgTable("decks", {
   /** id лекции или документа; для вставленного текста — null. */
   sourceId: integer("source_id"),
   stylePackId: integer("style_pack_id"),
+  /**
+   * Человек в цикле, как и с планом лекции: пока раскадровка не утверждена,
+   * не рисуется ни одна картинка. Здесь ставка выше, чем в лекциях, — каждая
+   * иллюстрация это время и деньги, а их в презентации десяток.
+   */
+  storyboardApproved: boolean("storyboard_approved").notNull().default(false),
   status: text("status").$type<DeckStatus>().notNull().default("storyboarding"),
   statusMessage: text("status_message").notNull().default(""),
   error: text("error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
 });
 
 export type ImageStatus = "none" | "queued" | "drawing" | "ready" | "error";
@@ -76,18 +87,56 @@ export const deckSlidesTable = pgTable(
      * содержание. Сюжет по этой мысли придумывает уже Gemini отдельным шагом.
      */
     imageBrief: text("image_brief"),
-    /** Сюжет сцены, придуманный по мысли: что изображено и как построено. */
-    imageScene: text("image_scene"),
-    imagePath: text("image_path"),
+    /**
+     * Выбранная картинка из deck_images. Внешнего ключа нет намеренно: ссылка
+     * идёт в обе стороны, и FK замкнул бы таблицы в цикл.
+     */
+    imageId: integer("image_id"),
+    /** Дублируется из deck_images ради прогресса в списке слайдов без join. */
     imageStatus: text("image_status").$type<ImageStatus>().notNull().default("none"),
-    imageAttempt: integer("image_attempt").notNull().default(0),
-    /** Что сказала приёмка: почему приняли или отправили на перерисовку. */
-    imageVerdict: text("image_verdict"),
     /** Описание схемы для тех слайдов, где нужна не метафора, а структура. */
     diagramSpec: jsonb("diagram_spec"),
   },
   (t) => ({
     byDeck: index("deck_slides_deck_idx").on(t.deckId, t.ord),
+  }),
+);
+
+export type DeckImageStatus = "drawing" | "ready" | "rejected" | "error";
+
+/**
+ * Попытка нарисовать иллюстрацию к слайду. Отдельной таблицей, а не полями
+ * слайда: попыток по правилу конвейера бывает две, и забракованную вместе с
+ * вердиктом приёмки автор должен видеть — иначе «почему перерисовали» знает
+ * только лог.
+ */
+export const deckImagesTable = pgTable(
+  "deck_images",
+  {
+    id: serial("id").primaryKey(),
+    deckId: integer("deck_id")
+      .notNull()
+      .references(() => decksTable.id, { onDelete: "cascade" }),
+    slideId: integer("slide_id")
+      .notNull()
+      .references(() => deckSlidesTable.id, { onDelete: "cascade" }),
+    /** Номер попытки, начиная с 1. Потолок — 2, дальше слайд идёт как есть. */
+    attempt: integer("attempt").notNull().default(1),
+    /** Сюжет метафоры, придуманный шагом режиссуры по мысли слайда. */
+    scene: text("scene").notNull().default(""),
+    /** Итоговый промпт: сюжет + стилевой пакет. Чтобы можно было повторить. */
+    prompt: text("prompt").notNull().default(""),
+    /** Какой моделью нарисовано — основной или запасной. */
+    model: text("model").notNull().default(""),
+    path: text("path"),
+    status: text("status").$type<DeckImageStatus>().notNull().default("drawing"),
+    /** Что сказала приёмка: почему приняли или отправили на перерисовку. */
+    verdict: text("verdict"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    bySlide: index("deck_images_slide_idx").on(t.slideId, t.attempt),
   }),
 );
 
@@ -107,4 +156,5 @@ export const stylePacksTable = pgTable("style_packs", {
 
 export type Deck = typeof decksTable.$inferSelect;
 export type DeckSlide = typeof deckSlidesTable.$inferSelect;
+export type DeckImage = typeof deckImagesTable.$inferSelect;
 export type StylePack = typeof stylePacksTable.$inferSelect;
