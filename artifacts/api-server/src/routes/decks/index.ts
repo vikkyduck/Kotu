@@ -1,5 +1,4 @@
 import path from "node:path";
-import os from "node:os";
 import { existsSync } from "node:fs";
 import { rm, writeFile, mkdir } from "node:fs/promises";
 import { Router, type IRouter } from "express";
@@ -21,18 +20,12 @@ import { inArray, sql } from "drizzle-orm";
 import { enqueue } from "../../lib/jobs";
 import { ownFolderId } from "../../lib/folders";
 import { deckToLibrary, dropDeckCopies } from "../../lib/work-doc";
-import { LIBRARY_DIR } from "../../lib/library-dir";
+import { DECKS_DIR } from "../../lib/paths";
 import { buildDeckPptx } from "../../lib/pptx";
 import { buildDeckPdf } from "../../lib/pdf";
 import { sanitizeSlideContent } from "../../lib/slide-content";
 
 const router: IRouter = Router();
-
-// Дублирует выражение из lib/handlers/illustrate.ts: картинки пишет воркер,
-// а отдаёт и удаляет их этот роутер — путь обязан совпадать.
-const DECKS_DIR =
-  process.env.DECKS_DIR ??
-  (process.env.NODE_ENV === "production" ? "/opt/kotu/decks" : path.join(os.tmpdir(), "kotu-decks"));
 
 const LAYOUTS: SlideLayout[] = [
   "cover",

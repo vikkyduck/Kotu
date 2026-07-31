@@ -1,11 +1,10 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { eq, and, desc, sql, inArray } from "drizzle-orm";
-import { tmpdir } from "node:os";
-import { mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { db, documentsTable, docChunksTable, foldersTable } from "@workspace/db";
 import { enqueue } from "../../lib/jobs";
+import { LIBRARY_DIR } from "../../lib/paths";
 import { embedAll } from "../../lib/embeddings";
 import { ownFolderId } from "../../lib/folders";
 import { decodeUploadName } from "../../lib/filename";
@@ -14,11 +13,6 @@ import { decodeUploadName } from "../../lib/filename";
 const MAX_FILE_BYTES = 200 * 1024 * 1024;
 
 const ALLOWED_EXT = /\.(pdf|docx|epub|txt|md|markdown|html?|rtf)$/i;
-
-const LIBRARY_DIR =
-  process.env["LIBRARY_DIR"] ??
-  (process.env["NODE_ENV"] === "production" ? "/opt/kotu/library" : tmpdir());
-mkdirSync(LIBRARY_DIR, { recursive: true });
 
 const upload = multer({
   dest: LIBRARY_DIR,

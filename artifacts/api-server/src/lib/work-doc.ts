@@ -1,5 +1,4 @@
-import { writeFile, rm } from "node:fs/promises";
-import { mkdir } from "node:fs/promises";
+import { writeFile, rm, mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import { and, asc, eq, isNotNull } from "drizzle-orm";
 import {
@@ -10,7 +9,7 @@ import {
   decksTable,
   deckSlidesTable,
 } from "@workspace/db";
-import { LIBRARY_DIR } from "./library-dir";
+import { LIBRARY_DIR, DECKS_DIR } from "./paths";
 import { enqueue } from "./jobs";
 import { logger } from "./logger";
 
@@ -185,6 +184,29 @@ async function dropCopies(
 
 export const dropLectureCopies = (id: number) => dropCopies(documentsTable.lectureId, id);
 export const dropDeckCopies = (id: number) => dropCopies(documentsTable.deckId, id);
+
+/**
+ * Каталоги картинок от колод, которых уже нет: удаление во время рисования
+ * оставляет гонку, а диск не резиновый. Сверка на старте её закрывает.
+ */
+export async function sweepOrphanDeckDirs(): Promise<number> {
+  let removed = 0;
+  const names = await readdir(DECKS_DIR).catch(() => [] as string[]);
+  for (const name of names) {
+    const id = Number(name);
+    if (!Number.isInteger(id)) continue;
+    const [deck] = await db
+      .select({ id: decksTable.id })
+      .from(decksTable)
+      .where(eq(decksTable.id, id))
+      .limit(1);
+    if (deck) continue;
+    await rm(path.join(DECKS_DIR, name), { recursive: true, force: true }).catch(() => undefined);
+    removed += 1;
+  }
+  if (removed > 0) logger.info({ removed }, "Убрал каталоги удалённых презентаций");
+  return removed;
+}
 
 /**
  * Стартовая сверка для работ, в обе стороны: готовое без копии — завести
