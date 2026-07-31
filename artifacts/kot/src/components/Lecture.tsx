@@ -41,12 +41,6 @@ interface LectureFull {
   sources: Source[];
 }
 
-interface LectureListItem {
-  id: number;
-  title: string;
-  status: string;
-}
-
 const AUDIENCES = ['студенты', 'коллеги', 'смешанная'];
 const DURATIONS = [
   { label: '1 час', value: 60 },
@@ -55,10 +49,11 @@ const DURATIONS = [
 ];
 
 export function Lecture() {
-  const { screen, go, toast } = useApp();
-  const [list, setList] = useState<LectureListItem[]>([]);
+  // Какую лекцию открыть, решает библиотека: инструмент — это действие,
+  // а не ещё один список сделанного.
+  const { screen, go, toast, activeLectureId, openLecture } = useApp();
   const [docs, setDocs] = useState<Doc[]>([]);
-  const [openId, setOpenId] = useState<number | null>(null);
+  const openId = activeLectureId;
   const [lecture, setLecture] = useState<LectureFull | null>(null);
 
   const [topic, setTopic] = useState('');
@@ -69,12 +64,8 @@ export function Lecture() {
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
 
-  const loadList = useCallback(async () => {
-    const [l, d] = await Promise.all([
-      fetch('/api/lectures').then((r) => (r.ok ? r.json() : [])),
-      fetch('/api/documents').then((r) => (r.ok ? r.json() : [])),
-    ]);
-    setList(l);
+  const loadDocs = useCallback(async () => {
+    const d = await fetch('/api/documents').then((r) => (r.ok ? r.json() : []));
     setDocs((d as Doc[]).filter((x) => x.status === 'ready'));
   }, []);
 
@@ -85,14 +76,11 @@ export function Lecture() {
 
   useEffect(() => {
     if (screen !== 's-lecture') return;
-    void loadList();
-  }, [screen, loadList]);
+    void loadDocs();
+  }, [screen, loadDocs]);
 
   useEffect(() => {
-    if (screen !== 's-lecture') {
-      setOpenId(null);
-      setEditing(null);
-    }
+    if (screen !== 's-lecture') setEditing(null);
   }, [screen]);
 
   useEffect(() => {
@@ -131,8 +119,7 @@ export function Lecture() {
         const created = await res.json();
         setTopic('');
         setPicked([]);
-        await loadList();
-        setOpenId(created.id);
+        openLecture(created.id);
       } else {
         const data = await res.json().catch(() => ({}));
         toast(data.message ?? 'Не удалось начать лекцию');
@@ -195,8 +182,8 @@ export function Lecture() {
 
     return (
       <section className="screen active" id="s-lecture">
-        <button className="btn ghost back-link" onClick={() => setOpenId(null)}>
-          <Icon name="back" /> К списку лекций
+        <button className="btn ghost back-link" onClick={() => go('s-home')}>
+          <Icon name="back" /> В библиотеку
         </button>
 
         <h2 className="h2">{lecture.title}</h2>
@@ -338,34 +325,11 @@ export function Lecture() {
   return (
     <section className="screen active" id="s-lecture">
       <button className="btn ghost back-link" onClick={() => go('s-home')}>
-        <Icon name="back" /> Назад
+        <Icon name="back" /> В библиотеку
       </button>
 
-      <h2 className="h2">Подготовить лекцию</h2>
+      <h2 className="h2">Написать лекцию</h2>
       <p className="sub">Расскажите своими словами, о чём лекция — остальное я возьму на себя.</p>
-
-      {list.length > 0 && (
-        <div className="doc-list" style={{ marginBottom: 22 }}>
-          {list.map((l) => (
-            <button key={l.id} className="doc-card lec-item" onClick={() => setOpenId(l.id)}>
-              <span className="doc-ico"><Icon name="pen" /></span>
-              <div className="doc-body">
-                <b className="doc-title">{l.title}</b>
-                <span className="doc-meta">
-                  {l.status === 'ready'
-                    ? 'готова'
-                    : l.status === 'plan_ready'
-                      ? 'план ждёт вашего решения'
-                      : l.status === 'error'
-                        ? 'ошибка'
-                        : 'в работе…'}
-                </span>
-              </div>
-              <span className="chev"><Icon name="chevron" /></span>
-            </button>
-          ))}
-        </div>
-      )}
 
       <div className="panel">
         <div className="fieldlbl">О чём будет лекция?</div>
@@ -406,7 +370,7 @@ export function Lecture() {
         {docs.length === 0 ? (
           <p className="doc-meta">
             Библиотека пуста —{' '}
-            <span className="inline-link" onClick={() => go('s-library')}>
+            <span className="inline-link" onClick={() => go('s-home')}>
               загрузите книги
             </span>
             , и лекция будет опираться на них.

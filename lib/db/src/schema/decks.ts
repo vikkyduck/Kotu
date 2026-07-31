@@ -80,6 +80,8 @@ export const decksTable = pgTable("decks", {
     .notNull()
     .references(() => usersTable.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
+  /** Папка библиотеки — см. комментарий у лекций: библиотека главная папка. */
+  folderId: integer("folder_id"),
   sourceKind: text("source_kind").$type<SourceKind>().notNull(),
   /** id лекции или документа; для вставленного текста — null. */
   sourceId: integer("source_id"),

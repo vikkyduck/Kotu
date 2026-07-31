@@ -8,7 +8,6 @@ const TITLES: Record<string, string> = {
   's-transcribe': 'Расшифровка',
   's-lecture': 'Лекция',
   's-slides': 'Презентация',
-  's-library': 'Библиотека',
   's-profile': 'Профиль',
   's-how': 'Как это работает'
 };
@@ -43,7 +42,8 @@ export function TopBar() {
 
   return (
     <div className={`top ${!isHome ? 'sub' : ''}`} id="topbar">
-      <button className="back" id="backBtn" aria-label="Назад" onClick={() => go('s-home')}>
+      {/* Возврат всегда в библиотеку: она главная, а не «одна из страниц» */}
+      <button className="back" id="backBtn" aria-label="В библиотеку" onClick={() => go('s-home')}>
         <span data-icon="back"><Icon name="back" /></span>
       </button>
 

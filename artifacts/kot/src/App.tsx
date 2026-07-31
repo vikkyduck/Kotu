@@ -4,7 +4,6 @@ import { AppProvider } from '@/hooks/use-app';
 import { Login } from '@/components/Login';
 import { ResetPassword } from '@/components/ResetPassword';
 import { TopBar } from '@/components/TopBar';
-import { Home } from '@/components/Home';
 import { Transcribe } from '@/components/Transcribe';
 import { Library } from '@/components/Library';
 import { Profile } from '@/components/Profile';
@@ -28,9 +27,8 @@ function AppContent() {
     <>
       <TopBar />
       <div className="wrap">
-        <Home />
-        <Transcribe />
         <Library />
+        <Transcribe />
         <Profile />
         <Lecture />
         <Slides />
