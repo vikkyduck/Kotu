@@ -700,12 +700,6 @@ export function Slides() {
             onChange={(e) => setRawText(e.target.value)}
             placeholder="Вставьте текст выступления — хотя бы пару абзацев."
           />
-          {rawText.trim() !== '' && (
-            <p className="draft-note">
-              <Icon name="check" /> Черновик сохранён в этом браузере — вкладку можно закрыть.
-              На сервер текст уедет, когда нажмёте кнопку.
-            </p>
-          )}
 
           {/* Стиль серии показываем, только когда есть из чего выбирать */}
           {packs.length > 1 && (
@@ -726,6 +720,14 @@ export function Slides() {
           )}
         </div>
 
+        {/* Подпись стоит вплотную к кнопке и называет её: пока кнопка не
+            нажата, текст живёт только в этом браузере. */}
+        {rawText.trim() !== '' && (
+          <p className="draft-note">
+            <Icon name="check" /> Чтобы сохранить текст, нажмите «Разложить по слайдам».
+            Пока он только в этом браузере.
+          </p>
+        )}
         <button className="btn primary big" disabled={busy} onClick={() => void create()}>
           {busy ? 'Начинаю…' : 'Разложить по слайдам'} <Icon name="arrow" />
         </button>

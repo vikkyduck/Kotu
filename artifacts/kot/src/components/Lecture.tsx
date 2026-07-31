@@ -358,11 +358,6 @@ export function Lecture() {
           onChange={(e) => setTopic(e.target.value)}
           placeholder="Например: защитные механизмы личности — для студентов второго курса. Начать с Фрейда и дойти до современных взглядов, с клиническими примерами."
         />
-        {topic.trim() !== '' && (
-          <p className="draft-note">
-            <Icon name="check" /> Черновик сохранён в этом браузере — вкладку можно закрыть.
-          </p>
-        )}
 
         <div className="fieldlbl">Для кого?</div>
         <div className="pills">
@@ -417,6 +412,13 @@ export function Lecture() {
         )}
       </div>
 
+      {/* Подпись вплотную к кнопке и с её именем — см. Slides.tsx */}
+      {topic.trim() !== '' && (
+        <p className="draft-note">
+          <Icon name="check" /> Чтобы сохранить, нажмите «Составить план».
+          Пока бриф только в этом браузере.
+        </p>
+      )}
       <button
         className="btn primary big"
         disabled={busy || docs.length === 0}
