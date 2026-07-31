@@ -1042,6 +1042,6 @@ input.field.lib-search{margin:0 0 var(--sp-2)}
 .doc-use .ic-svg{width:16px;height:16px}
 /* Подпись «черновик сохранён»: тихая, но заметная — она отвечает на страх
    «закрою вкладку и всё пропадёт», который однажды уже сбылся. */
-.draft-note{display:flex;gap:8px;align-items:flex-start;margin:8px 0 0;
+.draft-note{display:flex;gap:8px;align-items:flex-start;margin:0 0 10px;
   font-size:13px;color:var(--muted);line-height:1.45}
 .draft-note .ic-svg{width:15px;height:15px;color:var(--accent-strong);flex-shrink:0;margin-top:2px}
