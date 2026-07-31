@@ -11,20 +11,21 @@ import {
   type SlideContent,
   type SlideLayout,
   type ImageStatus,
+  type ImageSide,
 } from "@workspace/db";
 import { askJson } from "../claude";
 import { registerHandler } from "../jobs";
 import { logger } from "../logger";
 
 const LAYOUTS: SlideLayout[] = [
-  "title",
-  "section",
-  "bullets",
-  "two-cards",
+  "cover",
+  "divider",
+  "theory",
   "quote",
+  "clinical",
+  "comparison",
+  "final",
   "diagram",
-  "image-full",
-  "closing",
 ];
 
 interface StoryboardSlide {
@@ -32,6 +33,7 @@ interface StoryboardSlide {
   content: SlideContent;
   notes?: string;
   imageBrief?: string | null;
+  imageSide?: string;
 }
 
 /** Собирает исходный текст, из которого делается презентация. */
@@ -106,20 +108,30 @@ async function run(job: Job): Promise<void> {
     "Правила:",
     "— Слайд не пересказывает абзац, а держит ОДНУ мысль. Тезисы короткие: это опора для речи, а не текст для чтения вслух.",
     "— Заметки докладчику (notes) — то, что автор скажет голосом: там развёрнутая мысль, примеры, переходы.",
-    `— Макеты только из списка: ${LAYOUTS.join(", ")}.`,
-    "  title — титульный, section — разделитель части, bullets — тезисы, two-cards — сопоставление двух,",
-    "  quote — цитата, diagram — структура/схема, image-full — слайд-образ, closing — финальный.",
-    "— Начни титульным, закончи closing.",
+    "— Основного текста на слайде не больше 6–8 строк.",
+    "",
+    // Порядок из брендбука: сперва функция слайда, из неё — композиция.
+    // Поэтому в layout идёт задача, а не вёрстка.
+    `— Сначала определи ФУНКЦИЮ слайда. Только из списка: ${LAYOUTS.join(", ")}.`,
+    "  cover — обложка, divider — разделитель части, theory — теория (тезис и 3–5 пунктов),",
+    "  quote — цитата до 35 слов, clinical — клинический фрагмент (случай, сцена, материал),",
+    "  comparison — сопоставление двух понятий, final — финальный, diagram — структура/схема.",
+    "— Начни с cover, закончи final. Разделители ставь там, где меняется часть.",
+    "— На final не пиши «Спасибо за внимание»: заверши выводом, вопросом или направлением чтения.",
+    "— На theory и clinical хорош «рабочий вопрос» (поле question) — вопрос к слушателю, а не вывод.",
     "",
     "Про иллюстрации — самое важное:",
     "— imageBrief заполняй ТОЛЬКО там, где образ несёт мысль. Если картинка будет украшением — оставь null.",
     "— Иллюстраций должно быть НЕ БОЛЬШЕ ТРЕТИ слайдов. Презентация, где картинка на каждом слайде, читается как альбом, а не как выступление.",
     "— imageBrief — это МЫСЛЬ, которую должна передать картинка, на русском, одним-двумя предложениями.",
     "  Не описывай сцену и не придумывай сюжет — этим займётся художник. Пиши, ЧТО должно быть понятно зрителю.",
+    "— imageSide — на какой стороне слайда стоит образ: left или right. Чередуй, чтобы серия не была однообразной.",
     "— На слайдах с макетом diagram картинок не бывает: там структура, её рисуют схемой.",
+    "— На clinical образ — интерьер, объект или сцена, но НЕ портрет человека.",
+    "— Не повторяй один и тот же образ: чередуй человека, интерьер, предмет, анатомический фрагмент, пустое поле.",
     "",
-    'Формат ответа: {"slides":[{"layout":"...","content":{...},"notes":"...","imageBrief":null}]}',
-    "content зависит от макета: eyebrow, title, subtitle, bullets[], cards[{title,body}], quote, attribution, footnote.",
+    'Формат ответа: {"slides":[{"layout":"...","content":{...},"notes":"...","imageBrief":null,"imageSide":"right"}]}',
+    "content зависит от функции: eyebrow, title, subtitle, bullets[], cards[{title,body}], quote, attribution, question, plate.",
   ].join("\n");
 
   const result = await askJson<{ slides?: StoryboardSlide[] }>({
@@ -136,7 +148,7 @@ async function run(job: Job): Promise<void> {
     slides.map((s, i) => {
       const layout: SlideLayout = LAYOUTS.includes(s.layout as SlideLayout)
         ? (s.layout as SlideLayout)
-        : "bullets";
+        : "theory";
       const brief = typeof s.imageBrief === "string" && s.imageBrief.trim() !== ""
         ? s.imageBrief.trim()
         : null;
@@ -151,6 +163,7 @@ async function run(job: Job): Promise<void> {
         content: (s.content ?? {}) as SlideContent,
         notes: typeof s.notes === "string" ? s.notes : "",
         imageBrief: wanted,
+        imageSide: (s.imageSide === "left" ? "left" : "right") as ImageSide,
         imageStatus,
       };
     }),

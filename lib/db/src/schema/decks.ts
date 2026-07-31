@@ -19,16 +19,23 @@ export type DeckStatus =
 
 export type SourceKind = "lecture" | "document" | "raw";
 
-/** Набор макетов ограничен намеренно: это и есть залог единого вида серии. */
+/**
+ * Семь функций слайда из брендбука Psy3107 («Архивный сон», `brand/`) плюс
+ * `diagram` — наше расширение для структуры, которую рисуем кодом.
+ *
+ * Порядок работы задан брендбуком: сначала определяется ФУНКЦИЯ слайда,
+ * и только из неё следует композиция. Поэтому список — не набор вёрсток
+ * («две карточки», «картинка во всю»), а набор задач.
+ */
 export type SlideLayout =
-  | "title"
-  | "section"
-  | "bullets"
-  | "two-cards"
-  | "quote"
-  | "diagram"
-  | "image-full"
-  | "closing";
+  | "cover" // обложка: текст слева 42%, образ справа 58%
+  | "divider" // разделитель: короткое имя части, 60–70% спокойного поля
+  | "theory" // теория: тезис и 3–5 пунктов, одна крупная гравюра
+  | "quote" // цитата до 35 слов, образ на противоположном краю
+  | "clinical" // клинический фрагмент: интерьер или объект, не портрет
+  | "comparison" // сравнение: одна гравюра со швом, два столбца текста
+  | "final" // финал: вывод, один спокойный объект, без «спасибо за внимание»
+  | "diagram"; // структура: SVG кодом, но оформленный как лист атласа
 
 /** Содержимое слайда. Поля необязательные: у каждого макета свои. */
 export interface SlideContent {
@@ -39,8 +46,23 @@ export interface SlideContent {
   cards?: { title: string; body: string }[];
   quote?: string;
   attribution?: string;
-  footnote?: string;
+  /**
+   * «Рабочий вопрос» / «вопрос к материалу» — приём брендбука на слайдах
+   * теории и клинического фрагмента: слайд заканчивается не выводом,
+   * а вопросом к слушателю.
+   */
+  question?: string;
+  /** Музейная подпись под изображением: «PLATE V · PSYCHIC ATLAS». */
+  plate?: string;
 }
+
+/**
+ * На какой стороне слайда стоит образ. Противоположная сторона — safe zone
+ * под типографику (брендбук: не меньше 35% ширины). Хранится на слайде,
+ * потому что уходит прямо в промпт: модель должна оставить поле пустым,
+ * дорисовать его потом нельзя.
+ */
+export type ImageSide = "left" | "right";
 
 export const decksTable = pgTable("decks", {
   id: serial("id").primaryKey(),
@@ -78,7 +100,7 @@ export const deckSlidesTable = pgTable(
       .notNull()
       .references(() => decksTable.id, { onDelete: "cascade" }),
     ord: integer("ord").notNull(),
-    layout: text("layout").$type<SlideLayout>().notNull().default("bullets"),
+    layout: text("layout").$type<SlideLayout>().notNull().default("theory"),
     content: jsonb("content").$type<SlideContent>().notNull(),
     /** Заметки докладчику — то, что говорят, а не показывают. */
     notes: text("notes").notNull().default(""),
@@ -87,6 +109,8 @@ export const deckSlidesTable = pgTable(
      * содержание. Сюжет по этой мысли придумывает уже Gemini отдельным шагом.
      */
     imageBrief: text("image_brief"),
+    /** Сторона образа; safe zone под текст — на противоположной. */
+    imageSide: text("image_side").$type<ImageSide>().notNull().default("right"),
     /**
      * Выбранная картинка из deck_images. Внешнего ключа нет намеренно: ссылка
      * идёт в обе стороны, и FK замкнул бы таблицы в цикл.
@@ -126,6 +150,11 @@ export const deckImagesTable = pgTable(
     scene: text("scene").notNull().default(""),
     /** Итоговый промпт: сюжет + стилевой пакет. Чтобы можно было повторить. */
     prompt: text("prompt").notNull().default(""),
+    /**
+     * Кто рисовал. Поставщиков два: основной Gemini и запасной OpenAI —
+     * когда картинки пойдут разного качества, надо знать, чьи именно.
+     */
+    provider: text("provider").$type<"gemini" | "openai">().notNull().default("gemini"),
     /** Какой моделью нарисовано — основной или запасной. */
     model: text("model").notNull().default(""),
     path: text("path"),
@@ -140,17 +169,46 @@ export const deckImagesTable = pgTable(
   }),
 );
 
+/** Именованные цвета брендбука: имя → #hex. */
+export type Palette = Record<string, string>;
+
+/** Шрифты и кегли. Кегли даны для 16:9 и уезжают в вёрстку слайда. */
+export interface Typography {
+  display: string;
+  body: string;
+  displayFallback: string;
+  bodyFallback: string;
+  sizes: Record<string, [number, number] | number>;
+}
+
+/** Числовые правила композиции — их проверяет вёрстка, а не глаз. */
+export interface StyleRules {
+  aspect: string;
+  /** Размер картинки у модели. Обе стороны обязаны быть кратны 16. */
+  imageSize: string;
+  imageSharePct: [number, number];
+  safeZonePct: [number, number];
+  maxBodyLines: number;
+  /** Метафорические системы; в одном образе их разрешено не больше двух. */
+  metaphorFamilies: string[];
+  maxMetaphorsPerImage: number;
+}
+
 /**
  * Визуальный язык серии. Жёсткая часть промпта живёт здесь, а не в коде:
  * стиль — вопрос вкуса автора, его меняют без правки приложения.
+ * Первый пакет — «Архивный сон» из брендбука Psy3107 (`brand/`).
  */
 export const stylePacksTable = pgTable("style_packs", {
   id: serial("id").primaryKey(),
   ownerId: integer("owner_id").references(() => usersTable.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
+  /** Мастер-промпт: техника, палитра, настроение. Меняется только сюжет. */
   promptSuffix: text("prompt_suffix").notNull(),
   negative: text("negative").notNull().default(""),
-  palette: text("palette").notNull().default(""),
+  palette: jsonb("palette").$type<Palette>().notNull().default({}),
+  typography: jsonb("typography").$type<Typography | null>(),
+  rules: jsonb("rules").$type<StyleRules | null>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
