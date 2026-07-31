@@ -14,6 +14,7 @@ import {
   type ImageSide,
 } from "@workspace/db";
 import { askJson } from "../claude";
+import { sanitizeSlideContent } from "../slide-content";
 import { registerHandler } from "../jobs";
 import { logger } from "../logger";
 
@@ -140,8 +141,13 @@ async function run(job: Job): Promise<void> {
     maxTokens: 16000,
   });
 
-  const slides = (result.slides ?? []).filter((s) => s && typeof s === "object");
-  if (slides.length === 0) throw new Error("Не удалось разложить материал по слайдам");
+  const MAX_SLIDES = 24;
+  const parsed = (result.slides ?? []).filter((s) => s && typeof s === "object");
+  if (parsed.length === 0) throw new Error("Не удалось разложить материал по слайдам");
+  if (parsed.length > MAX_SLIDES) {
+    logger.warn({ id, got: parsed.length, cap: MAX_SLIDES }, "Слайдов больше потолка — обрезаю");
+  }
+  const slides = parsed.slice(0, MAX_SLIDES);
 
   await db.delete(deckSlidesTable).where(eq(deckSlidesTable.deckId, id));
   await db.insert(deckSlidesTable).values(
@@ -160,7 +166,7 @@ async function run(job: Job): Promise<void> {
         deckId: id,
         ord: i,
         layout,
-        content: (s.content ?? {}) as SlideContent,
+        content: sanitizeSlideContent(s.content),
         notes: typeof s.notes === "string" ? s.notes : "",
         imageBrief: wanted,
         imageSide: (s.imageSide === "left" ? "left" : "right") as ImageSide,

@@ -643,3 +643,36 @@ button.doc-card:hover{border-color:var(--accent-strong)}
 }
 
 .hidden{display:none!important}
+
+/* ── Презентации ── */
+/* Готовая гравюра занимает пластину целиком; рамка серии (::before) остаётся поверх */
+.slide .th.th-img{padding:0}
+.slide .th.th-img img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.slide .th.th-img::before{z-index:1}
+.slide .th.th-img .tag-draft{z-index:1}
+/* Текстовая пластина без образа не кликается — не обещать взаимодействия */
+.slide.still{cursor:default}
+.slide.still:hover{border-color:var(--line);box-shadow:none;transform:none}
+/* Карточка слайда в раскадровке */
+.sb-slide{padding:16px 18px}
+.sb-num{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:500;
+  text-transform:uppercase;letter-spacing:.13em;color:var(--accent-strong);margin-bottom:7px}
+.sb-num::before{content:"";width:.42em;height:.42em;border:1px solid currentColor;transform:rotate(45deg)}
+.sb-title{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:-.02em;
+  line-height:1.2;margin:0 0 8px}
+.sb-bullets{list-style:none;margin:0;padding:0;font-size:14px;color:var(--ink-2)}
+.sb-bullets li{position:relative;padding-left:17px;margin-bottom:4px;line-height:1.5}
+.sb-bullets li::before{content:"";position:absolute;left:2px;top:.5em;width:5px;height:5px;
+  border:1px solid var(--accent-strong);transform:rotate(45deg)}
+/* «Образ»-строка: мысль будущей иллюстрации и кнопки при ней */
+.sb-brief{margin-top:12px;padding:10px 13px;border:1px solid var(--hairline);
+  border-left:2px solid var(--steel);font-size:13.5px;color:var(--ink-2);line-height:1.5}
+.sb-brief-lbl{display:block;font-size:10.5px;font-weight:500;text-transform:uppercase;
+  letter-spacing:.11em;color:var(--steel-text);margin-bottom:3px}
+.sb-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+.sb-actions .btn{padding:7px 12px;font-size:13px}
+.sb-actions .btn .ic-svg{width:14px;height:14px}
+.sb-total{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--ink-2);margin:18px 0 12px}
+.sb-total::before{content:"";width:.42em;height:.42em;border:1px solid var(--accent-strong);transform:rotate(45deg)}
+/* Некликабельная пластина не должна «нажиматься» на таче */
+@media(hover:none){.slide.still:active{transform:none}}
