@@ -12,6 +12,7 @@ import {
   type SlideLayout,
   type ImageStatus,
   type ImageSide,
+  type DiagramSpec,
 } from "@workspace/db";
 import { askJson } from "../claude";
 import { sanitizeSlideContent } from "../slide-content";
@@ -35,6 +36,35 @@ interface StoryboardSlide {
   notes?: string;
   imageBrief?: string | null;
   imageSide?: string;
+  diagramSpec?: unknown;
+}
+
+/**
+ * Модель отвечает JSON'ом без гарантий формы, а схема потом рисуется кодом —
+ * и в PPTX, и на фронте. Поэтому приводим к контракту DiagramSpec руками:
+ * только известные поля, обрезка длин (label 60, sub 120), максимум 6 шагов.
+ * Всё, что не дотягивает до осмысленной схемы (меньше двух шагов), — null:
+ * лучше слайд текстом, чем кривая схема.
+ */
+function sanitizeDiagramSpec(raw: unknown): DiagramSpec | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const { kind, items } = raw as { kind?: unknown; items?: unknown };
+  if (kind !== "flow" && kind !== "pillars") return null;
+  if (!Array.isArray(items)) return null;
+
+  const clean: DiagramSpec["items"] = [];
+  for (const it of items) {
+    if (!it || typeof it !== "object" || Array.isArray(it)) continue;
+    const { label, sub } = it as { label?: unknown; sub?: unknown };
+    if (typeof label !== "string" || label.trim() === "") continue;
+    const item: DiagramSpec["items"][number] = { label: label.trim().slice(0, 60) };
+    if (typeof sub === "string" && sub.trim() !== "") item.sub = sub.trim().slice(0, 120);
+    clean.push(item);
+    if (clean.length === 6) break;
+  }
+
+  if (clean.length < 2) return null;
+  return { kind, items: clean };
 }
 
 /** Собирает исходный текст, из которого делается презентация. */
@@ -133,6 +163,9 @@ async function run(job: Job): Promise<void> {
     "",
     'Формат ответа: {"slides":[{"layout":"...","content":{...},"notes":"...","imageBrief":null,"imageSide":"right"}]}',
     "content зависит от функции: eyebrow, title, subtitle, bullets[], cards[{title,body}], quote, attribution, question, plate.",
+    'На diagram-слайде заполни ещё "diagramSpec": {"kind":"flow"|"pillars","items":[{"label":"...","sub":"..."}]} —',
+    "2–6 шагов, label до 60 знаков, sub — необязательная расшифровка до 120. flow — последовательность",
+    "(этапы, стрелки сверху вниз), pillars — рядоположные опоры колонками. Другим слайдам diagramSpec не нужен.",
   ].join("\n");
 
   const result = await askJson<{ slides?: StoryboardSlide[] }>({
@@ -171,6 +204,9 @@ async function run(job: Job): Promise<void> {
         imageBrief: wanted,
         imageSide: (s.imageSide === "left" ? "left" : "right") as ImageSide,
         imageStatus,
+        // Зеркально образу: схема живёт только на diagram-слайде,
+        // на остальных spec — мусор модели, его не храним.
+        diagramSpec: layout === "diagram" ? sanitizeDiagramSpec(s.diagramSpec) : null,
       };
     }),
   );

@@ -1,6 +1,14 @@
 import { existsSync } from "node:fs";
 import PptxGenJS from "pptxgenjs";
-import type { Deck, DeckSlide, DeckImage, StylePack, SlideLayout, SlideContent } from "@workspace/db";
+import type {
+  Deck,
+  DeckSlide,
+  DeckImage,
+  StylePack,
+  SlideLayout,
+  SlideContent,
+  DiagramSpec,
+} from "@workspace/db";
 
 /**
  * Сборка PPTX по утверждённой раскадровке. Макеты — раздел 9 брендбука
@@ -415,6 +423,103 @@ function addFinal(out: PptxGenJS.Slide, c: SlideContent, st: Style, idx: number)
   addFolio(out, st, idx);
 }
 
+/**
+ * Схема фигурами: раскадровка отдала структуру (DiagramSpec), и слайд
+ * рисуется кодом, без гравюры. Панели — deepIndigo с рамкой museumIndigo:
+ * те же цвета пакета, которыми серия красит разделители и folio, — схема
+ * читается листом атласа, а не офисным флоучартом.
+ */
+function addDiagram(out: PptxGenJS.Slide, c: SlideContent, spec: DiagramSpec, st: Style): void {
+  out.background = { color: st.color("archiveBlack") };
+
+  // Заголовок сверху — как в theory.
+  out.addText(c.title ?? "", {
+    x: MARGIN,
+    y: 0.75,
+    w: PAGE_W - MARGIN * 2,
+    h: 1.1,
+    fontFace: st.display,
+    fontSize: 34,
+    color: VELLUM,
+    valign: "top",
+    lineSpacingMultiple: 1.05,
+  });
+
+  const fill = { color: st.color("deepIndigo") };
+  const border = { color: st.color("museumIndigo"), width: 1 };
+  const top = 2.05;
+  const bottom = PAGE_H - 0.55;
+
+  if (spec.kind === "flow") {
+    const n = spec.items.length;
+    const gap = 0.42; // просвет под стрелку
+    // Потолок высоты шага: два шага не должны раздуваться в плакаты.
+    const boxH = Math.min((bottom - top - gap * (n - 1)) / n, 1.15);
+    const boxW = 7.2;
+    const x = (PAGE_W - boxW) / 2;
+    // Колонка короче отведённого поля — вешаем её по центру вертикали.
+    let y = top + (bottom - top - (boxH * n + gap * (n - 1))) / 2;
+
+    spec.items.forEach((it, i) => {
+      out.addShape("rect", { x, y, w: boxW, h: boxH, fill, line: border });
+      const runs: PptxGenJS.TextProps[] = [
+        { text: it.label, options: { fontFace: st.display, fontSize: 20, color: VELLUM } },
+      ];
+      if (it.sub) {
+        runs[0]!.options!.breakLine = true;
+        runs[0]!.options!.paraSpaceAfter = 4;
+        runs.push({
+          text: it.sub,
+          options: { fontFace: st.body, fontSize: 12, color: st.color("deepSepia") },
+        });
+      }
+      out.addText(runs, { x: x + 0.25, y, w: boxW - 0.5, h: boxH, valign: "middle", align: "center" });
+
+      if (i < n - 1) {
+        // Стрелка — та же волосяная линия серии, только с наконечником.
+        out.addShape("line", {
+          x: PAGE_W / 2,
+          y: y + boxH + 0.06,
+          w: 0,
+          h: gap - 0.12,
+          line: { color: st.color("museumIndigo"), width: 1.5, endArrowType: "arrow" },
+        });
+      }
+      y += boxH + gap;
+    });
+    return;
+  }
+
+  // pillars: колонки рядом. Больше четырёх в строку листа не влезает —
+  // лишние опоры отбрасываем, состав всё равно виден в раскадровке.
+  const items = spec.items.slice(0, 4);
+  const gap = 0.45;
+  const colW = (PAGE_W - MARGIN * 2 - gap * (items.length - 1)) / items.length;
+  items.forEach((it, i) => {
+    const x = MARGIN + i * (colW + gap);
+    out.addShape("rect", { x, y: top, w: colW, h: bottom - top, fill, line: border });
+    const runs: PptxGenJS.TextProps[] = [
+      {
+        text: it.label,
+        options: { fontFace: st.display, fontSize: 20, color: VELLUM, breakLine: true, paraSpaceAfter: 8 },
+      },
+    ];
+    if (it.sub) {
+      runs.push({
+        text: it.sub,
+        options: { fontFace: st.body, fontSize: 12, color: st.color("deepSepia"), lineSpacingMultiple: 1.2 },
+      });
+    }
+    out.addText(runs, {
+      x: x + 0.3,
+      y: top + 0.35,
+      w: colW - 0.6,
+      h: bottom - top - 0.7,
+      valign: "top",
+    });
+  });
+}
+
 // ── Сборка ──────────────────────────────────────────────────────────────
 
 /**
@@ -469,8 +574,10 @@ export async function buildDeckPptx(
         addFinal(out, c, st, idx);
         break;
       case "diagram":
-        // Схемы (diagramSpec) в v1 не рендерим — слайд идёт текстом как теория.
-        addTheory(out, c, null, st, s.imageSide);
+        // Есть spec — рисуем структуру фигурами; без него прежнее
+        // поведение: слайд идёт текстом как теория.
+        if (s.diagramSpec) addDiagram(out, c, s.diagramSpec, st);
+        else addTheory(out, c, null, st, s.imageSide);
         break;
       case "theory":
       default:

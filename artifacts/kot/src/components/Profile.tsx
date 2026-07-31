@@ -141,13 +141,13 @@ export function Profile() {
 
           {error && <p className="login-err">{error}</p>}
 
-          <button className="btn primary big" type="submit" disabled={busy} style={{ marginTop: 18 }}>
+          <button className="btn primary big" type="submit" disabled={busy} style={{ marginTop: 'var(--sp-2)' }}>
             {busy ? 'Меняю…' : 'Сохранить новый пароль'}
           </button>
           <button
             className="btn ghost"
             type="button"
-            style={{ width: '100%', marginTop: 8 }}
+            style={{ width: '100%', marginTop: 'var(--sp-1)' }}
             onClick={() => {
               setShowForm(false);
               setError('');
@@ -162,7 +162,7 @@ export function Profile() {
         </form>
       )}
 
-      <button className="btn link-danger" onClick={() => void logout()} style={{ marginTop: 18 }}>
+      <button className="btn link-danger" onClick={() => void logout()} style={{ marginTop: 'var(--sp-2)' }}>
         <Icon name="lock" /> Выйти
       </button>
     </section>

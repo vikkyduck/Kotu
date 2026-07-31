@@ -58,7 +58,8 @@ export function Home() {
       <h1 className="hello">{greeting()}</h1>
       <p className="lead">С чего начнём сегодня?</p>
 
-      <button className="task hero" onClick={() => newTranscription()}>
+      {/* Иерархия Lovable: расшифровка — главное действие, остальное — сетка ниже */}
+      <button className="task hero primary-task" onClick={() => newTranscription()}>
         <span className="ti"><span data-icon="mic"><Icon name="mic" /></span></span>
         <span className="tb"><h3>Расшифровать запись</h3><p>Аудио лекции или сеанса — превращу в готовый текст.</p></span>
         <span className="go" data-icon="arrow"><Icon name="arrow" /></span>
@@ -67,24 +68,6 @@ export function Home() {
       {!hasHistory && (
         <p id="startHint" className="start-hint">С чего начать — загрузите запись, остальное я сделаю сама.</p>
       )}
-
-      <button className="task hero" onClick={() => go('s-library')}>
-        <span className="ti"><span data-icon="book"><Icon name="book" /></span></span>
-        <span className="tb"><h3>Библиотека</h3><p>Книги и статьи, на которые буду опираться в лекциях.</p></span>
-        <span className="go" data-icon="arrow"><Icon name="arrow" /></span>
-      </button>
-
-      <button className="task hero" onClick={() => go('s-lecture')}>
-        <span className="ti"><span data-icon="pen"><Icon name="pen" /></span></span>
-        <span className="tb"><h3>Подготовить лекцию</h3><p>Соберу материал из библиотеки и напишу полный текст выступления.</p></span>
-        <span className="go" data-icon="arrow"><Icon name="arrow" /></span>
-      </button>
-
-      <button className="task hero" onClick={() => go('s-slides')}>
-        <span className="ti"><span data-icon="deck"><Icon name="deck" /></span></span>
-        <span className="tb"><h3>Собрать презентацию</h3><p>Разложу лекцию по слайдам и нарисую образы в вашем стиле.</p></span>
-        <span className="go" data-icon="arrow"><Icon name="arrow" /></span>
-      </button>
 
       {hasHistory && (
         <div id="resumeBlock">
@@ -144,6 +127,25 @@ export function Home() {
           </div>
         </div>
       )}
+
+      {/* Остальные инструменты — компактной сеткой; тексты и переходы наши */}
+      <div className="label">Другие инструменты</div>
+      <div className="task-grid">
+        <button className="task secondary" onClick={() => go('s-library')}>
+          <span className="ti"><span data-icon="book"><Icon name="book" /></span></span>
+          <span className="tb"><h3>Библиотека</h3><p>Книги и статьи, на которые буду опираться в лекциях.</p></span>
+        </button>
+
+        <button className="task secondary" onClick={() => go('s-lecture')}>
+          <span className="ti"><span data-icon="pen"><Icon name="pen" /></span></span>
+          <span className="tb"><h3>Подготовить лекцию</h3><p>Соберу материал из библиотеки и напишу полный текст выступления.</p></span>
+        </button>
+
+        <button className="task secondary" onClick={() => go('s-slides')}>
+          <span className="ti"><span data-icon="deck"><Icon name="deck" /></span></span>
+          <span className="tb"><h3>Собрать презентацию</h3><p>Разложу лекцию по слайдам и нарисую образы в вашем стиле.</p></span>
+        </button>
+      </div>
 
       {/* Кот свернулся в конце страницы — фирменный штрих автора */}
       <CatLine className="home-cat" />

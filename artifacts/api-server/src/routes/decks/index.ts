@@ -3,7 +3,7 @@ import os from "node:os";
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { Router, type IRouter } from "express";
-import { eq, and, asc, desc, isNotNull } from "drizzle-orm";
+import { eq, and, or, asc, desc, isNotNull, isNull } from "drizzle-orm";
 import {
   db,
   decksTable,
@@ -20,6 +20,7 @@ import {
 import { inArray, sql } from "drizzle-orm";
 import { enqueue } from "../../lib/jobs";
 import { buildDeckPptx } from "../../lib/pptx";
+import { buildDeckPdf } from "../../lib/pdf";
 import { sanitizeSlideContent } from "../../lib/slide-content";
 
 const router: IRouter = Router();
@@ -55,6 +56,22 @@ async function loadDeck(rawId: string, ownerId: number): Promise<Deck | null> {
     .limit(1);
   return deck ?? null;
 }
+
+/**
+ * Пакеты, из которых пользователь выбирает стиль серии: общие (без владельца)
+ * и его собственные. Только id и имя — палитра и промпты фронту не нужны.
+ */
+function availablePacksQuery(userId: number) {
+  return db
+    .select({ id: stylePacksTable.id, name: stylePacksTable.name })
+    .from(stylePacksTable)
+    .where(or(isNull(stylePacksTable.ownerId), eq(stylePacksTable.ownerId, userId)))
+    .orderBy(asc(stylePacksTable.id));
+}
+
+router.get("/style-packs", async (req, res): Promise<void> => {
+  res.json(await availablePacksQuery(req.user!.id));
+});
 
 router.get("/decks", async (req, res): Promise<void> => {
   const rows = await db
@@ -143,12 +160,18 @@ router.post("/decks", async (req, res): Promise<void> => {
     return;
   }
 
-  // Пока стилевой пакет один на всех — берём первый. Выбор появится позже.
-  const [pack] = await db
-    .select({ id: stylePacksTable.id })
-    .from(stylePacksTable)
-    .orderBy(asc(stylePacksTable.id))
-    .limit(1);
+  // Стиль серии: явный выбор проверяем по списку доступных пакетов — чужой id
+  // это 400, а не тихая подмена. Без выбора — первый доступный, как раньше.
+  const available = await availablePacksQuery(req.user!.id);
+  let stylePackId: number | null = available[0]?.id ?? null;
+  if (body.stylePackId !== undefined && body.stylePackId !== null) {
+    const requested = Number(body.stylePackId);
+    if (!Number.isInteger(requested) || !available.some((p) => p.id === requested)) {
+      res.status(400).json({ message: "Такой стиль серии недоступен" });
+      return;
+    }
+    stylePackId = requested;
+  }
 
   const [deck] = await db
     .insert(decksTable)
@@ -157,7 +180,7 @@ router.post("/decks", async (req, res): Promise<void> => {
       title,
       sourceKind: kind,
       sourceId,
-      stylePackId: pack?.id ?? null,
+      stylePackId,
       status: "storyboarding",
       statusMessage: "В очереди…",
     })
@@ -351,15 +374,17 @@ router.get("/decks/:id/images/:imageId/file", async (req, res): Promise<void> =>
   res.sendFile(path.resolve(image.path), { headers: { "Content-Type": mime } });
 });
 
-/** Выгрузка в PPTX. Разрешена и до отрисовки: текстовая колода тоже колода. */
+/** Выгрузка колоды: PPTX по умолчанию, PDF-раздатка по ?format=pdf.
+ * Разрешена и до отрисовки: текстовая колода тоже колода. */
 router.get("/decks/:id/export", async (req, res): Promise<void> => {
   const deck = await loadDeck(req.params.id, req.user!.id);
   if (!deck) {
     res.status(404).json({ message: "Презентация не найдена" });
     return;
   }
-  if ((req.query.format ?? "pptx") !== "pptx") {
-    res.status(400).json({ message: "Такой формат не умею — только pptx" });
+  const format = req.query.format ?? "pptx";
+  if (format !== "pptx" && format !== "pdf") {
+    res.status(400).json({ message: "Такой формат не умею — только pptx и pdf" });
     return;
   }
   if (deck.status !== "ready" && deck.status !== "storyboard_ready") {
@@ -394,12 +419,22 @@ router.get("/decks/:id/export", async (req, res): Promise<void> => {
     return;
   }
 
-  const buffer = await buildDeckPptx(
-    deck,
-    slides,
-    new Map(images.map((img) => [img.id, img])),
-    pack,
-  );
+  const imagesById = new Map(images.map((img) => [img.id, img]));
+
+  if (format === "pdf") {
+    // Раздатка для зала: те же макеты, но без заметок докладчика.
+    const buffer = await buildDeckPdf(deck, slides, imagesById, pack);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      // ASCII-fallback для старых клиентов + полное имя по RFC 5987.
+      `attachment; filename="presentation.pdf"; filename*=UTF-8''${encodeURIComponent(deck.title)}.pdf`,
+    );
+    res.send(buffer);
+    return;
+  }
+
+  const buffer = await buildDeckPptx(deck, slides, imagesById, pack);
 
   res.setHeader(
     "Content-Type",

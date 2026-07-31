@@ -64,6 +64,16 @@ export interface SlideContent {
  */
 export type ImageSide = "left" | "right";
 
+/**
+ * Схема diagram-слайда, которую рисует код, а не художник: flow — шаги со
+ * стрелками сверху вниз, pillars — колонки рядом. 2..6 элементов,
+ * label ≤60 знаков, sub ≤120 — пределы держит разбор раскадровки.
+ */
+export type DiagramSpec = {
+  kind: "flow" | "pillars";
+  items: { label: string; sub?: string }[];
+};
+
 export const decksTable = pgTable("decks", {
   id: serial("id").primaryKey(),
   ownerId: integer("owner_id")
@@ -119,7 +129,7 @@ export const deckSlidesTable = pgTable(
     /** Дублируется из deck_images ради прогресса в списке слайдов без join. */
     imageStatus: text("image_status").$type<ImageStatus>().notNull().default("none"),
     /** Описание схемы для тех слайдов, где нужна не метафора, а структура. */
-    diagramSpec: jsonb("diagram_spec"),
+    diagramSpec: jsonb("diagram_spec").$type<DiagramSpec | null>(),
   },
   (t) => ({
     byDeck: index("deck_slides_deck_idx").on(t.deckId, t.ord),

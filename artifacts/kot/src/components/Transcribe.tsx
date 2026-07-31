@@ -52,7 +52,6 @@ export function Transcribe() {
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [opts, setOpts] = useState({ names: 'on', spk: 'on' });
-  const [optsOpen, setOptsOpen] = useState({ names: false, spk: false });
 
   // While the upload request itself is in flight (before we have a row to poll).
   const [uploading, setUploading] = useState(false);
@@ -187,6 +186,14 @@ export function Transcribe() {
     ? 'Загружаю запись…'
     : active?.statusMessage || 'Готовлю запись…';
   const procProgress = uploading ? 4 : Math.max(4, active?.progress ?? 4);
+  // Стадия считается из уже приходящего прогресса — без новых запросов к API.
+  const procStage = uploading
+    ? 'Шаг 1 из 3 · передаю файл'
+    : procProgress < 35
+      ? 'Шаг 1 из 3 · читаю запись'
+      : procProgress < 80
+        ? 'Шаг 2 из 3 · распознаю речь'
+        : 'Шаг 3 из 3 · собираю текст';
 
   return (
     <section className="screen active" id="s-transcribe">
@@ -224,8 +231,7 @@ export function Transcribe() {
           >
             <div className="dz"><Icon name="upload" /></div>
             <b>Перетащите запись сюда</b>
-            <div className="hint">или нажмите, чтобы выбрать файл · запись остаётся у вас</div>
-            <div className="hint">любой длины — даже сеанс или лекция на 2–3 часа</div>
+            <div className="hint">или нажмите, чтобы выбрать файл · любая длина · запись остаётся у вас</div>
           </div>
         </div>
       )}
@@ -238,47 +244,50 @@ export function Transcribe() {
             <button className="chg" onClick={newTranscription}>заменить</button>
           </div>
 
+          {/* Дизайн Lovable: тумблеры вместо текстовых ссылок «изменить» */}
           <div className="panel">
-            <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '4px' }}>Я позабочусь об этом сама:</div>
+            <div className="setgroup-title">Настройки записи</div>
 
             <div className="setrow">
-              <span className={`si ${opts.names === 'off' ? 'off' : ''}`} id="iconNames">
-                <Icon name="check" />
-              </span>
               <div className="st">
-                <p id="txtNames" dangerouslySetInnerHTML={{ __html: opts.names === 'on' ? 'Скрою имена и города пациентов — в тексте будет «<b>имя скрыто</b>», но вы сможете посмотреть их по клику.' : 'Оставлю текст как есть — имена скрывать не буду.' }} />
-                <button className="chg" onClick={() => setOptsOpen(s => ({ ...s, names: !s.names }))}>
-                  {opts.names === 'on' ? 'это моя лекция, скрывать не нужно' : 'скрыть имена'}
-                </button>
-                <div className={`opts ${optsOpen.names ? 'open' : ''}`} id="optNames">
-                  <div className={`opt ${opts.names === 'on' ? 'sel' : ''}`} onClick={() => setOpts(s => ({ ...s, names: 'on' }))}>
-                    <span className="rd"></span><div>Это сеанс с пациентом — скрыть имена <small>рекомендую для записей сеансов</small></div>
-                  </div>
-                  <div className={`opt ${opts.names === 'off' ? 'sel' : ''}`} onClick={() => setOpts(s => ({ ...s, names: 'off' }))}>
-                    <span className="rd"></span><div>Это моя лекция — скрывать ничего не нужно</div>
-                  </div>
-                </div>
+                <b>Скрыть имена и города</b>
+                <p id="txtNames">
+                  {opts.names === 'on'
+                    ? 'В тексте будет «имя скрыто» — исходное можно посмотреть по клику.'
+                    : 'Оставлю текст как есть — подходит для лекций.'}
+                </p>
               </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={opts.names === 'on'}
+                aria-label="Скрыть имена и города"
+                className={`switch ${opts.names === 'on' ? 'on' : ''}`}
+                onClick={() => setOpts(s => ({ ...s, names: s.names === 'on' ? 'off' : 'on' }))}
+              >
+                <span className="knob" />
+              </button>
             </div>
 
             <div className="setrow">
-              <span className={`si ${opts.spk === 'off' ? 'off' : ''}`} id="iconSpk">
-                <Icon name="check" />
-              </span>
               <div className="st">
-                <p id="txtSpk">{opts.spk === 'on' ? 'Помечу, где говорите вы, а где собеседник.' : 'Не буду помечать говорящих — просто сплошной текст.'}</p>
-                <button className="chg" onClick={() => setOptsOpen(s => ({ ...s, spk: !s.spk }))}>
-                  {opts.spk === 'on' ? 'не нужно помечать' : 'пометить говорящих'}
-                </button>
-                <div className={`opts ${optsOpen.spk ? 'open' : ''}`} id="optSpk">
-                  <div className={`opt ${opts.spk === 'on' ? 'sel' : ''}`} onClick={() => setOpts(s => ({ ...s, spk: 'on' }))}>
-                    <span className="rd"></span><div>Пометить, кто говорит</div>
-                  </div>
-                  <div className={`opt ${opts.spk === 'off' ? 'sel' : ''}`} onClick={() => setOpts(s => ({ ...s, spk: 'off' }))}>
-                    <span className="rd"></span><div>Не нужно — это просто запись лекции</div>
-                  </div>
-                </div>
+                <b>Помечать говорящих</b>
+                <p id="txtSpk">
+                  {opts.spk === 'on'
+                    ? 'Отмечу, где говорите вы, а где собеседник.'
+                    : 'Соберу сплошной текст без разметки реплик.'}
+                </p>
               </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={opts.spk === 'on'}
+                aria-label="Помечать говорящих"
+                className={`switch ${opts.spk === 'on' ? 'on' : ''}`}
+                onClick={() => setOpts(s => ({ ...s, spk: s.spk === 'on' ? 'off' : 'on' }))}
+              >
+                <span className="knob" />
+              </button>
             </div>
           </div>
 
@@ -295,19 +304,22 @@ export function Transcribe() {
             <div className="orb"><span className="core"></span></div>
             <p className="pstat" id="procStat">{procMessage}</p>
             <div className="pbar"><i id="procBar" style={{ width: `${procProgress}%` }}></i></div>
-            <p className="preassure">Идёт распознавание. Длинную запись я бережно разберу по частям и соберу единый текст — он будет ждать вас здесь.</p>
+            <p className="pstage">{procStage}</p>
+            <p className="preassure">Можно закрыть страницу — я продолжу и соберу единый текст, он будет ждать вас здесь.</p>
           </div>
         </div>
       )}
 
       {showError && (
-        <div id="tcError">
-          <p className="tnote" style={{ color: 'var(--danger-strong)' }}>
-            <Icon name="info" /> {active?.error || 'Не удалось распознать запись. Попробуйте ещё раз.'}
+        /* Дизайн Lovable (.errblock); действия наши — повтор и удаление сохранены */
+        <div id="tcError" className="errblock">
+          <h3 className="errttl">Не получилось</h3>
+          <p className="errwhy">
+            {active?.error || 'Я не смогла распознать эту запись.'}
           </p>
           <div className="btnrow">
             <button className="btn primary" style={{ flex: 1 }} onClick={retry}>
-              Попробовать ещё раз <Icon name="arrow" />
+              Попробовать снова <Icon name="arrow" />
             </button>
             <button
               className="btn danger"
@@ -334,23 +346,25 @@ export function Transcribe() {
 }
 
 function Stepper({ view }: { view: string }) {
-  const n = view === 'tcUpload' ? 0 : view === 'tcReady' ? 1 : 2;
-  const allDone = view === 'tcResult';
+  // Четыре шага: Файл → Настройки → Расшифровка → Готово.
+  const STEPS = ['Файл', 'Настройки', 'Расшифровка', 'Готово'];
+  const n = view === 'tcUpload' ? 0 : view === 'tcReady' ? 1 : view === 'tcResult' ? 3 : 2;
   const loading = view === 'tcProc';
+  const last = STEPS.length - 1;
 
   return (
     <div className="stepper" id="tcSteps">
-      {[{ lbl: 'Запись' }, { lbl: 'Проверка' }, { lbl: 'Готово' }].map((s, i) => {
-        const done = allDone || i < n;
-        const active = allDone ? false : i === n;
+      {STEPS.map((lbl, i) => {
+        const done = i < n;
+        const active = i === n;
         const isLoading = active && loading;
         return (
-          <React.Fragment key={i}>
+          <React.Fragment key={lbl}>
             <div className={`step ${done ? 'done' : ''} ${active ? 'active' : ''} ${isLoading ? 'loading' : ''}`}>
               <span className="sdot">{done ? <Icon name="check" /> : (i + 1)}</span>
-              <span className="slbl">{s.lbl}</span>
+              <span className="slbl">{lbl}</span>
             </div>
-            {i < 2 && <div className={`sline ${allDone || i < n ? 'fill' : ''}`}></div>}
+            {i < last && <div className={`sline ${i < n ? 'fill' : ''}`}></div>}
           </React.Fragment>
         );
       })}
