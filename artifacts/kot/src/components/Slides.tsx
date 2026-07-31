@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/hooks/use-app';
-import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
 import { Icon } from '@/lib/icons';
 import { SlideViewer } from './SlideViewer';
+import { DeckForm } from './slides/DeckForm';
+import { DiagramThumb } from './slides/DiagramThumb';
 import {
   layoutName,
   type DeckFull,
@@ -10,116 +11,19 @@ import {
   type DiagramSpec,
 } from '@/lib/deck';
 
-/** Стилевой пакет из GET /style-packs — фронту нужны только id и имя. */
-interface StylePackItem {
-  id: number;
-  name: string;
-}
-
-interface LectureItem {
-  id: number;
-  title: string;
-  status: string;
-}
-
-/** Документ библиотеки — тоже законный источник презентации. */
-interface DocItem {
-  id: number;
-  title: string;
-  kind: string;
-  status: string;
-}
-
-const DOC_KIND_RU: Record<string, string> = {
-  book: 'книга',
-  article: 'статья',
-  note: 'заметка',
-  transcript: 'расшифровка · имена скрыты',
-};
-
-/**
- * Мини-схема на пластине готовой колоды: пиктограмма структуры без подписей —
- * с плитки читается состав (сколько шагов и как они стоят), текст есть в
- * раскадровке и в самом PPTX. stroke currentColor, чтобы схема писалась
- * тем же пером, что рамка серии.
- */
-function DiagramThumb({ spec }: { spec: DiagramSpec }) {
-  const pad = 18;
-  if (spec.kind === 'flow') {
-    const n = spec.items.length;
-    const gap = 11;
-    const h = (180 - pad * 2 - gap * (n - 1)) / n;
-    const w = 150;
-    const x = (320 - w) / 2;
-    return (
-      <svg viewBox="0 0 320 180" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-        {spec.items.map((_, i) => {
-          const y = pad + i * (h + gap);
-          return (
-            <g key={i}>
-              <rect x={x} y={y} width={w} height={h} />
-              {/* стрелка вниз: линия в просвете + шеврон на конце */}
-              {i < n - 1 && <path d={`M160 ${y + h + 2} v${gap - 5} m-4 -4 l4 4 l4 -4`} />}
-            </g>
-          );
-        })}
-      </svg>
-    );
-  }
-  // Колонны: как в экспорте, больше четырёх рядом не ставим.
-  const cols = spec.items.slice(0, 4);
-  const gap = 12;
-  const w = (320 - pad * 2 - gap * (cols.length - 1)) / cols.length;
-  return (
-    <svg viewBox="0 0 320 180" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-      {cols.map((_, i) => (
-        <rect key={i} x={pad + i * (w + gap)} y={pad} width={w} height={180 - pad * 2} />
-      ))}
-    </svg>
-  );
-}
-
 export function Slides() {
   // Какую колоду открыть, решает библиотека: инструмент — это действие,
   // а список сделанного лежит там же, где книги и лекции.
-  const { screen, go, toast, openSheet, activeDeckId, openDeck, deckSeed } = useApp();
-  const [lectures, setLectures] = useState<LectureItem[]>([]);
+  const { screen, go, toast, openSheet, activeDeckId, openDeck } = useApp();
   const openId = activeDeckId;
   const [deck, setDeck] = useState<DeckFull | null>(null);
   /** Какой слайд открыт крупно — индекс в колоде; null = просмотр закрыт. */
   const [openSlide, setOpenSlide] = useState<number | null>(null);
 
-  const [pickedLecture, setPickedLecture] = useState<number | null>(null);
-  const [docsList, setDocsList] = useState<DocItem[]>([]);
-  const [pickedDoc, setPickedDoc] = useState<number | null>(null);
-  // Вставленный текст — черновик: до нажатия кнопки сервер о нём не знает,
-  // поэтому он переживает закрытие вкладки сам.
-  const [rawText, setRawText, clearRawText] = useDraft('deck-text', screen === 's-slides');
   const [busy, setBusy] = useState(false);
 
-  // Стиль серии: список доступных пакетов и явный выбор автора.
-  // null в pickedPack = «не выбирал», тогда действует первый из списка.
-  const [packs, setPacks] = useState<StylePackItem[]>([]);
-  const [pickedPack, setPickedPack] = useState<number | null>(null);
-
-  const loadLectures = useCallback(async () => {
-    try {
-      const [l, d] = await Promise.all([
-        fetch('/api/lectures').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/documents').then((r) => (r.ok ? r.json() : null)),
-      ]);
-      if (l) setLectures((l as LectureItem[]).filter((x) => x.status === 'ready'));
-      // Разобранный документ библиотеки — такой же материал, как лекция.
-      // Текст лекции и текст колоды — их поисковые копии: лекция уже стоит
-      // отдельным списком выше, а собирать презентацию из презентации незачем.
-      if (d)
-        setDocsList(
-          (d as DocItem[]).filter(
-            (x) => x.status === 'ready' && x.kind !== 'lecture' && x.kind !== 'deck',
-          ),
-        );
-    } catch { /* тихо */ }
-  }, []);
+  // Имя стилевого пакета показывается на готовой колоде — за этим и список.
+  const [packs, setPacks] = useState<{ id: number; name: string }[]>([]);
 
   const loadPacks = useCallback(async () => {
     try {
@@ -143,37 +47,11 @@ export function Slides() {
 
   // Форма новой презентации — то, что видно, когда ничего не открыто.
   const creating = openId === null;
-  useUnsavedWarning(screen === 's-slides' && creating && rawText.trim() !== '');
 
+  // Имя стиля показывается на готовой колоде.
   useEffect(() => {
-    if (screen === 's-slides' && creating) void loadLectures();
-  }, [screen, creating, loadLectures]);
-
-  // Список стилей нужен и форме создания (выбор), и открытой колоде (имя стиля).
-  useEffect(() => {
-    if (screen === 's-slides') void loadPacks();
-  }, [screen, loadPacks]);
-
-  useEffect(() => {
-    if (screen !== 's-slides') {
-      setPickedLecture(null);
-      setPickedDoc(null);
-      setPickedPack(null);
-    }
-  }, [screen]);
-
-  // Пришли из библиотеки с материалом («сделать презентацию из этого») —
-  // источник уже выбран, автору остаётся нажать одну кнопку.
-  useEffect(() => {
-    if (screen !== 's-slides' || !creating || !deckSeed) return;
-    if (deckSeed.sourceKind === 'lecture') {
-      setPickedLecture(deckSeed.sourceId);
-      setPickedDoc(null);
-    } else {
-      setPickedDoc(deckSeed.sourceId);
-      setPickedLecture(null);
-    }
-  }, [screen, creating, deckSeed]);
+    if (screen === 's-slides' && !creating) void loadPacks();
+  }, [screen, creating, loadPacks]);
 
   useEffect(() => {
     if (openId === null) {
@@ -191,47 +69,6 @@ export function Slides() {
     const t = setInterval(() => void loadOne(openId), 3000);
     return () => clearInterval(t);
   }, [openId, deck, loadOne]);
-
-  const create = async () => {
-    const raw = rawText.trim();
-    if (pickedLecture === null && pickedDoc === null && raw === '') {
-      toast('Выберите лекцию, документ из библиотеки или вставьте текст');
-      return;
-    }
-    setBusy(true);
-    try {
-      // Явный выбор либо первый из списка; список пуст (сеть моргнула) —
-      // поле не шлём, сервер возьмёт первый доступный сам.
-      const stylePackId = pickedPack ?? packs[0]?.id;
-      const body = {
-        ...(pickedLecture !== null
-          ? { sourceKind: 'lecture', sourceId: pickedLecture }
-          : pickedDoc !== null
-            ? { sourceKind: 'document', sourceId: pickedDoc }
-            : { sourceKind: 'raw', rawText: raw }),
-        ...(stylePackId !== undefined ? { stylePackId } : {}),
-      };
-      const res = await fetch('/api/decks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        const created = await res.json();
-        clearRawText();
-        setPickedLecture(null);
-        setPickedPack(null);
-        openDeck(created.id);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast(data.message ?? 'Не удалось создать презентацию');
-      }
-    } catch {
-      toast('Нет связи с сервером. Попробуйте ещё раз.');
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const patchSlide = async (sid: number, body: Record<string, unknown>) => {
     if (!deck) return;
@@ -624,113 +461,6 @@ export function Slides() {
   }
 
   // ── Новая презентация ───────────────────────────────────────────────────
-  return (
-    <section className="screen active" id="s-slides">
-        <button className="btn ghost back-link" onClick={() => go('s-home')}>
-          <Icon name="back" /> В библиотеку
-        </button>
-
-        <h2 className="h2">Собрать презентацию</h2>
-        <p className="sub">
-          Возьму за основу готовую лекцию, документ из библиотеки — или текст, который вставите.
-        </p>
-
-        <div className="panel">
-          <div className="fieldlbl">Из готовой лекции</div>
-          {lectures.length === 0 ? (
-            <p className="doc-meta">Готовых лекций пока нет.</p>
-          ) : (
-            <div className="resume" style={{ marginBottom: 6 }}>
-              {lectures.map((l) => (
-                <div
-                  key={l.id}
-                  className="r sel-lec"
-                  onClick={() => {
-                    setPickedDoc(null);
-                    setPickedLecture((p) => (p === l.id ? null : l.id));
-                  }}
-                >
-                  <span className="ri"><Icon name="pen" /></span>
-                  <span className="rt">
-                    <b>{l.title}</b>
-                    <span>Лекция готова</span>
-                  </span>
-                  {pickedLecture === l.id && (
-                    <span className="chev sel-mark"><Icon name="check" /></span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Книга, статья или расшифровка — материал для слайдов не хуже лекции */}
-          <div className="fieldlbl">Из библиотеки</div>
-          {docsList.length === 0 ? (
-            <p className="doc-meta">В библиотеке пока нет разобранных документов.</p>
-          ) : (
-            <div className="resume" style={{ marginBottom: 6 }}>
-              {docsList.map((d) => (
-                <div
-                  key={d.id}
-                  className="r sel-lec"
-                  onClick={() => {
-                    setPickedLecture(null);
-                    setPickedDoc((p) => (p === d.id ? null : d.id));
-                  }}
-                >
-                  <span className="ri">
-                    <Icon name={d.kind === 'transcript' ? 'mic' : 'book'} />
-                  </span>
-                  <span className="rt">
-                    <b>{d.title}</b>
-                    <span>{DOC_KIND_RU[d.kind] ?? 'документ'}</span>
-                  </span>
-                  {pickedDoc === d.id && (
-                    <span className="chev sel-mark"><Icon name="check" /></span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="fieldlbl">Или вставьте текст</div>
-          <textarea
-            className="topic"
-            value={rawText}
-            onChange={(e) => setRawText(e.target.value)}
-            placeholder="Вставьте текст выступления — хотя бы пару абзацев."
-          />
-
-          {/* Стиль серии показываем, только когда есть из чего выбирать */}
-          {packs.length > 1 && (
-            <>
-              <div className="fieldlbl">Стиль серии</div>
-              <div className="pills">
-                {packs.map((p) => (
-                  <span
-                    key={p.id}
-                    className={`pill-opt ${(pickedPack ?? packs[0].id) === p.id ? 'on' : ''}`}
-                    onClick={() => setPickedPack(p.id)}
-                  >
-                    {p.name}
-                  </span>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Подпись стоит вплотную к кнопке и называет её: пока кнопка не
-            нажата, текст живёт только в этом браузере. */}
-        {rawText.trim() !== '' && (
-          <p className="draft-note">
-            <Icon name="check" /> Чтобы сохранить текст, нажмите «Разложить по слайдам».
-            Пока он только в этом браузере.
-          </p>
-        )}
-        <button className="btn primary big" disabled={busy} onClick={() => void create()}>
-          {busy ? 'Начинаю…' : 'Разложить по слайдам'} <Icon name="arrow" />
-        </button>
-    </section>
-  );
+  // Форма живёт отдельно и сама знает, из чего собирать колоду.
+  return <DeckForm active={screen === 's-slides'} onCreated={openDeck} />;
 }
