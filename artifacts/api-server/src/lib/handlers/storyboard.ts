@@ -212,10 +212,20 @@ async function run(job: Job): Promise<void> {
   );
 
   const withImages = slides.filter((s) => s.imageBrief).length;
-  await db
-    .update(decksTable)
-    .set({ status: "storyboard_ready", statusMessage: "" })
-    .where(eq(decksTable.id, id));
+
+  // У вставленного текста названия нет, и до раскадровки его брали обрезком
+  // первых знаков — в списке это выглядело как случайная фраза. Теперь, когда
+  // обложка придумана, берём её заголовок: он и есть имя выступления.
+  const coverTitle = sanitizeSlideContent(
+    slides.find((sl) => sl.layout === "cover")?.content,
+  ).title;
+  const patch: { status: "storyboard_ready"; statusMessage: string; title?: string } = {
+    status: "storyboard_ready",
+    statusMessage: "",
+  };
+  if (deck.sourceKind === "raw" && coverTitle) patch.title = coverTitle;
+
+  await db.update(decksTable).set(patch).where(eq(decksTable.id, id));
 
   logger.info({ id, slides: slides.length, withImages }, "Раскадровка готова");
 }
