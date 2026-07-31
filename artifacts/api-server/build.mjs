@@ -60,7 +60,10 @@ async function buildAll() {
       "@prisma/client",
       "@mikro-orm/*",
       "@grpc/*",
-      "@swc/*",
+      // @swc/core — нативный бинарь, ему в бандле не место; а вот чистый JS
+      // @swc/helpers обязан бандлиться: на сервере нет node_modules.
+      "@swc/core",
+      "@swc/wasm",
       "@aws-sdk/*",
       "@azure/*",
       "@opentelemetry/*",
