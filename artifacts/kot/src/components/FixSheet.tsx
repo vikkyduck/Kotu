@@ -5,7 +5,9 @@ import { Celebrate } from '@/lib/celebrate';
 const SHEET_CHIPS = {
   A: ['здесь плохо слышно, перепроверьте', 'тут не я говорю, а собеседник'],
   B: ['здесь слишком сложно — попроще', 'добавьте клинический пример', 'покороче'],
-  C: ['картинка простовата — глубже', 'смените образ', 'подпись не помещается']
+  C: ['картинка простовата — глубже', 'смените образ', 'подпись не помещается'],
+  // N — «назовите»: короткое имя, без подсказок-чипов и без праздника.
+  N: []
 };
 
 export function FixSheet() {
@@ -34,15 +36,20 @@ export function FixSheet() {
     setText(prev => prev ? prev + '. ' + t : t);
   };
 
+  const isName = sheet.kind === 'N';
+
   const submitFix = () => {
     if (!text.trim()) {
-      toast('Напишите в двух словах, что поправить');
+      toast(isName ? 'Напишите название' : 'Напишите в двух словах, что поправить');
       return;
     }
-    if (sheet.callback) sheet.callback(text);
+    // Имя — одной строкой, переносы ни к чему.
+    if (sheet.callback) sheet.callback(isName ? text.trim().replace(/\s+/g, ' ') : text);
     closeSheet();
-    Celebrate.burst(window.innerWidth / 2, window.innerHeight * 0.7);
-    toast('Поняла — поправлю и обновлю');
+    if (!isName) {
+      Celebrate.burst(window.innerWidth / 2, window.innerHeight * 0.7);
+      toast('Поняла — поправлю и обновлю');
+    }
   };
 
   return (
@@ -50,14 +57,24 @@ export function FixSheet() {
       <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
         <div className="grab"></div>
         <h3 id="sheetTitle">{sheet.title}</h3>
-        <p className="s" id="sheetSub">Напишите своими словами — я переделаю. Спешить некуда.</p>
-        
-        <textarea 
-          id="sheetText" 
+        {!isName && (
+          <p className="s" id="sheetSub">Напишите своими словами — я переделаю. Спешить некуда.</p>
+        )}
+
+        <textarea
+          id="sheetText"
           ref={inputRef}
-          placeholder="Например: здесь плохо слышно, перепроверьте это место."
+          rows={isName ? 1 : undefined}
+          placeholder={isName ? 'Название' : 'Например: здесь плохо слышно, перепроверьте это место.'}
           value={text}
           onChange={e => setText(e.target.value)}
+          onKeyDown={e => {
+            // В режиме имени Enter отправляет, а не добавляет перенос.
+            if (isName && e.key === 'Enter') {
+              e.preventDefault();
+              submitFix();
+            }
+          }}
         />
         
         <div className="ex-chips" id="sheetChips">

@@ -6,12 +6,24 @@ import {
   text,
   timestamp,
   index,
+  uniqueIndex,
   vector,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
 
 export type DocumentKind = "book" | "article" | "note" | "transcript";
 export type DocumentStatus = "uploaded" | "parsing" | "ready" | "error";
+
+/** Папка библиотеки — способ автора раскладывать материал по темам. */
+export const foldersTable = pgTable("folders", {
+  id: serial("id").primaryKey(),
+  ownerId: integer("owner_id")
+    .notNull()
+    .references(() => usersTable.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 /** Книга, статья или заметка, на которые опираются лекции. Зона Б: не персональные данные. */
 export const documentsTable = pgTable("documents", {
@@ -19,8 +31,16 @@ export const documentsTable = pgTable("documents", {
   ownerId: integer("owner_id")
     .notNull()
     .references(() => usersTable.id, { onDelete: "cascade" }),
+  /** Папка. Удаление папки не трогает документы — они остаются «без папки». */
+  folderId: integer("folder_id").references(() => foldersTable.id, { onDelete: "set null" }),
   title: text("title").notNull(),
   kind: text("kind").$type<DocumentKind>().notNull().default("book"),
+  /**
+   * Для kind='transcript' — из какой расшифровки собран документ. В библиотеку
+   * расшифровка попадает ТОЛЬКО в маскированном виде (правило двух зон):
+   * файл и эмбеддинги — с плейсхолдерами вместо имён.
+   */
+  transcriptionId: integer("transcription_id"),
   /** Путь к исходному файлу на диске сервера. */
   sourcePath: text("source_path").notNull(),
   mime: text("mime").notNull(),
@@ -30,7 +50,16 @@ export const documentsTable = pgTable("documents", {
   statusMessage: text("status_message").notNull().default(""),
   error: text("error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+},
+(t) => ({
+  // Одна расшифровка — одна библиотечная копия: check-then-insert без
+  // уникальности превращался в гонку с неудаляемыми дубликатами.
+  byTranscription: uniqueIndex("documents_transcription_uniq")
+    .on(t.transcriptionId)
+    .where(sql`transcription_id IS NOT NULL`),
+}));
+
+export type Folder = typeof foldersTable.$inferSelect;
 
 /**
  * Фрагмент документа с эмбеддингом. Размер ~1000 знаков: достаточно, чтобы

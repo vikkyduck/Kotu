@@ -676,3 +676,15 @@ button.doc-card:hover{border-color:var(--accent-strong)}
 .sb-total::before{content:"";width:.42em;height:.42em;border:1px solid var(--accent-strong);transform:rotate(45deg)}
 /* Некликабельная пластина не должна «нажиматься» на таче */
 @media(hover:none){.slide.still:active{transform:none}}
+
+/* ── Библиотека: папки ───────────────────────────────────────────────── */
+.folder-label{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.folder-tools{display:inline-flex;gap:12px;margin-left:auto}
+.folder-tools .chg{font-size:12px}
+.folder-empty{margin:2px 0 10px;padding-left:2px}
+.folder-pills{margin:8px 0 12px;padding:10px 12px;border:1px dashed var(--line)}
+.folder-add{margin-top:22px}
+.doc-link{cursor:pointer;text-decoration:underline;text-decoration-color:var(--hairline);text-underline-offset:.22em}
+.doc-link:hover{text-decoration-color:var(--accent-strong)}
+.doc-move{flex-shrink:0;padding:9px 10px}
+.doc-move .ic-svg{width:16px;height:16px}

@@ -22,6 +22,18 @@ async function run(job: Job): Promise<void> {
   const payload = job.payload as unknown as IngestPayload;
   const id = job.entityId;
 
+  // Документ могли удалить, пока задача стояла в очереди, — тогда просто
+  // нечего делать, а не три попытки об исчезнувший файл.
+  const [doc] = await db
+    .select({ id: documentsTable.id })
+    .from(documentsTable)
+    .where(eq(documentsTable.id, id))
+    .limit(1);
+  if (!doc) {
+    logger.info({ id }, "Документ удалён — разбор не нужен");
+    return;
+  }
+
   await setStatus(id, "Читаю файл…");
   const { text, pages } = await extractText(payload.sourcePath, payload.mime, payload.filename);
 

@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db, transcriptionsTable, type Job } from "@workspace/db";
 import { transcribeLongAudio, ChunkError } from "../transcription";
 import { registerHandler } from "../jobs";
+import { syncTranscriptionDoc } from "../transcript-doc";
 import { logger } from "../logger";
 
 interface TranscribePayload {
@@ -15,6 +16,21 @@ interface TranscribePayload {
 async function run(job: Job): Promise<void> {
   const payload = job.payload as unknown as TranscribePayload;
   const id = job.entityId;
+
+  // Рестарт мог оборвать задачу ПОСЛЕ готовности (на шаге отправки в
+  // библиотеку): повторная расшифровка сожгла бы готовый текст об удалённое
+  // аудио. Готовую запись не трогаем — только досылаем в библиотеку.
+  const [existing] = await db
+    .select()
+    .from(transcriptionsTable)
+    .where(eq(transcriptionsTable.id, id))
+    .limit(1);
+  if (existing?.status === "done") {
+    await syncTranscriptionDoc(existing).catch((err) =>
+      logger.error({ err, id }, "Расшифровка не доехала до библиотеки"),
+    );
+    return;
+  }
 
   // При повторе запись могла остаться в состоянии ошибки — возвращаем в работу.
   await db
@@ -43,6 +59,19 @@ async function run(job: Job): Promise<void> {
     logger.info({ id, segments: segments.length }, "Расшифровка готова");
     // Аудио больше не нужно: дальше живёт только текст.
     await rm(payload.inputPath, { force: true }).catch(() => {});
+
+    // Готовая расшифровка едет в библиотеку (в маскированном виде). Сбой здесь
+    // не должен ронять готовую расшифровку — стартовая сверка догонит.
+    const [fresh] = await db
+      .select()
+      .from(transcriptionsTable)
+      .where(eq(transcriptionsTable.id, id))
+      .limit(1);
+    if (fresh) {
+      await syncTranscriptionDoc(fresh).catch((err) =>
+        logger.error({ err, id }, "Расшифровка не доехала до библиотеки"),
+      );
+    }
   } catch (err) {
     // Понятная человеку формулировка попадёт в last_error и дальше — в карточку
     // записи, если попытки закончатся.

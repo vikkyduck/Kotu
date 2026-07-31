@@ -14,6 +14,7 @@ import {
   ListTranscriptionsResponse,
 } from "@workspace/api-zod";
 import { enqueue } from "../../lib/jobs";
+import { syncTranscriptionDoc, deleteTranscriptionDoc } from "../../lib/transcript-doc";
 import { decodeUploadName } from "../../lib/filename";
 
 // Long recordings (2–3 hours) are split server-side, so allow large uploads.
@@ -123,6 +124,13 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
     return;
   }
 
+  // Правка текста должна доехать и до библиотечной копии — там переиндексация.
+  if (row.status === "done") {
+    void syncTranscriptionDoc(row).catch((err) =>
+      req.log.error({ err, id: row.id }, "Не смог обновить расшифровку в библиотеке"),
+    );
+  }
+
   res.json(UpdateTranscriptionResponse.parse(row));
 });
 
@@ -132,6 +140,11 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
     res.status(400).json({ error: params.error.message });
     return;
   }
+
+  // Уничтожение — без остатков (§10): сначала библиотечная копия, потом сама
+  // запись. Упади чистка копии — запись останется, и можно повторить; в
+  // обратном порядке копия зависала бы сиротой до стартовой сверки.
+  await deleteTranscriptionDoc(params.data.id, req.user!.id);
 
   const [row] = await db
     .delete(transcriptionsTable)
