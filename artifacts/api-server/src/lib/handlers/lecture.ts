@@ -12,6 +12,7 @@ import {
 import { searchLibrary } from "../../routes/documents";
 import { embedAll } from "../embeddings";
 import { registerHandler, enqueue } from "../jobs";
+import { lectureToLibrary } from "../work-doc";
 import { logger } from "../logger";
 
 const MODEL = process.env["MODEL_LECTURE"] ?? "gpt-5";
@@ -241,6 +242,13 @@ async function runWrite(job: Job): Promise<void> {
     .update(lecturesTable)
     .set({ status: "ready", statusMessage: "" })
     .where(eq(lecturesTable.id, id));
+
+  // Написанная лекция — такой же материал, как книга: кладём её в библиотеку,
+  // чтобы следующая работа могла на неё опереться. Не удалась копия — лекция
+  // всё равно готова; стартовая сверка попробует ещё раз.
+  await lectureToLibrary(id).catch((err) =>
+    logger.error({ err, id }, "Не смог отправить лекцию в библиотеку"),
+  );
 
   logger.info({ id, sections: total }, "Лекция написана");
 }

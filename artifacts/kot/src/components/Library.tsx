@@ -22,6 +22,7 @@ interface Doc {
   folderId: number | null;
   transcriptionId: number | null;
   deckId: number | null;
+  lectureId: number | null;
   pages: number | null;
   chunkCount: number;
   status: 'uploaded' | 'parsing' | 'ready' | 'error';
@@ -53,6 +54,17 @@ interface DeckRow {
   createdAt: string;
 }
 
+/** Находка поиска: материал и лучшие фрагменты из него. */
+interface Hit {
+  documentId: number;
+  title: string;
+  kind: string;
+  lectureId: number | null;
+  deckId: number | null;
+  transcriptionId: number | null;
+  quotes: { text: string; heading: string | null }[];
+}
+
 interface TranscriptionRow {
   id: number;
   title: string;
@@ -80,6 +92,9 @@ interface Item {
   open?: () => void;
   /** Удаление: у расшифровки его нет — она удаляется вместе с записью. */
   del?: () => void;
+  /** «Сделать из этого»: материал переходит в следующий инструмент. */
+  makeDeck?: () => void;
+  makeLecture?: () => void;
 }
 
 const KIND_ICON: Record<ItemKind, string> = {
@@ -147,6 +162,8 @@ export function Library() {
   const [openFolderId, setOpenFolderId] = useState<number | null>(null);
   /** Карточка, у которой раскрыт ряд чипов «в какую папку» (путь для тача). */
   const [movingKey, setMovingKey] = useState<string | null>(null);
+  /** Карточка, у которой раскрыт ряд «сделать из этого». */
+  const [usingKey, setUsingKey] = useState<string | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
   /**
    * Карточка «берётся» только когда указатель на грипе: draggable на всей
@@ -155,6 +172,11 @@ export function Library() {
   const [grabbable, setGrabbable] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<number | 'root' | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  /** Поиск по смыслу: по книгам, расшифровкам, своим лекциям и презентациям. */
+  const [query, setQuery] = useState('');
+  const [hits, setHits] = useState<Hit[] | null>(null);
+  const [searching, setSearching] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -183,6 +205,7 @@ export function Library() {
   useEffect(() => {
     if (screen !== 's-home') {
       setMovingKey(null);
+      setUsingKey(null);
       setOpenFolderId(null);
     }
   }, [screen]);
@@ -209,6 +232,33 @@ export function Library() {
     const t = setInterval(() => void load(), 3000);
     return () => clearInterval(t);
   }, [screen, busyNow, uploading, load]);
+
+  // Ищем не на каждую букву: пауза в наборе — и один запрос.
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setHits(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+          if (res.ok) {
+            const data = await res.json();
+            setHits(data.results ?? []);
+          }
+        } catch {
+          /* тихо: следующий набор повторит */
+        } finally {
+          setSearching(false);
+        }
+      })();
+    }, 400);
+    return () => clearTimeout(t);
+  }, [query]);
 
   // ── Действия ────────────────────────────────────────────────────────────
 
@@ -354,9 +404,9 @@ export function Library() {
    */
   const items: Item[] = [
     ...allDocs
-      // Текстовая копия презентации — не отдельный материал, а её поисковый
-      // след: показывать её второй карточкой значило бы двоить одну вещь.
-      .filter((d) => d.kind !== 'deck')
+      // Текстовая копия лекции и презентации — не отдельный материал, а их
+      // поисковый след: показывать второй карточкой значило бы двоить вещь.
+      .filter((d) => d.kind !== 'deck' && d.kind !== 'lecture')
       .map<Item>((d) => {
         const kind = (['book', 'article', 'note', 'transcript'].includes(d.kind)
           ? d.kind
@@ -384,6 +434,13 @@ export function Library() {
             d.kind === 'transcript' && d.transcriptionId !== null
               ? () => openTranscription(d.transcriptionId!)
               : undefined,
+          // Разобранный материал годится и для слайдов, и как опора лекции.
+          makeDeck:
+            d.status === 'ready'
+              ? () => newDeck({ sourceKind: 'document', sourceId: d.id })
+              : undefined,
+          makeLecture:
+            d.status === 'ready' ? () => newLecture({ documentIds: [d.id] }) : undefined,
           // Расшифровку удаляют вместе с записью — на её экране, там же, где аудио.
           del:
             d.kind === 'transcript'
@@ -399,11 +456,20 @@ export function Library() {
         id: l.id,
         title: l.title,
         folderId: l.folderId,
-        meta: 'лекция · готова',
+        meta: allDocs.some((d) => d.lectureId === l.id)
+          ? 'лекция · текст в поиске'
+          : 'лекция · готова',
         tone: '',
         createdAt: l.createdAt,
         open: () => openLecture(l.id),
         del: () => void removeAt(`/api/lectures/${l.id}`, 'Лекция удалена'),
+        makeDeck: () => newDeck({ sourceKind: 'lecture', sourceId: l.id }),
+        makeLecture: (() => {
+          // Опереться на лекцию можно через её текст в поиске: он и есть
+          // тот материал, который читает следующая лекция.
+          const copy = allDocs.find((d) => d.lectureId === l.id && d.status === 'ready');
+          return copy ? () => newLecture({ documentIds: [copy.id] }) : undefined;
+        })(),
       })),
     ...decks
       .filter((k) => k.status === 'ready')
@@ -420,6 +486,10 @@ export function Library() {
         createdAt: k.createdAt,
         open: () => openDeck(k.id),
         del: () => void removeAt(`/api/decks/${k.id}`, 'Презентация удалена'),
+        makeLecture: (() => {
+          const copy = allDocs.find((d) => d.deckId === k.id && d.status === 'ready');
+          return copy ? () => newLecture({ documentIds: [copy.id] }) : undefined;
+        })(),
       })),
   ].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
@@ -561,11 +631,27 @@ export function Library() {
           <span className={`doc-meta ${i.tone}`}>{i.meta}</span>
         </div>
 
+        {(i.makeDeck || i.makeLecture) && (
+          <button
+            className="btn ghost doc-use"
+            title="Сделать из этого"
+            onClick={() => {
+              setMovingKey(null);
+              setUsingKey((u) => (u === i.key ? null : i.key));
+            }}
+          >
+            <Icon name="spark" />
+          </button>
+        )}
+
         {movable && (
           <button
             className="btn ghost doc-move"
             title="Переложить в папку"
-            onClick={() => setMovingKey((m) => (m === i.key ? null : i.key))}
+            onClick={() => {
+              setUsingKey(null);
+              setMovingKey((m) => (m === i.key ? null : i.key));
+            }}
           >
             <Icon name="folder" />
           </button>
@@ -594,6 +680,21 @@ export function Library() {
           </button>
         ) : null}
       </div>
+
+      {usingKey === i.key && (
+        <div className="pills folder-pills">
+          {i.makeDeck && (
+            <button className="pill-opt" onClick={i.makeDeck}>
+              собрать презентацию
+            </button>
+          )}
+          {i.makeLecture && (
+            <button className="pill-opt" onClick={i.makeLecture}>
+              написать лекцию на основе
+            </button>
+          )}
+        </div>
+      )}
 
       {movingKey === i.key && (
         <div className="pills folder-pills">
@@ -755,11 +856,85 @@ export function Library() {
         <button className="chg" onClick={() => fileInput.current?.click()}>загрузить книгу</button>
       </div>
       <p className="sub">
-        Всё в одном месте: книги, расшифровки, лекции и презентации. Разложите по папкам —
-        перетаскиванием или кнопкой-папкой на карточке.
+        Всё в одном месте: книги, расшифровки, лекции и презентации. Из любого материала
+        можно собрать презентацию или написать лекцию — кнопка ◇ на карточке.
       </p>
 
+      {/* Поиск по смыслу, а не по названию: находит нужное место внутри книги,
+          расшифровки или своей же прошлой лекции. */}
+      <input
+        className="field lib-search"
+        type="search"
+        value={query}
+        placeholder="Найти по смыслу — во всех материалах"
+        onChange={(e) => setQuery(e.target.value)}
+      />
+
       {filePicker(null)}
+      {query.trim().length >= 2 && (
+        <div className="hits">
+          {searching && hits === null && <p className="doc-meta">Ищу…</p>}
+          {hits !== null && hits.length === 0 && !searching && (
+            <p className="doc-meta">Ничего не нашла. Попробуйте другими словами.</p>
+          )}
+          {(hits ?? []).map((h) => {
+            const kind = (h.kind === 'lecture' || h.kind === 'deck' || h.kind === 'transcript'
+              ? h.kind
+              : 'book') as ItemKind;
+            return (
+              <div key={h.documentId} className="panel hit">
+                <div className="hit-head">
+                  <span className="doc-ico"><Icon name={KIND_ICON[kind]} /></span>
+                  <div className="doc-body">
+                    <b className="doc-title">{h.title}</b>
+                    <span className="doc-meta">{KIND_LABEL[kind]}</span>
+                  </div>
+                </div>
+                {h.quotes.map((q, j) => (
+                  <p key={j} className="hit-quote">
+                    {q.heading && <span className="hit-where">{q.heading}: </span>}
+                    {q.text}
+                  </p>
+                ))}
+                <div className="pills">
+                  <button
+                    className="pill-opt"
+                    onClick={() =>
+                      h.lectureId
+                        ? newDeck({ sourceKind: 'lecture', sourceId: h.lectureId })
+                        : newDeck({ sourceKind: 'document', sourceId: h.documentId })
+                    }
+                  >
+                    собрать презентацию
+                  </button>
+                  <button
+                    className="pill-opt"
+                    onClick={() => newLecture({ documentIds: [h.documentId] })}
+                  >
+                    написать лекцию на основе
+                  </button>
+                  {h.transcriptionId && (
+                    <button className="pill-opt" onClick={() => openTranscription(h.transcriptionId!)}>
+                      открыть запись
+                    </button>
+                  )}
+                  {h.lectureId && (
+                    <button className="pill-opt" onClick={() => openLecture(h.lectureId!)}>
+                      открыть лекцию
+                    </button>
+                  )}
+                  {h.deckId && (
+                    <button className="pill-opt" onClick={() => openDeck(h.deckId!)}>
+                      открыть презентацию
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {docs === null && <p className="lead dim">Открываю библиотеку…</p>}
 
       {emptyAll && (
@@ -777,7 +952,7 @@ export function Library() {
         </div>
       )}
 
-      {docs !== null && !emptyAll && (
+      {docs !== null && !emptyAll && query.trim().length < 2 && (
         <>
           <div className="folder-grid">
             {folders.map((f) => (

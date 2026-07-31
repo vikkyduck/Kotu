@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { purgeExpiredSessions } from "./lib/auth";
 import { requeueOrphans, startWorker } from "./lib/jobs";
 import { sweepTranscriptionsToLibrary, sweepOrphanDeckDirs } from "./lib/transcript-doc";
+import { sweepWorkToLibrary } from "./lib/work-doc";
 import { registerTranscribeHandler } from "./lib/handlers/transcribe";
 import { registerIngestHandler } from "./lib/handlers/ingest";
 import { registerLectureHandlers } from "./lib/handlers/lecture";
@@ -53,6 +54,14 @@ void sweepTranscriptionsToLibrary()
 void sweepOrphanDeckDirs().catch((err) =>
   logger.error({ err }, "Сверка каталогов презентаций не удалась"),
 );
+
+// Готовые лекции и презентации без копии в библиотеке: бэкфилл старых и
+// самолечение после сбоев. Идемпотентно, поэтому просто на каждом старте.
+void sweepWorkToLibrary()
+  .then((n) => {
+    if (n > 0) logger.info({ count: n }, "Отправил готовые работы в библиотеку");
+  })
+  .catch((err) => logger.error({ err }, "Сверка работ с библиотекой не удалась"));
 
 void Promise.resolve().finally(() => {
   const server = app.listen(port, () => {

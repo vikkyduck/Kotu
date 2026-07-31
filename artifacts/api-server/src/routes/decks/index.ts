@@ -20,6 +20,7 @@ import {
 import { inArray, sql } from "drizzle-orm";
 import { enqueue } from "../../lib/jobs";
 import { ownFolderId } from "../../lib/folders";
+import { deckToLibrary, dropDeckCopies } from "../../lib/work-doc";
 import { LIBRARY_DIR } from "../../lib/library-dir";
 import { buildDeckPptx } from "../../lib/pptx";
 import { buildDeckPdf } from "../../lib/pdf";
@@ -288,6 +289,11 @@ router.patch("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
 
   if (Object.keys(patch).length > 0) {
     await db.update(deckSlidesTable).set(patch).where(eq(deckSlidesTable.id, slide.id));
+    // Текст изменился — библиотечная копия не должна отставать. Переиндексация
+    // локальная и дешёвая, поэтому делаем сразу, а не «когда-нибудь потом».
+    if (patch.content || patch.notes !== undefined) {
+      await deckToLibrary(deck.id).catch(() => undefined);
+    }
   }
   res.json({ ok: true });
 });
@@ -315,6 +321,7 @@ router.post("/decks/:id/approve", async (req, res): Promise<void> => {
       .update(decksTable)
       .set({ storyboardApproved: true, status: "ready", statusMessage: "", error: null })
       .where(eq(decksTable.id, deck.id));
+    await deckToLibrary(deck.id).catch(() => undefined);
     res.status(202).json({ ok: true });
     return;
   }
@@ -593,6 +600,11 @@ router.post("/decks/:id/retry", async (req, res): Promise<void> => {
  * потом можно опереться в лекции. Повторное сохранение ОБНОВЛЯЕТ ту же
  * запись: материал должен лежать в одном месте, а не размножаться копиями.
  */
+/**
+ * Обновить текст презентации в поиске. Обычно это происходит само — когда
+ * колода готова и когда автор правит слайды; ручка остаётся как способ
+ * пересобрать копию, если что-то разошлось.
+ */
 router.post("/decks/:id/to-library", async (req, res): Promise<void> => {
   const deck = await loadDeck(req.params.id, req.user!.id);
   if (!deck) {
@@ -604,77 +616,12 @@ router.post("/decks/:id/to-library", async (req, res): Promise<void> => {
     return;
   }
 
-  const slides = await db
-    .select()
-    .from(deckSlidesTable)
-    .where(eq(deckSlidesTable.deckId, deck.id))
-    .orderBy(asc(deckSlidesTable.ord));
-  if (slides.length === 0) {
+  const docId = await deckToLibrary(deck.id);
+  if (!docId) {
     res.status(409).json({ message: "В презентации ещё нет слайдов" });
     return;
   }
-
-  // Текст собираем читаемым: заголовки, тезисы и заметки докладчику — это и
-  // есть содержание выступления, картинки в библиотеке не нужны.
-  const parts: string[] = [`# ${deck.title}`, ""];
-  for (const s of slides) {
-    const c = s.content;
-    if (c.title) parts.push(`## ${c.title}`);
-    if (c.subtitle) parts.push(c.subtitle);
-    if (c.quote) parts.push(`«${c.quote}»${c.attribution ? ` — ${c.attribution}` : ""}`);
-    for (const b of c.bullets ?? []) parts.push(`— ${b}`);
-    for (const card of c.cards ?? []) parts.push(`— ${card.title}: ${card.body}`);
-    if (c.question) parts.push(`Вопрос: ${c.question}`);
-    if (s.notes) parts.push(s.notes);
-    parts.push("");
-  }
-  const text = parts.join("\n").trim();
-
-  const filePath = path.join(LIBRARY_DIR, `deck-${deck.id}.txt`);
-  await mkdir(LIBRARY_DIR, { recursive: true });
-  await writeFile(filePath, text, "utf8");
-
-  const inserted = await db
-    .insert(documentsTable)
-    .values({
-      ownerId: req.user!.id,
-      title: deck.title,
-      kind: "deck",
-      deckId: deck.id,
-      // Копия ложится в ту же папку, что и сама презентация.
-      folderId: deck.folderId,
-      sourcePath: filePath,
-      mime: "text/plain",
-      status: "parsing",
-      statusMessage: "В очереди…",
-    })
-    .onConflictDoNothing()
-    .returning({ id: documentsTable.id });
-
-  let docId = inserted[0]?.id;
-  if (docId === undefined) {
-    const [existing] = await db
-      .select({ id: documentsTable.id })
-      .from(documentsTable)
-      .where(eq(documentsTable.deckId, deck.id))
-      .limit(1);
-    if (!existing) {
-      res.status(500).json({ message: "Не удалось сохранить в библиотеку" });
-      return;
-    }
-    docId = existing.id;
-    await db
-      .update(documentsTable)
-      .set({ title: deck.title, status: "parsing", statusMessage: "В очереди…", error: null })
-      .where(eq(documentsTable.id, docId));
-  }
-
-  await enqueue("doc.ingest", docId, {
-    sourcePath: filePath,
-    mime: "text/plain",
-    filename: `deck-${deck.id}.txt`,
-  });
-  res.status(202).json({ ok: true, documentId: docId });
+  res.status(202).json({ ok: true });
 });
 
 router.delete("/decks/:id", async (req, res): Promise<void> => {
@@ -694,15 +641,7 @@ router.delete("/decks/:id", async (req, res): Promise<void> => {
   // Текстовая копия в поиске — часть той же презентации, а не отдельный
   // документ: удаляем вместе, иначе в библиотеке остался бы призрак колоды,
   // которую уже не открыть.
-  const [copy] = await db
-    .select({ id: documentsTable.id, sourcePath: documentsTable.sourcePath })
-    .from(documentsTable)
-    .where(eq(documentsTable.deckId, deck.id))
-    .limit(1);
-  if (copy) {
-    await db.delete(documentsTable).where(eq(documentsTable.id, copy.id));
-    await rm(copy.sourcePath, { force: true }).catch(() => {});
-  }
+  await dropDeckCopies(deck.id);
 
   // Сначала файлы, потом запись: осиротевшая папка хуже осиротевшей строки.
   await rm(path.join(DECKS_DIR, String(deck.id)), { recursive: true, force: true });

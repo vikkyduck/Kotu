@@ -5,11 +5,13 @@ import {
   lecturesTable,
   lectureSectionsTable,
   lectureSourcesTable,
+  documentsTable,
   type LectureBrief,
   type PlannedSection,
 } from "@workspace/db";
 import { enqueue } from "../../lib/jobs";
 import { ownFolderId } from "../../lib/folders";
+import { lectureToLibrary, dropLectureCopies } from "../../lib/work-doc";
 
 const router: IRouter = Router();
 
@@ -76,7 +78,12 @@ router.patch("/lectures/:id", async (req, res): Promise<void> => {
       res.status(404).json({ message: "Папка не найдена" });
       return;
     }
+    // Копия текста переезжает вместе с лекцией: материал живёт в одном месте.
     await db.update(lecturesTable).set({ folderId }).where(eq(lecturesTable.id, lecture.id));
+    await db
+      .update(documentsTable)
+      .set({ folderId })
+      .where(eq(documentsTable.lectureId, lecture.id));
   }
   res.json({ ok: true });
 });
@@ -238,6 +245,10 @@ router.patch("/lectures/:id/sections/:sectionId", async (req, res): Promise<void
       and(eq(lectureSectionsTable.id, sectionId), eq(lectureSectionsTable.lectureId, id)),
     );
 
+  // Правка главы должна доехать до поиска: иначе следующая лекция будет
+  // опираться на текст, которого автор уже не признаёт.
+  if (lecture.status === "ready") await lectureToLibrary(lecture.id).catch(() => undefined);
+
   res.json({ ok: true });
 });
 
@@ -252,6 +263,9 @@ router.delete("/lectures/:id", async (req, res): Promise<void> => {
     res.status(404).json({ message: "Лекция не найдена" });
     return;
   }
+  // Текст лекции в поиске — часть самой лекции, а не отдельный документ:
+  // уходит вместе с ней, иначе в библиотеке остался бы призрак.
+  await dropLectureCopies(lecture.id);
   await db.delete(lecturesTable).where(eq(lecturesTable.id, id));
   res.sendStatus(204);
 });

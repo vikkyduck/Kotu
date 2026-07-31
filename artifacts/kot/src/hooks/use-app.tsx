@@ -29,10 +29,28 @@ interface AppContextType {
   newTranscription: () => void;
   activeLectureId: number | null;
   openLecture: (id: number) => void;
-  newLecture: () => void;
+  newLecture: (seed?: LectureSeed) => void;
+  /** Чем заполнить форму новой лекции — «написать на основе этого материала». */
+  lectureSeed: LectureSeed | null;
   activeDeckId: number | null;
   openDeck: (id: number) => void;
-  newDeck: () => void;
+  newDeck: (seed?: DeckSeed) => void;
+  /** Из чего собирать презентацию — «сделать презентацию из этого». */
+  deckSeed: DeckSeed | null;
+}
+
+/**
+ * Заготовка для инструмента: с какого материала библиотеки начать. Так
+ * документ «гуляет из элемента в элемент» — расшифровка становится лекцией,
+ * лекция презентацией, — не заставляя автора искать её в списке заново.
+ */
+export interface DeckSeed {
+  sourceKind: 'lecture' | 'document';
+  sourceId: number;
+}
+
+export interface LectureSeed {
+  documentIds: number[];
 }
 
 /**
@@ -87,6 +105,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Что именно открыто в инструменте. null = «делаем новое»: инструмент
   // открывается формой, а список сделанного живёт в библиотеке.
   const activeTranscriptionId = nav.transcriptionId;
+  // Заготовки живут вне адреса: это подсказка форме, а не место в приложении.
+  const [lectureSeed, setLectureSeed] = useState<LectureSeed | null>(null);
+  const [deckSeed, setDeckSeed] = useState<DeckSeed | null>(null);
   const activeLectureId = nav.lectureId;
   const activeDeckId = nav.deckId;
 
@@ -158,18 +179,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [goTo]);
 
   const openLecture = useCallback((id: number) => {
+    setLectureSeed(null);
     goTo({ ...HOME, screen: 's-lecture', lectureId: id });
   }, [goTo]);
 
-  const newLecture = useCallback(() => {
+  const newLecture = useCallback((seed?: LectureSeed) => {
+    setLectureSeed(seed ?? null);
     goTo({ ...HOME, screen: 's-lecture' });
   }, [goTo]);
 
   const openDeck = useCallback((id: number) => {
+    setDeckSeed(null);
     goTo({ ...HOME, screen: 's-slides', deckId: id });
   }, [goTo]);
 
-  const newDeck = useCallback(() => {
+  const newDeck = useCallback((seed?: DeckSeed) => {
+    setDeckSeed(seed ?? null);
     goTo({ ...HOME, screen: 's-slides' });
   }, [goTo]);
 
@@ -194,7 +219,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AppContext.Provider value={{ screen, go, toast, toastMsg, sheet, openSheet, closeSheet, theme, toggleTheme, activeTranscriptionId, openTranscription, newTranscription, activeLectureId, openLecture, newLecture, activeDeckId, openDeck, newDeck }}>
+    <AppContext.Provider value={{ screen, go, toast, toastMsg, sheet, openSheet, closeSheet, theme, toggleTheme, activeTranscriptionId, openTranscription, newTranscription, activeLectureId, openLecture, newLecture, lectureSeed, activeDeckId, openDeck, newDeck, deckSeed }}>
       {children}
     </AppContext.Provider>
   );

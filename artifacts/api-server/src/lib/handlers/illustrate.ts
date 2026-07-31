@@ -17,6 +17,7 @@ import { ask, type ImageAttachment } from "../claude";
 import { geminiJson } from "../gemini";
 import { renderIllustration } from "../images";
 import { registerHandler } from "../jobs";
+import { deckToLibrary } from "../work-doc";
 import { logger } from "../logger";
 
 /** Потолок перерисовок: после второй попытки слайд идёт с тем, что есть. */
@@ -322,6 +323,10 @@ async function run(job: Job): Promise<void> {
       .update(decksTable)
       .set({ status: "ready", statusMessage: "", error: null })
       .where(eq(decksTable.id, id));
+    // Готовая колода — тоже материал: её текст ложится в библиотеку сам.
+    await deckToLibrary(id).catch((err) =>
+      logger.error({ err, id }, "Не смог отправить презентацию в библиотеку"),
+    );
     logger.info({ id, drawn, of: slides.length }, "Образы готовы");
   } else {
     await db

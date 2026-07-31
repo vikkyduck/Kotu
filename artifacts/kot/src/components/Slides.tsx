@@ -81,7 +81,7 @@ function DiagramThumb({ spec }: { spec: DiagramSpec }) {
 export function Slides() {
   // Какую колоду открыть, решает библиотека: инструмент — это действие,
   // а список сделанного лежит там же, где книги и лекции.
-  const { screen, go, toast, openSheet, activeDeckId, openDeck } = useApp();
+  const { screen, go, toast, openSheet, activeDeckId, openDeck, deckSeed } = useApp();
   const [lectures, setLectures] = useState<LectureItem[]>([]);
   const openId = activeDeckId;
   const [deck, setDeck] = useState<DeckFull | null>(null);
@@ -107,7 +107,14 @@ export function Slides() {
       ]);
       if (l) setLectures((l as LectureItem[]).filter((x) => x.status === 'ready'));
       // Разобранный документ библиотеки — такой же материал, как лекция.
-      if (d) setDocsList((d as DocItem[]).filter((x) => x.status === 'ready'));
+      // Текст лекции и текст колоды — их поисковые копии: лекция уже стоит
+      // отдельным списком выше, а собирать презентацию из презентации незачем.
+      if (d)
+        setDocsList(
+          (d as DocItem[]).filter(
+            (x) => x.status === 'ready' && x.kind !== 'lecture' && x.kind !== 'deck',
+          ),
+        );
     } catch { /* тихо */ }
   }, []);
 
@@ -150,6 +157,19 @@ export function Slides() {
       setPickedPack(null);
     }
   }, [screen]);
+
+  // Пришли из библиотеки с материалом («сделать презентацию из этого») —
+  // источник уже выбран, автору остаётся нажать одну кнопку.
+  useEffect(() => {
+    if (screen !== 's-slides' || !creating || !deckSeed) return;
+    if (deckSeed.sourceKind === 'lecture') {
+      setPickedLecture(deckSeed.sourceId);
+      setPickedDoc(null);
+    } else {
+      setPickedDoc(deckSeed.sourceId);
+      setPickedLecture(null);
+    }
+  }, [screen, creating, deckSeed]);
 
   useEffect(() => {
     if (openId === null) {
