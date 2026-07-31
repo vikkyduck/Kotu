@@ -12,7 +12,7 @@ import {
 import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
 
-export type DocumentKind = "book" | "article" | "note" | "transcript";
+export type DocumentKind = "book" | "article" | "note" | "transcript" | "deck";
 export type DocumentStatus = "uploaded" | "parsing" | "ready" | "error";
 
 /** Папка библиотеки — способ автора раскладывать материал по темам. */
@@ -41,6 +41,12 @@ export const documentsTable = pgTable("documents", {
    * файл и эмбеддинги — с плейсхолдерами вместо имён.
    */
   transcriptionId: integer("transcription_id"),
+  /**
+   * Для kind='deck' — из какой презентации собран текст. Связь нужна, чтобы
+   * повторное «сохранить в библиотеку» ОБНОВЛЯЛО документ, а не плодило копии:
+   * материал должен лежать в одном месте.
+   */
+  deckId: integer("deck_id"),
   /** Путь к исходному файлу на диске сервера. */
   sourcePath: text("source_path").notNull(),
   mime: text("mime").notNull(),
@@ -57,6 +63,10 @@ export const documentsTable = pgTable("documents", {
   byTranscription: uniqueIndex("documents_transcription_uniq")
     .on(t.transcriptionId)
     .where(sql`transcription_id IS NOT NULL`),
+  // Одна презентация — одна запись в библиотеке.
+  byDeck: uniqueIndex("documents_deck_uniq")
+    .on(t.deckId)
+    .where(sql`deck_id IS NOT NULL`),
 }));
 
 export type Folder = typeof foldersTable.$inferSelect;

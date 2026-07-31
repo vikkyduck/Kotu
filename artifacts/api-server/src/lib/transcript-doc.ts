@@ -1,9 +1,9 @@
-import { writeFile, rm } from "node:fs/promises";
+import { writeFile, rm, readdir } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { and, eq, isNotNull } from "drizzle-orm";
-import { db, documentsTable, transcriptionsTable, type Transcription } from "@workspace/db";
+import { db, documentsTable, transcriptionsTable, decksTable, type Transcription } from "@workspace/db";
 import { maskText } from "./privacy";
 import { enqueue } from "./jobs";
 import { logger } from "./logger";
@@ -138,6 +138,34 @@ export async function deleteTranscriptionDoc(
  * — transcript-документы, чья расшифровка исчезла → удалить (хвосты гонок
  *   удаления; уничтожение — без остатков, §10).
  */
+/**
+ * Каталоги картинок от колод, которых уже нет: удаление во время рисования
+ * оставляет гонку, а диск не резиновый. Сверка на старте её закрывает.
+ */
+export async function sweepOrphanDeckDirs(): Promise<number> {
+  const DECKS_DIR =
+    process.env["DECKS_DIR"] ??
+    (process.env["NODE_ENV"] === "production"
+      ? "/opt/kotu/decks"
+      : path.join(tmpdir(), "kotu-decks"));
+  let removed = 0;
+  const names = await readdir(DECKS_DIR).catch(() => [] as string[]);
+  for (const name of names) {
+    const id = Number(name);
+    if (!Number.isInteger(id)) continue;
+    const [deck] = await db
+      .select({ id: decksTable.id })
+      .from(decksTable)
+      .where(eq(decksTable.id, id))
+      .limit(1);
+    if (deck) continue;
+    await rm(path.join(DECKS_DIR, name), { recursive: true, force: true }).catch(() => undefined);
+    removed += 1;
+  }
+  if (removed > 0) logger.info({ removed }, "Убрал каталоги удалённых презентаций");
+  return removed;
+}
+
 export async function sweepTranscriptionsToLibrary(): Promise<number> {
   // Сначала уборка сирот — она же страхует гонку «PATCH-sync после DELETE».
   const transcriptDocs = await db

@@ -897,3 +897,12 @@ input.field,textarea.topic,.sheet textarea{font-size:16px}
    И сам лист не должен превышать экран: dvh учитывает панели браузера. */
 .sheet textarea[rows="1"]{min-height:52px;resize:none}
 .sheet{max-height:88dvh;overflow-y:auto}
+
+/* Действия над презентацией — тихой строкой под заголовком, доступны всегда */
+.deck-tools{display:flex;gap:18px;flex-wrap:wrap;margin:0 0 var(--sp-2)}
+.deck-tools .chg{font-size:13px}
+.deck-tools .deck-drop{color:var(--danger-strong)}
+.deck-row{cursor:pointer}
+/* Хлебная крошка как цель переноса: подсветка объясняет, что сюда можно */
+.crumb-drop.drop-over{border-color:var(--accent-strong);background:var(--accent-soft);
+  border-radius:var(--r-md)}

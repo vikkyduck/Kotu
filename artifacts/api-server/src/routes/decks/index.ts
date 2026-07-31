@@ -1,7 +1,7 @@
 import path from "node:path";
 import os from "node:os";
 import { existsSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { rm, writeFile, mkdir } from "node:fs/promises";
 import { Router, type IRouter } from "express";
 import { eq, and, or, asc, desc, isNotNull, isNull } from "drizzle-orm";
 import {
@@ -19,6 +19,7 @@ import {
 } from "@workspace/db";
 import { inArray, sql } from "drizzle-orm";
 import { enqueue } from "../../lib/jobs";
+import { LIBRARY_DIR } from "../../lib/library-dir";
 import { buildDeckPptx } from "../../lib/pptx";
 import { buildDeckPdf } from "../../lib/pdf";
 import { sanitizeSlideContent } from "../../lib/slide-content";
@@ -503,6 +504,93 @@ router.post("/decks/:id/retry", async (req, res): Promise<void> => {
   res.status(202).json({ ok: true });
 });
 
+/**
+ * Сохранить презентацию в библиотеку — как текстовый материал, на который
+ * потом можно опереться в лекции. Повторное сохранение ОБНОВЛЯЕТ ту же
+ * запись: материал должен лежать в одном месте, а не размножаться копиями.
+ */
+router.post("/decks/:id/to-library", async (req, res): Promise<void> => {
+  const deck = await loadDeck(req.params.id, req.user!.id);
+  if (!deck) {
+    res.status(404).json({ message: "Презентация не найдена" });
+    return;
+  }
+  if (deck.status === "storyboarding") {
+    res.status(409).json({ message: "Подождите, я ещё раскладываю по слайдам" });
+    return;
+  }
+
+  const slides = await db
+    .select()
+    .from(deckSlidesTable)
+    .where(eq(deckSlidesTable.deckId, deck.id))
+    .orderBy(asc(deckSlidesTable.ord));
+  if (slides.length === 0) {
+    res.status(409).json({ message: "В презентации ещё нет слайдов" });
+    return;
+  }
+
+  // Текст собираем читаемым: заголовки, тезисы и заметки докладчику — это и
+  // есть содержание выступления, картинки в библиотеке не нужны.
+  const parts: string[] = [`# ${deck.title}`, ""];
+  for (const s of slides) {
+    const c = s.content;
+    if (c.title) parts.push(`## ${c.title}`);
+    if (c.subtitle) parts.push(c.subtitle);
+    if (c.quote) parts.push(`«${c.quote}»${c.attribution ? ` — ${c.attribution}` : ""}`);
+    for (const b of c.bullets ?? []) parts.push(`— ${b}`);
+    for (const card of c.cards ?? []) parts.push(`— ${card.title}: ${card.body}`);
+    if (c.question) parts.push(`Вопрос: ${c.question}`);
+    if (s.notes) parts.push(s.notes);
+    parts.push("");
+  }
+  const text = parts.join("\n").trim();
+
+  const filePath = path.join(LIBRARY_DIR, `deck-${deck.id}.txt`);
+  await mkdir(LIBRARY_DIR, { recursive: true });
+  await writeFile(filePath, text, "utf8");
+
+  const inserted = await db
+    .insert(documentsTable)
+    .values({
+      ownerId: req.user!.id,
+      title: deck.title,
+      kind: "deck",
+      deckId: deck.id,
+      sourcePath: filePath,
+      mime: "text/plain",
+      status: "parsing",
+      statusMessage: "В очереди…",
+    })
+    .onConflictDoNothing()
+    .returning({ id: documentsTable.id });
+
+  let docId = inserted[0]?.id;
+  if (docId === undefined) {
+    const [existing] = await db
+      .select({ id: documentsTable.id })
+      .from(documentsTable)
+      .where(eq(documentsTable.deckId, deck.id))
+      .limit(1);
+    if (!existing) {
+      res.status(500).json({ message: "Не удалось сохранить в библиотеку" });
+      return;
+    }
+    docId = existing.id;
+    await db
+      .update(documentsTable)
+      .set({ title: deck.title, status: "parsing", statusMessage: "В очереди…", error: null })
+      .where(eq(documentsTable.id, docId));
+  }
+
+  await enqueue("doc.ingest", docId, {
+    sourcePath: filePath,
+    mime: "text/plain",
+    filename: `deck-${deck.id}.txt`,
+  });
+  res.status(202).json({ ok: true, documentId: docId });
+});
+
 router.delete("/decks/:id", async (req, res): Promise<void> => {
   const deck = await loadDeck(req.params.id, req.user!.id);
   if (!deck) {
@@ -510,15 +598,10 @@ router.delete("/decks/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  // Во время работы удалять нельзя: воркер посреди слайда воссоздаст каталог
-  // и продолжит жечь вызовы по уже несуществующей колоде.
-  if (deck.status === "storyboarding" || deck.status === "drawing") {
-    res.status(409).json({ message: "Подождите, я ещё работаю — удалить можно после" });
-    return;
-  }
-
-  // Задачи колоды выносим вместе с ней: в payload мог остаться вставленный
-  // текст (уничтожение данных — без остатков, §10).
+  // Удалять можно на любом этапе — ждать окончания работы человек не обязан.
+  // Задачи снимаем первыми: воркер, начав слайд, проверит колоду перед
+  // записью файла и остановится сам (см. handlers/illustrate.ts).
+  // В payload мог остаться вставленный текст — уничтожение без остатков (§10).
   await db
     .delete(jobsTable)
     .where(and(sql`${jobsTable.kind} LIKE 'deck.%'`, eq(jobsTable.entityId, deck.id)));
