@@ -832,3 +832,68 @@ button.doc-card:hover{border-color:var(--accent-strong)}
 .folder-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
 .folder-remove{margin-top:var(--sp-4);width:100%}
 .root-empty{padding:14px 2px;margin:0}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Mobile-first: базовые размеры — под палец, а не под курсор.
+   Кот работает с телефона (ARCHITECTURE §9), поэтому 44px — это НОРМА,
+   а не поблажка: ниже подушечка пальца попадает мимо. На большом экране
+   ниже возвращаем компактность через min-width.
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root{--tap:44px}
+
+/* Кнопки и иконки: не мельче подушечки пальца */
+.btn,.pill-opt,.echip,.topmenu-pop button,.rconfirm-yes,.rconfirm-no,
+.doc-move,.doc-del,.rdel{min-height:var(--tap)}
+.iconbtn,.top .back{width:var(--tap);height:var(--tap)}
+.doc-move,.doc-del,.rdel{min-width:var(--tap)}
+.opt,.setrow .si{min-height:var(--tap)}
+
+/* Текстовые действия остаются мелкими на вид, но нажимаются во всю ширину
+   пальца: хитбокс даёт псевдоэлемент, а не раздутый шрифт. */
+.chg,.doc-link,.howlink,.inline-link,.lec-sources summary{position:relative}
+.chg::after,.doc-link::after,.howlink::after,.inline-link::after{
+  content:"";position:absolute;inset:-12px -10px}
+.back-link{min-height:var(--tap);padding-block:10px}
+
+/* Поля ввода — ровно 16px: при меньшем кегле iOS зумит страницу на фокусе,
+   и человек проваливается в увеличенный экран без пути назад. */
+input.field,textarea.topic,.sheet textarea{font-size:16px}
+
+/* Пластины презентации: на телефоне две колонки превращают слайд в марку */
+@media(max-width:560px){
+  .sgrid{grid-template-columns:1fr}
+  .folder-grid{gap:8px}
+  /* Экран на телефоне дороже: ритм плотнее, но не слипшийся */
+  :root{--sp-3:18px;--sp-4:28px}
+  .h2{font-size:24px}
+  .doc-card{padding:13px 12px;gap:11px}
+  .sb-actions{flex-wrap:wrap}
+  .btnrow{flex-wrap:wrap}
+  .btnrow>*{flex:1 1 100%}
+}
+
+/* Мышь и просторный экран — можно вернуть компактность */
+@media(min-width:760px){
+  .iconbtn,.top .back{width:40px;height:40px}
+  .doc-move,.doc-del,.rdel{min-height:36px;min-width:36px}
+}
+
+/* Карточка документа на телефоне: место — названию, а не декору */
+@media(max-width:560px){
+  .doc-ico{width:32px;height:32px}
+  .doc-ico .ic-svg{width:15px;height:15px}
+  .doc-move,.doc-del{padding-inline:8px}
+  .doc-del{font-size:12.5px}
+  .doc-title{white-space:normal;overflow:visible}
+}
+/* На тач-экране грипа нет смысла показывать: перетаскивания там не бывает,
+   а 43 пикселя ширины названию нужнее. */
+@media(hover:none){
+  .doc-card .grip{display:none}
+  .doc-card{gap:10px}
+}
+
+/* Имя папки — одна строка: три отдавать незачем, снизу выедет клавиатура.
+   И сам лист не должен превышать экран: dvh учитывает панели браузера. */
+.sheet textarea[rows="1"]{min-height:52px;resize:none}
+.sheet{max-height:88dvh;overflow-y:auto}
