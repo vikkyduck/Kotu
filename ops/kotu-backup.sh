@@ -20,6 +20,13 @@ mkdir -p "$DB_DIR" "$FILES_DIR" "$DATA_DIR"
 sudo -u postgres pg_dumpall | gzip -9 > "$DB_DIR/all-$STAMP.sql.gz.tmp"
 mv "$DB_DIR/all-$STAMP.sql.gz.tmp" "$DB_DIR/all-$STAMP.sql.gz"
 
+# И отдельно сама база kotu в формате, который восстанавливается одной
+# командой pg_restore. Дамп всего кластера хорош для «сервер сгорел целиком»,
+# но чтобы поднять одну базу на чистой машине, из него приходится выкусывать
+# нужный кусок руками — в день аварии это последнее, чем хочется заниматься.
+sudo -u postgres pg_dump -Fc kotu > "$DB_DIR/kotu-$STAMP.dump.tmp"
+mv "$DB_DIR/kotu-$STAMP.dump.tmp" "$DB_DIR/kotu-$STAMP.dump"
+
 # Секреты и юниты — без них восстановление превращается в археологию
 tar czf "$FILES_DIR/config-$STAMP.tar.gz" \
   --ignore-failed-read \
@@ -38,6 +45,7 @@ done
 # Ротация дампов и конфигов: 14 дней. Зеркало файлов не ротируется —
 # оно всегда одно и повторяет текущее состояние.
 find "$DB_DIR" -name "all-*.sql.gz" -mtime +14 -delete
+find "$DB_DIR" -name "kotu-*.dump" -mtime +14 -delete
 find "$FILES_DIR" -name "config-*.tar.gz" -mtime +14 -delete
 
 # Проверка: дамп должен быть непустым, распаковываться и содержать наши
@@ -47,6 +55,12 @@ gzip -t "$DB_DIR/all-$STAMP.sql.gz"
 [ "$SIZE" -gt 10000 ] || { echo "БЭКАП ПОДОЗРИТЕЛЬНО МАЛ: $SIZE байт" >&2; exit 1; }
 zcat "$DB_DIR/all-$STAMP.sql.gz" | grep -q "CREATE TABLE public.documents" || {
   echo "В ДАМПЕ НЕТ ТАБЛИЦ KOTU — проверьте pg_dumpall" >&2; exit 1; }
+
+# Восстановимость проверяем не глазами, а pg_restore: он читает оглавление
+# дампа и падает на битом файле.
+# Читает файл, а не базу, поэтому от имени root: каталог бэкапов закрыт
+# от посторонних, и postgres в него не заглядывает.
+pg_restore --list "$DB_DIR/kotu-$STAMP.dump" > /dev/null
 
 DATA_SIZE=$(du -sh "$DATA_DIR" 2>/dev/null | cut -f1)
 echo "ok: база $((SIZE/1024)) КБ, файлы $DATA_SIZE"
