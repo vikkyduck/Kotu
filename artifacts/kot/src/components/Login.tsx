@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { CatLine } from '@/lib/cat';
 
 interface LoginProps {
   onSuccess: () => void;
@@ -58,8 +59,11 @@ export function Login({ onSuccess }: LoginProps) {
 
   return (
     <div className="login-wrap">
-      <h1 className="hello" style={{ textAlign: 'center' }}>Рабочая среда</h1>
-      <p className="lead" style={{ textAlign: 'center' }}>Войдите, чтобы продолжить.</p>
+      <CatLine className="login-cat" />
+      <div className="login-mark" aria-hidden="true"><span></span></div>
+      <p className="login-eyebrow">Psy3107</p>
+      <h1 className="hello">Рабочая среда</h1>
+      <p className="lead">Войдите, чтобы продолжить.</p>
 
       <form className="panel" onSubmit={submit}>
         <div className="fieldlbl">Почта</div>
@@ -84,7 +88,7 @@ export function Login({ onSuccess }: LoginProps) {
           required
         />
 
-        <button className="btn primary big" type="submit" disabled={busy} style={{ marginTop: 20 }}>
+        <button className="btn primary big login-submit" type="submit" disabled={busy}>
           {busy ? 'Проверяю…' : 'Войти'}
         </button>
 

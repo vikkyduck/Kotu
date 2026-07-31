@@ -17,7 +17,7 @@ export function How() {
         <div className="ex"><span className="ei"><Icon name="clock" /></span><div><b>Большие задачи идут в фоне</b><p>Лекции и презентации готовятся несколько часов — можно закрыть страницу, я сохраню и пришлю уведомление.</p></div></div>
         <div className="ex"><span className="ei"><Icon name="check" /></span><div><b>Ничего не нужно настраивать</b><p>Внутри — современный искусственный интеллект, но все сложности я беру на себя. Вы просто говорите, что нужно.</p></div></div>
       </div>
-      <p style={{ textAlign: 'center', fontSize: '13px', color: 'var(--muted)', margin: '16px 0 18px' }}>
+      <p className="soon-note">
         Пошаговые подсказки «как сделать…» появятся здесь же — скоро.
       </p>
       <button className="btn primary big" onClick={() => go('s-home')}>Понятно, спасибо</button>

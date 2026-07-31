@@ -66,6 +66,11 @@ export default defineConfig({
     fs: {
       strict: true,
     },
+    // Локальная разработка: фронт ходит в /api относительными путями,
+    // прокидываем их в API-сервер (или заглушку) через API_PROXY.
+    proxy: {
+      "/api": process.env.API_PROXY ?? "http://127.0.0.1:5010",
+    },
   },
   preview: {
     port,

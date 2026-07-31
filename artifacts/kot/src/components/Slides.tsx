@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '@/hooks/use-app';
 import { Icon } from '@/lib/icons';
 
-const PALS = [['#3a2f5c','#6b5bbf'],['#2c2a4a','#574f8f'],['#241f3d','#4b3d77'],['#3d2f55','#7a5fb0']];
 const SLIDES = ['Защитные механизмы','Вытеснение','Отрицание','Проекция','Проективная идентификация','Расщепление'];
 
 export function Slides() {
@@ -38,7 +37,7 @@ export function Slides() {
             <div className="r sel-lec" onClick={() => toast('Лекция выбрана')}>
               <span className="ri"><Icon name="pen" /></span>
               <span className="rt"><b>Защитные механизмы</b><span>Лекция · черновик готов</span></span>
-              <span className="chev" style={{ color: 'var(--accent)' }}><Icon name="check" /></span>
+              <span className="chev sel-mark"><Icon name="check" /></span>
             </div>
             <div className="r disabled" onClick={() => toast('Сначала подготовьте лекцию')}>
               <span className="ri"><Icon name="pen" /></span>
@@ -53,7 +52,7 @@ export function Slides() {
         <div id="slJob">
           <div className="panel bigjob">
             <div className="bi"><Icon name="clock" /></div>
-            <p className="pstat" style={{ fontFamily: 'var(--serif)', fontSize: '19px', fontWeight: 600, margin: '0 0 8px' }}>Рисую слайды</p>
+            <p className="pstat">Рисую слайды</p>
             <p className="preassure" style={{ marginBottom: '6px' }}>Хорошая серия слайдов с картинками собирается не быстро — это займёт время. Пришлю уведомление, когда черновик будет готов.</p>
             <p className="preassure"><b>Можно закрыть страницу.</b></p>
           </div>
@@ -71,29 +70,27 @@ export function Slides() {
           <p className="tnote"><Icon name="info" /> Это черновик. Не нравится картинка или подпись — нажмите на слайд и скажите своими словами, что изменить. Можно менять сколько угодно.</p>
           
           <div className="sgrid" id="slides">
-            {slidesState.map((slide, i) => {
-              const p = PALS[i % PALS.length];
-              return (
-                <div className="slide" key={i} onClick={() => {
-                  openSheet('Что изменить в этом слайде?', 'C', () => {
-                    setSlidesState(s => s.map((sl, idx) => i === idx ? { ...sl, loading: false } : sl));
-                  });
-                  setSlidesState(s => s.map((sl, idx) => i === idx ? { ...sl, loading: true } : sl));
-                }}>
-                  <div className="th" style={{ background: `linear-gradient(140deg, ${p[0]}, ${p[1]})` }}>
-                    <span className="tag-draft">черновик</span>
-                    <span className="st">{slide.title}</span>
-                  </div>
-                  <div className="cap" style={slide.loading ? { color: 'var(--amber)' } : {}}>
-                    {slide.loading ? (
-                      <><Icon name="loop" /> переделываю…</>
-                    ) : (
-                      <><Icon name="edit" /> нажмите, чтобы изменить</>
-                    )}
-                  </div>
+            {slidesState.map((slide, i) => (
+              <div className="slide" key={i} onClick={() => {
+                openSheet('Что изменить в этом слайде?', 'C', () => {
+                  setSlidesState(s => s.map((sl, idx) => i === idx ? { ...sl, loading: false } : sl));
+                });
+                setSlidesState(s => s.map((sl, idx) => i === idx ? { ...sl, loading: true } : sl));
+              }}>
+                {/* Пластины серии: четыре архивных тона задаются классами th-p0…3 */}
+                <div className={`th th-p${i % 4}`}>
+                  <span className="tag-draft">черновик</span>
+                  <span className="st">{slide.title}</span>
                 </div>
-              );
-            })}
+                <div className={`cap ${slide.loading ? 'busy' : ''}`}>
+                  {slide.loading ? (
+                    <><Icon name="loop" /> переделываю…</>
+                  ) : (
+                    <><Icon name="edit" /> нажмите, чтобы изменить</>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
 
           <div className="btnrow">

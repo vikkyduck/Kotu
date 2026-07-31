@@ -3,7 +3,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppProvider } from '@/hooks/use-app';
 import { Login } from '@/components/Login';
 import { ResetPassword } from '@/components/ResetPassword';
-import { useLiquidLight } from '@/hooks/use-liquid-light';
 import { TopBar } from '@/components/TopBar';
 import { Home } from '@/components/Home';
 import { Transcribe } from '@/components/Transcribe';
@@ -25,8 +24,6 @@ const queryClient = new QueryClient({
 });
 
 function AppContent() {
-  useLiquidLight();
-
   return (
     <>
       <TopBar />

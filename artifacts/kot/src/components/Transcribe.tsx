@@ -196,7 +196,7 @@ export function Transcribe() {
       <Stepper view={stepperView} />
 
       {error && !isActive && (
-        <p className="tnote" style={{ color: 'var(--danger, #c0392b)' }}>
+        <p className="tnote" style={{ color: 'var(--danger-strong)' }}>
           <Icon name="info" /> {error}
         </p>
       )}
@@ -283,7 +283,7 @@ export function Transcribe() {
           </div>
 
           <button className="btn primary big" onClick={runTranscribe}>Расшифровать запись <Icon name="arrow" /></button>
-          <p style={{ textAlign: 'center', fontSize: '13px', color: 'var(--muted)', margin: '12px 0 0' }}>
+          <p className="soon-note" style={{ margin: '12px 0 0' }}>
             Распознавание занимает немного времени. Длинные записи я разберу по частям — можно не ждать у экрана.
           </p>
         </div>
@@ -302,7 +302,7 @@ export function Transcribe() {
 
       {showError && (
         <div id="tcError">
-          <p className="tnote" style={{ color: 'var(--danger, #c0392b)' }}>
+          <p className="tnote" style={{ color: 'var(--danger-strong)' }}>
             <Icon name="info" /> {active?.error || 'Не удалось распознать запись. Попробуйте ещё раз.'}
           </p>
           <div className="btnrow">
