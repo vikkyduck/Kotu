@@ -29,6 +29,7 @@ const KIND_LABEL: Record<string, string> = {
   article: 'статья',
   note: 'заметка',
   transcript: 'расшифровка',
+  deck: 'из презентации',
 };
 
 /** «3 документа» — с правильным окончанием, иначе интерфейс выглядит машинным. */
@@ -334,6 +335,16 @@ export function Library() {
           <Icon name="folder" />
         </button>
 
+        {d.kind === 'transcript' && d.transcriptionId !== null && (
+          <button
+            className="btn ghost doc-del"
+            title="Удалить можно на экране записи"
+            onClick={() => openTranscription(d.transcriptionId!)}
+          >
+            <Icon name="trash" />
+          </button>
+        )}
+
         {d.kind !== 'transcript' &&
           (confirmId === d.id ? (
             <button className="btn danger doc-del" onClick={() => void remove(d.id)}>
@@ -417,7 +428,12 @@ export function Library() {
     const inside = countIn(openFolder.id);
     return (
       <section className="screen active" id="s-library">
-        <button className="btn ghost back-link" onClick={() => setOpenFolderId(null)}>
+        {/* Хлебная крошка — тоже цель: перетащил на неё, документ вышел из папки */}
+        <button
+          className={`btn ghost back-link crumb-drop ${dropTarget === 'root' ? 'drop-over' : ''}`}
+          onClick={() => setOpenFolderId(null)}
+          {...dropProps(null, 'root')}
+        >
           <Icon name="back" /> Библиотека
         </button>
 

@@ -355,6 +355,23 @@ export function Slides() {
     }
   };
 
+  const toLibrary = async () => {
+    if (!deck) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/decks/${deck.id}/to-library`, { method: 'POST' });
+      if (res.ok) toast('Сохранила в библиотеку — можно опираться в лекциях');
+      else {
+        const data = await res.json().catch(() => ({}));
+        toast(data.message ?? 'Не удалось сохранить');
+      }
+    } catch {
+      toast('Нет связи с сервером. Попробуйте ещё раз.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Тупика после ошибки быть не должно: конвейер можно перезапустить.
   const retry = async () => {
     if (!deck) return;
@@ -375,18 +392,24 @@ export function Slides() {
     }
   };
 
-  const remove = async () => {
-    if (!deck) return;
-    if (!window.confirm('Удалить презентацию? Вернуть её будет нельзя.')) return;
-    const res = await fetch(`/api/decks/${deck.id}`, { method: 'DELETE' });
-    if (res.ok) {
-      toast('Презентация удалена');
-      setOpenId(null);
-      await loadList();
-    } else {
-      toast('Не удалось удалить');
+  /** Удалить можно на любом этапе — в том числе прямо из списка. */
+  const removeDeck = async (id: number, ask = true) => {
+    if (ask && !window.confirm('Удалить презентацию? Вернуть её будет нельзя.')) return;
+    try {
+      const res = await fetch(`/api/decks/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        toast('Презентация удалена');
+        if (openId === id) setOpenId(null);
+        await loadList();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast(data.message ?? 'Не удалось удалить');
+      }
+    } catch {
+      toast('Нет связи с сервером. Попробуйте ещё раз.');
     }
   };
+  const remove = async () => { if (deck) await removeDeck(deck.id); };
 
   if (screen !== 's-slides') return null;
 
@@ -418,6 +441,19 @@ export function Slides() {
         </button>
 
         <h2 className="h2">{deck.title}</h2>
+
+        {/* Удалить можно на любом этапе — ждать окончания работы незачем.
+            Кнопка живёт рядом с заголовком, а не только на готовой колоде. */}
+        <div className="deck-tools">
+          {deck.status !== 'storyboarding' && (
+            <button className="chg" disabled={busy} onClick={() => void toLibrary()}>
+              сохранить в библиотеку
+            </button>
+          )}
+          <button className="chg deck-drop" onClick={() => void remove()}>
+            удалить презентацию
+          </button>
+        </div>
 
         {deck.status === 'error' && (
           <div className="errblock">
@@ -615,9 +651,9 @@ export function Slides() {
               >
                 <Icon name="download" /> Скачать PPTX
               </a>
-              <button className="btn danger" onClick={() => void remove()}>
-                <Icon name="trash" /> Удалить
-              </button>
+              <a className="btn" href={`/api/decks/${deck.id}/export?format=pdf`}>
+                <Icon name="download" /> PDF
+              </a>
             </div>
           </>
         )}
@@ -745,7 +781,7 @@ export function Slides() {
       {list.length > 0 && (
         <div className="doc-list" style={{ marginBottom: 22 }}>
           {list.map((d) => (
-            <button key={d.id} className="doc-card lec-item" onClick={() => setOpenId(d.id)}>
+            <div key={d.id} className="doc-card lec-item deck-row" onClick={() => setOpenId(d.id)}>
               <span className="doc-ico"><Icon name="deck" /></span>
               <div className="doc-body">
                 <b className="doc-title">{d.title}</b>
@@ -761,8 +797,18 @@ export function Slides() {
                   {STATUS_RU[d.status]}
                 </span>
               </div>
+              <button
+                className="btn ghost doc-del"
+                title="Удалить презентацию"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void removeDeck(d.id);
+                }}
+              >
+                <Icon name="trash" />
+              </button>
               <span className="chev"><Icon name="chevron" /></span>
-            </button>
+            </div>
           ))}
         </div>
       )}

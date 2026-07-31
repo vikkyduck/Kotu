@@ -174,6 +174,15 @@ async function illustrateSlide(
 
     try {
       const art = await renderIllustration(prompt);
+      // Колоду могли удалить, пока рисовалась картинка (это минуты). Тогда
+      // не воссоздаём каталог — иначе на диске оставался бы файл-сирота,
+      // которого уже никто не удалит.
+      const [alive] = await db
+        .select({ id: decksTable.id })
+        .from(decksTable)
+        .where(eq(decksTable.id, deckId))
+        .limit(1);
+      if (!alive) throw new Error("Презентация удалена");
       const dir = path.join(DECKS_DIR, String(deckId));
       await mkdir(dir, { recursive: true });
       // Расширение — по настоящему формату: Anthropic сверяет заявленный

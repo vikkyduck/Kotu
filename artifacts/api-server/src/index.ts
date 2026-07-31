@@ -2,7 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { purgeExpiredSessions } from "./lib/auth";
 import { requeueOrphans, startWorker } from "./lib/jobs";
-import { sweepTranscriptionsToLibrary } from "./lib/transcript-doc";
+import { sweepTranscriptionsToLibrary, sweepOrphanDeckDirs } from "./lib/transcript-doc";
 import { registerTranscribeHandler } from "./lib/handlers/transcribe";
 import { registerIngestHandler } from "./lib/handlers/ingest";
 import { registerLectureHandlers } from "./lib/handlers/lecture";
@@ -47,6 +47,10 @@ void sweepTranscriptionsToLibrary()
     if (n > 0) logger.info({ count: n }, "Отправил расшифровки в библиотеку");
   })
   .catch((err) => logger.error({ err }, "Сверка расшифровок с библиотекой не удалась"));
+
+void sweepOrphanDeckDirs().catch((err) =>
+  logger.error({ err }, "Сверка каталогов презентаций не удалась"),
+);
 
 void Promise.resolve().finally(() => {
   const server = app.listen(port, () => {
