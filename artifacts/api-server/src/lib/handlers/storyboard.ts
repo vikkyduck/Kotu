@@ -10,6 +10,7 @@ import {
   type Job,
   type SlideContent,
   type SlideLayout,
+  type ImageStatus,
 } from "@workspace/db";
 import { askJson } from "../claude";
 import { registerHandler } from "../jobs";
@@ -139,16 +140,18 @@ async function run(job: Job): Promise<void> {
       const brief = typeof s.imageBrief === "string" && s.imageBrief.trim() !== ""
         ? s.imageBrief.trim()
         : null;
+      // Схема и метафора взаимоисключают друг друга: на слайде-схеме
+      // картинка только помешает.
+      const wanted = layout === "diagram" ? null : brief;
+      const imageStatus: ImageStatus = wanted ? "queued" : "none";
       return {
         deckId: id,
         ord: i,
         layout,
         content: (s.content ?? {}) as SlideContent,
         notes: typeof s.notes === "string" ? s.notes : "",
-        // Схема и метафора взаимоисключают друг друга: на слайде-схеме
-        // картинка только помешает.
-        imageBrief: layout === "diagram" ? null : brief,
-        imageStatus: (layout !== "diagram" && brief ? "queued" : "none") as const,
+        imageBrief: wanted,
+        imageStatus,
       };
     }),
   );
