@@ -1,14 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import {
-  useGetTranscription,
-  useUpdateTranscription,
-  useDeleteTranscription,
-  getGetTranscriptionQueryKey,
-  getListTranscriptionsQueryKey,
+  useTranscription,
+  deleteTranscription as deleteTranscriptionRequest,
   type Transcription,
   type TranscriptSegment,
-} from '@workspace/api-client-react';
+} from '@/hooks/use-transcription';
 import { useApp } from '@/hooks/use-app';
 import { Icon } from '@/lib/icons';
 import { Celebrate } from '@/lib/celebrate';
@@ -25,25 +21,19 @@ function formatSize(bytes: number): string {
 
 export function Transcribe() {
   const { screen, go, toast, activeTranscriptionId, openTranscription, newTranscription } = useApp();
-  const queryClient = useQueryClient();
-  const deleteTranscription = useDeleteTranscription();
+  const [deleting, setDeleting] = useState(false);
 
-  const deleteActive = (id: number) => {
-    deleteTranscription.mutate(
-      { id },
-      {
-        onSuccess: () => {
-          queryClient.removeQueries({ queryKey: getGetTranscriptionQueryKey(id) });
-          queryClient.invalidateQueries({ queryKey: getListTranscriptionsQueryKey() });
-          justUploadedId.current = null;
-          toast('Запись удалена');
-          go('s-home');
-        },
-        onError: () => {
-          toast('Не удалось удалить — попробуйте ещё раз');
-        },
-      },
-    );
+  const deleteActive = async (id: number) => {
+    setDeleting(true);
+    const ok = await deleteTranscriptionRequest(id);
+    setDeleting(false);
+    if (!ok) {
+      toast('Не удалось удалить — попробуйте ещё раз');
+      return;
+    }
+    justUploadedId.current = null;
+    toast('Запись удалена');
+    go('s-home');
   };
 
   const [view, setView] = useState<'tcUpload' | 'tcReady'>('tcUpload');
@@ -63,18 +53,9 @@ export function Transcribe() {
   // but never re-celebrate items reopened from the home screen.
   const justUploadedId = useRef<number | null>(null);
 
-  // Poll the active transcription. Keeps refetching while the server is still
-  // processing (status === 'processing'), then stops once it's done or errored.
-  const id = activeTranscriptionId ?? 0;
-  const activeQuery = useGetTranscription(id, {
-    query: {
-      enabled: id > 0,
-      queryKey: getGetTranscriptionQueryKey(id),
-      refetchInterval: (query) =>
-        query.state.data?.status === 'processing' ? 1500 : false,
-    },
-  });
-  const active = activeQuery.data;
+  // Запись опрашивается, пока сервер над ней работает, — прогресс на экране
+  // движется сам. Останавливается опрос в хуке, как только работа закончена.
+  const { data: active, loading: activeLoading, save } = useTranscription(activeTranscriptionId);
 
   // React to opening an existing transcription or starting a new one.
   useEffect(() => {
@@ -93,13 +74,6 @@ export function Transcribe() {
       setSub('Загрузите аудио — я переведу его в текст.');
     }
   }, [screen, activeTranscriptionId]);
-
-  // Keep the transcriptions list fresh as the active item finishes or errors.
-  useEffect(() => {
-    if (active?.status === 'done' || active?.status === 'error') {
-      queryClient.invalidateQueries({ queryKey: getListTranscriptionsQueryKey() });
-    }
-  }, [active?.status, queryClient]);
 
   const acceptFile = (f: File) => {
     if (f.size > MAX_UPLOAD_BYTES) {
@@ -146,9 +120,6 @@ export function Transcribe() {
 
       const created = (await res.json()) as Transcription;
 
-      queryClient.setQueryData(getGetTranscriptionQueryKey(created.id), created);
-      queryClient.invalidateQueries({ queryKey: getListTranscriptionsQueryKey() });
-
       // Celebrate this one when it finishes; hand off to the polling view.
       justUploadedId.current = created.id;
       celebrated.current = false;
@@ -174,7 +145,7 @@ export function Transcribe() {
   const showResult = isActive && status === 'done';
   const showError = isActive && status === 'error';
   const showProcessing =
-    uploading || (isActive && (status === 'processing' || (!active && activeQuery.isLoading)));
+    uploading || (isActive && (status === 'processing' || status === 'queued' || (!active && activeLoading)));
 
   const stepperView = showResult
     ? 'tcResult'
@@ -323,10 +294,10 @@ export function Transcribe() {
             </button>
             <button
               className="btn danger"
-              disabled={deleteTranscription.isPending}
-              onClick={() => activeTranscriptionId != null && deleteActive(activeTranscriptionId)}
+              disabled={deleting}
+              onClick={() => activeTranscriptionId != null && void deleteActive(activeTranscriptionId)}
             >
-              <Icon name="trash" /> {deleteTranscription.isPending ? 'Удаляю…' : 'Удалить'}
+              <Icon name="trash" /> {deleting ? 'Удаляю…' : 'Удалить'}
             </button>
           </div>
         </div>
@@ -334,11 +305,13 @@ export function Transcribe() {
 
       {showResult && (
         <ResultView
+          data={active}
+          save={save}
           celebrated={celebrated}
           onDone={() => go('s-home')}
           toast={toast}
-          onDelete={() => activeTranscriptionId != null && deleteActive(activeTranscriptionId)}
-          deleting={deleteTranscription.isPending}
+          onDelete={() => activeTranscriptionId != null && void deleteActive(activeTranscriptionId)}
+          deleting={deleting}
         />
       )}
     </section>
@@ -372,13 +345,19 @@ function Stepper({ view }: { view: string }) {
   );
 }
 
+/** Готовая расшифровка: текст, правки автора и выгрузка. */
 function ResultView({
+  data,
+  save,
   celebrated,
   onDone,
   toast,
   onDelete,
   deleting,
 }: {
+  /** Запись приходит сверху: опрашивает её один экран, а не каждый блок свой. */
+  data: Transcription | null;
+  save: (patch: { segments?: TranscriptSegment[]; title?: string }) => Promise<boolean>;
   celebrated: React.MutableRefObject<boolean>;
   onDone: () => void;
   toast: (msg: string) => void;
@@ -386,32 +365,12 @@ function ResultView({
   deleting: boolean;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const { activeTranscriptionId } = useApp();
-  const queryClient = useQueryClient();
-  const id = activeTranscriptionId ?? 0;
-  const { data, isLoading } = useGetTranscription(id, {
-    query: { enabled: id > 0, queryKey: getGetTranscriptionQueryKey(id) },
-  });
-  const update = useUpdateTranscription();
-  const deleteTranscription = useDeleteTranscription();
 
   const handleDelete = () => {
     if (!data) return;
-    const ok = window.confirm(
-      `Удалить «${data.title}»? Расшифровку нельзя будет вернуть.`,
-    );
+    const ok = window.confirm(`Удалить «${data.title}»? Расшифровку нельзя будет вернуть.`);
     if (!ok) return;
-    deleteTranscription.mutate(
-      { id },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getListTranscriptionsQueryKey() });
-          toast('Расшифровка удалена');
-          onDone();
-        },
-        onError: () => toast('Не удалось удалить. Попробуйте ещё раз.'),
-      },
-    );
+    onDelete();
   };
 
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
@@ -437,7 +396,9 @@ function ResultView({
     if (text === current) return;
     const next = segments.map((s, i) => (i === index ? { ...s, text } : s));
     setSegments(next);
-    update.mutate({ id, data: { segments: next } });
+    void save({ segments: next }).then((ok) => {
+      if (!ok) toast('Правка не сохранилась — попробуйте ещё раз');
+    });
   };
 
   const downloadText = () => {
@@ -457,7 +418,7 @@ function ResultView({
     toast('Текст сохранён в файл');
   };
 
-  if (isLoading || !data) {
+  if (!data) {
     return (
       <div id="tcResult">
         <div className="panel proc">
@@ -500,7 +461,7 @@ function ResultView({
         <button
           className="btn danger"
           onClick={handleDelete}
-          disabled={deleteTranscription.isPending}
+          disabled={deleting}
           title="Удалить расшифровку"
         >
           <Icon name="trash" /> Удалить
