@@ -11,7 +11,7 @@ const VERSION = "2023-06-01";
 
 export interface ImageAttachment {
   path: string;
-  mediaType: "image/png" | "image/jpeg";
+  mediaType: "image/png" | "image/jpeg" | "image/webp";
 }
 
 interface AskOptions {

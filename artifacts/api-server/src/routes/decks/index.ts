@@ -344,7 +344,11 @@ router.get("/decks/:id/images/:imageId/file", async (req, res): Promise<void> =>
     return;
   }
 
-  res.sendFile(path.resolve(image.path), { headers: { "Content-Type": "image/png" } });
+  const mime =
+    image.path.endsWith(".jpg") ? "image/jpeg"
+    : image.path.endsWith(".webp") ? "image/webp"
+    : "image/png";
+  res.sendFile(path.resolve(image.path), { headers: { "Content-Type": mime } });
 });
 
 /** Выгрузка в PPTX. Разрешена и до отрисовки: текстовая колода тоже колода. */

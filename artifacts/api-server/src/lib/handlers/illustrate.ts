@@ -13,7 +13,7 @@ import {
   type StylePack,
   type ImageSide,
 } from "@workspace/db";
-import { ask } from "../claude";
+import { ask, type ImageAttachment } from "../claude";
 import { geminiJson } from "../gemini";
 import { renderIllustration } from "../images";
 import { registerHandler } from "../jobs";
@@ -123,7 +123,11 @@ function buildPrompt(reply: DirectorReply, side: ImageSide, pack: StylePack): st
  * Приёмка готовой картинки. Смотрит Claude: проверяет мысль и композицию,
  * а не красоту — красоту уже задал стилевой пакет.
  */
-async function reviewImage(slide: DeckSlide, filePath: string): Promise<ReviewReply> {
+async function reviewImage(
+  slide: DeckSlide,
+  filePath: string,
+  mime: ImageAttachment["mediaType"],
+): Promise<ReviewReply> {
   const safeSide = slide.imageSide === "left" ? "СПРАВА" : "СЛЕВА";
   const system = [
     "Ты — приёмщик иллюстраций серии «Архивный сон». Оцени картинку строго.",
@@ -138,7 +142,7 @@ async function reviewImage(slide: DeckSlide, filePath: string): Promise<ReviewRe
   const raw = await ask({
     system,
     user: `Мысль слайда: ${slide.imageBrief}`,
-    images: [{ path: filePath, mediaType: "image/png" }],
+    images: [{ path: filePath, mediaType: mime }],
   });
 
   const reply = parseJsonReply<ReviewReply>(raw);
@@ -172,7 +176,9 @@ async function illustrateSlide(
       const art = await renderIllustration(prompt);
       const dir = path.join(DECKS_DIR, String(deckId));
       await mkdir(dir, { recursive: true });
-      const filePath = path.join(dir, `${row.id}.png`);
+      // Расширение — по настоящему формату: Anthropic сверяет заявленный
+      // тип с байтами, а PowerPoint выбирает кодек по имени файла.
+      const filePath = path.join(dir, `${row.id}.${art.ext}`);
       await writeFile(filePath, art.buffer);
       await db
         .update(deckImagesTable)
@@ -181,7 +187,7 @@ async function illustrateSlide(
 
       // Приёмка упала (модель молчит) — картинка уже оплачена и на диске;
       // ставим её без проверки, а не сжигаем вторую попытку впустую.
-      const review = await reviewImage(slide, filePath).catch((err) => {
+      const review = await reviewImage(slide, filePath, art.mime).catch((err) => {
         logger.warn({ err, slideId: slide.id }, "Приёмка недоступна — образ пойдёт без проверки");
         return { accept: true, verdict: "Приёмка была недоступна — образ поставлен без проверки" };
       });
