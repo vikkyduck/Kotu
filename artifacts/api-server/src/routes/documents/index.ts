@@ -254,10 +254,24 @@ router.post(
       ? req.body.kind
       : "book";
 
+    // Файл можно бросить сразу на папку — тогда он и уляжется в неё, без
+    // второго действия «а теперь переложи». Чужая папка молча игнорируется.
+    let folderId: number | null = null;
+    const rawFolderId = Number(req.body?.folderId);
+    if (Number.isInteger(rawFolderId)) {
+      const [folder] = await db
+        .select({ id: foldersTable.id })
+        .from(foldersTable)
+        .where(and(eq(foldersTable.id, rawFolderId), eq(foldersTable.ownerId, req.user!.id)))
+        .limit(1);
+      folderId = folder?.id ?? null;
+    }
+
     const [doc] = await db
       .insert(documentsTable)
       .values({
         ownerId: req.user!.id,
+        folderId,
         title,
         kind,
         sourcePath: req.file.path,

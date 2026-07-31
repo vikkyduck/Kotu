@@ -831,3 +831,4 @@ button.doc-card:hover{border-color:var(--accent-strong)}
 /* Заголовок открытой папки: имя и тихое действие рядом */
 .folder-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
 .folder-remove{margin-top:var(--sp-4);width:100%}
+.root-empty{padding:14px 2px;margin:0}
