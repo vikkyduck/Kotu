@@ -1,129 +1,30 @@
-import { useState, useEffect, useRef, useCallback, type DragEvent } from 'react';
+import { useState, useEffect, useRef, useMemo, type DragEvent } from 'react';
 import { useApp } from '@/hooks/use-app';
+import { useLibraryData } from '@/hooks/use-library-data';
+import { useLibrarySearch, MIN_QUERY } from '@/hooks/use-library-search';
 import { Icon } from '@/lib/icons';
 import { CatLine } from '@/lib/cat';
+import { ITEM_MIME, dropZone, type DropTarget } from '@/lib/dnd';
+import {
+  buildItems,
+  buildWorking,
+  countLabel,
+  type Folder,
+  type Item,
+  type ItemActions,
+} from '@/lib/library-items';
+import { ItemCard, type CardMenu } from './library/ItemCard';
+import { FolderTiles } from './library/FolderTiles';
+import { SearchResults } from './library/SearchResults';
 
 /**
  * Главный экран: библиотека — это и есть рабочее место, а расшифровка, лекция
- * и презентация — три действия НАД ней. Раньше библиотека была одной из плиток
- * в списке «другие инструменты», а материал автора лежал в четырёх разных
- * списках за четырьмя разными дверями: расшифровки на главной, лекции внутри
- * одного инструмента, презентации внутри другого, книги — здесь.
+ * и презентация — три действия НАД ней.
  *
- * Теперь всё, что закончено, лежит одним списком и раскладывается по общим
- * папкам; всё, что делается прямо сейчас, — в полосе «сейчас в работе» и
- * само уезжает вниз, в библиотеку, когда готово.
+ * Здесь только сборка экрана и то, что меняет состояние на сервере. Правила
+ * «что куда попадает» живут в lib/library-items, загрузка — в hooks, а вид
+ * карточки, полки папок и выдачи поиска — в components/library.
  */
-
-interface Doc {
-  id: number;
-  title: string;
-  kind: string;
-  folderId: number | null;
-  transcriptionId: number | null;
-  deckId: number | null;
-  lectureId: number | null;
-  pages: number | null;
-  chunkCount: number;
-  status: 'uploaded' | 'parsing' | 'ready' | 'error';
-  statusMessage: string;
-  error: string | null;
-  createdAt: string;
-}
-
-interface Folder {
-  id: number;
-  name: string;
-}
-
-interface LectureRow {
-  id: number;
-  title: string;
-  folderId: number | null;
-  status: 'planning' | 'plan_ready' | 'writing' | 'ready' | 'error';
-  statusMessage: string;
-  createdAt: string;
-}
-
-interface DeckRow {
-  id: number;
-  title: string;
-  folderId: number | null;
-  status: 'storyboarding' | 'storyboard_ready' | 'drawing' | 'ready' | 'error';
-  statusMessage: string;
-  createdAt: string;
-}
-
-/** Находка поиска: материал и лучшие фрагменты из него. */
-interface Hit {
-  documentId: number;
-  title: string;
-  kind: string;
-  lectureId: number | null;
-  deckId: number | null;
-  transcriptionId: number | null;
-  quotes: { text: string; heading: string | null }[];
-}
-
-interface TranscriptionRow {
-  id: number;
-  title: string;
-  status: string;
-  statusMessage: string;
-  progress: number;
-  createdAt: string;
-}
-
-/** Что тащим мышкой: тип и номер внутри своего типа — «lecture:3». */
-const ITEM_MIME = 'application/x-kotu-item';
-
-type ItemKind = 'book' | 'article' | 'note' | 'transcript' | 'lecture' | 'deck';
-
-/** Одна карточка библиотеки — общий язык для книги, лекции и презентации. */
-interface Item {
-  key: string;
-  kind: ItemKind;
-  id: number;
-  title: string;
-  folderId: number | null;
-  meta: string;
-  tone: '' | 'busy' | 'bad';
-  createdAt: string;
-  open?: () => void;
-  /** Удаление: у расшифровки его нет — она удаляется вместе с записью. */
-  del?: () => void;
-  /** «Сделать из этого»: материал переходит в следующий инструмент. */
-  makeDeck?: () => void;
-  makeLecture?: () => void;
-}
-
-const KIND_ICON: Record<ItemKind, string> = {
-  book: 'book',
-  article: 'book',
-  note: 'book',
-  transcript: 'mic',
-  lecture: 'pen',
-  deck: 'deck',
-};
-
-const KIND_LABEL: Record<ItemKind, string> = {
-  book: 'книга',
-  article: 'статья',
-  note: 'заметка',
-  transcript: 'расшифровка · имена скрыты',
-  lecture: 'лекция',
-  deck: 'презентация',
-};
-
-/** «3 документа» — с правильным окончанием, иначе интерфейс выглядит машинным. */
-function countLabel(n: number): string {
-  if (n === 0) return 'пусто';
-  const last = n % 10;
-  const teen = n % 100 >= 11 && n % 100 <= 14;
-  if (!teen && last === 1) return `${n} материал`;
-  if (!teen && last >= 2 && last <= 4) return `${n} материала`;
-  return `${n} материалов`;
-}
 
 function greeting(): string {
   const hour = new Date().getHours();
@@ -146,69 +47,29 @@ export function Library() {
     newDeck,
   } = useApp();
 
-  const [docs, setDocs] = useState<Doc[] | null>(null);
-  const [folders, setFolders] = useState<Folder[]>([]);
-  const [lectures, setLectures] = useState<LectureRow[]>([]);
-  const [decks, setDecks] = useState<DeckRow[]>([]);
-  const [transcriptions, setTranscriptions] = useState<TranscriptionRow[]>([]);
+  const active = screen === 's-home';
+  const { data, folders, loaded, reload } = useLibraryData(active);
 
-  const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState<string[]>([]);
-  const [confirmKey, setConfirmKey] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
   /**
    * Открытая папка. Папка — место, куда ЗАХОДЯТ: содержимое остальных не
    * мешается под ногами, а действия над папкой живут внутри неё.
    */
   const [openFolderId, setOpenFolderId] = useState<number | null>(null);
-  /** Карточка, у которой раскрыт ряд чипов «в какую папку» (путь для тача). */
-  const [movingKey, setMovingKey] = useState<string | null>(null);
-  /** Карточка, у которой раскрыт ряд «сделать из этого». */
-  const [usingKey, setUsingKey] = useState<string | null>(null);
+  /** Раскрытый ряд кнопок — у одной карточки за раз. */
+  const [menu, setMenu] = useState<{ key: string; menu: CardMenu } | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
-  /**
-   * Карточка «берётся» только когда указатель на грипе: draggable на всей
-   * карточке перехватывал бы нажатия на кнопки и на название.
-   */
-  const [grabbable, setGrabbable] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<number | 'root' | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTarget>(null);
+  const [query, setQuery] = useState('');
+  const { hits, searching } = useLibrarySearch(query);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  /** Поиск по смыслу: по книгам, расшифровкам, своим лекциям и презентациям. */
-  const [query, setQuery] = useState('');
-  const [hits, setHits] = useState<Hit[] | null>(null);
-  const [searching, setSearching] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      const [d, f, l, k, t] = await Promise.all([
-        fetch('/api/documents').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/folders').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/lectures').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/decks').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/transcriptions').then((r) => (r.ok ? r.json() : null)),
-      ]);
-      if (d) setDocs(d);
-      if (f) setFolders(f);
-      if (l) setLectures(l);
-      if (k) setDecks(k);
-      if (t) setTranscriptions(t);
-    } catch {
-      /* сеть моргнула — покажем то, что уже есть */
-    }
-  }, []);
-
   useEffect(() => {
-    if (screen !== 's-home') return;
-    void load();
-  }, [screen, load]);
-
-  useEffect(() => {
-    if (screen !== 's-home') {
-      setMovingKey(null);
-      setUsingKey(null);
-      setOpenFolderId(null);
-    }
-  }, [screen]);
+    if (active) return;
+    setMenu(null);
+    setOpenFolderId(null);
+  }, [active]);
 
   // Папку могли удалить в другой вкладке — тогда выходим наружу, а не показываем
   // пустой экран несуществующей папки.
@@ -218,49 +79,7 @@ export function Library() {
     setOpenFolderId(null);
   }, [folders, openFolderId]);
 
-  // Пока хоть что-то делается — список живой: прогресс двигается сам,
-  // и готовая работа сама переезжает из «в работе» в библиотеку.
-  const busyNow =
-    (docs?.some((d) => d.status === 'parsing' || d.status === 'uploaded') ?? false) ||
-    lectures.some((l) => l.status === 'planning' || l.status === 'writing') ||
-    decks.some((k) => k.status === 'storyboarding' || k.status === 'drawing') ||
-    transcriptions.some((t) => t.status === 'processing' || t.status === 'queued');
-
-  useEffect(() => {
-    if (screen !== 's-home') return;
-    if (!busyNow && uploading.length === 0) return;
-    const t = setInterval(() => void load(), 3000);
-    return () => clearInterval(t);
-  }, [screen, busyNow, uploading, load]);
-
-  // Ищем не на каждую букву: пауза в наборе — и один запрос.
-  useEffect(() => {
-    const q = query.trim();
-    if (q.length < 2) {
-      setHits(null);
-      setSearching(false);
-      return;
-    }
-    setSearching(true);
-    const t = setTimeout(() => {
-      void (async () => {
-        try {
-          const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-          if (res.ok) {
-            const data = await res.json();
-            setHits(data.results ?? []);
-          }
-        } catch {
-          /* тихо: следующий набор повторит */
-        } finally {
-          setSearching(false);
-        }
-      })();
-    }, 400);
-    return () => clearTimeout(t);
-  }, [query]);
-
-  // ── Действия ────────────────────────────────────────────────────────────
+  // ── Действия над материалом ─────────────────────────────────────────────
 
   const send = async (files: FileList | File[], folderId?: number | null) => {
     const list = Array.from(files);
@@ -275,8 +94,8 @@ export function Library() {
       try {
         const res = await fetch('/api/documents', { method: 'POST', body: form });
         if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          toast(data.message ?? `Не удалось загрузить «${file.name}»`);
+          const body = await res.json().catch(() => ({}));
+          toast(body.message ?? `Не удалось загрузить «${file.name}»`);
         }
       } catch {
         toast(`Не удалось загрузить «${file.name}»`);
@@ -284,7 +103,7 @@ export function Library() {
     }
 
     setUploading([]);
-    await load();
+    await reload();
   };
 
   /** Один путь перекладывания для всех типов — меняется только ручка. */
@@ -302,8 +121,8 @@ export function Library() {
         body: JSON.stringify({ folderId }),
       });
       if (res.ok) {
-        setMovingKey(null);
-        await load();
+        setMenu(null);
+        await reload();
         const where =
           folderId === null
             ? 'из папки'
@@ -321,12 +140,11 @@ export function Library() {
     try {
       const res = await fetch(url, { method: 'DELETE' });
       if (res.ok) {
-        setConfirmKey(null);
         toast(done);
-        await load();
+        await reload();
       } else {
-        const data = await res.json().catch(() => ({}));
-        toast(data.message ?? 'Не удалось удалить');
+        const body = await res.json().catch(() => ({}));
+        toast(body.message ?? 'Не удалось удалить');
       }
     } catch {
       toast('Нет связи с сервером. Попробуйте ещё раз.');
@@ -344,12 +162,12 @@ export function Library() {
           });
           if (res.ok) {
             const created = await res.json().catch(() => null);
-            await load();
+            await reload();
             // Создал папку — сразу внутри неё: дальше человек кладёт туда материал.
             if (created?.id) setOpenFolderId(created.id);
           } else {
-            const data = await res.json().catch(() => ({}));
-            toast(data.message ?? 'Не удалось создать папку');
+            const body = await res.json().catch(() => ({}));
+            toast(body.message ?? 'Не удалось создать папку');
           }
         } catch {
           toast('Нет связи с сервером. Попробуйте ещё раз.');
@@ -367,7 +185,7 @@ export function Library() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name }),
           });
-          if (res.ok) await load();
+          if (res.ok) await reload();
           else toast('Не удалось переименовать');
         } catch {
           toast('Нет связи с сервером. Попробуйте ещё раз.');
@@ -386,7 +204,7 @@ export function Library() {
       const res = await fetch(`/api/folders/${f.id}`, { method: 'DELETE' });
       if (res.ok) {
         setOpenFolderId(null);
-        await load();
+        await reload();
         toast('Папка удалена');
       } else toast('Не удалось удалить папку');
     } catch {
@@ -394,160 +212,25 @@ export function Library() {
     }
   };
 
-  // ── Сбор карточек ───────────────────────────────────────────────────────
+  // ── Что показываем ──────────────────────────────────────────────────────
 
-  const allDocs = docs ?? [];
+  const act: ItemActions = useMemo(
+    () => ({
+      openTranscription,
+      openLecture,
+      openDeck,
+      newDeck,
+      newLecture,
+      remove: (url, done) => void removeAt(url, done),
+    }),
+    // removeAt пересоздаётся каждый рендер, но замыкает только toast и reload —
+    // оба стабильны, поэтому в зависимости его не берём.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [openTranscription, openLecture, openDeck, newDeck, newLecture],
+  );
 
-  /**
-   * Библиотека: всё законченное. Незаконченное живёт выше, в полосе «сейчас
-   * в работе», — так у работы виден путь: сделал → лежит в библиотеке.
-   */
-  const items: Item[] = [
-    ...allDocs
-      // Текстовая копия лекции и презентации — не отдельный материал, а их
-      // поисковый след: показывать второй карточкой значило бы двоить вещь.
-      .filter((d) => d.kind !== 'deck' && d.kind !== 'lecture')
-      .map<Item>((d) => {
-        const kind = (['book', 'article', 'note', 'transcript'].includes(d.kind)
-          ? d.kind
-          : 'book') as ItemKind;
-        const meta =
-          d.status === 'ready'
-            // У расшифровки счёт фрагментов ничего не говорит автору: важно
-            // одно — имена скрыты. У книги наоборот: объём и разбор по делу.
-            ? kind === 'transcript'
-              ? KIND_LABEL[kind]
-              : `${KIND_LABEL[kind]}${d.pages ? ` · ${d.pages} с.` : ''} · ${d.chunkCount} фрагментов`
-            : d.status === 'error'
-              ? (d.error ?? 'не удалось разобрать')
-              : d.statusMessage || 'В очереди…';
-        return {
-          key: `doc:${d.id}`,
-          kind,
-          id: d.id,
-          title: d.title,
-          folderId: d.folderId,
-          meta,
-          tone: d.status === 'error' ? 'bad' : d.status === 'ready' ? '' : 'busy',
-          createdAt: d.createdAt,
-          open:
-            d.kind === 'transcript' && d.transcriptionId !== null
-              ? () => openTranscription(d.transcriptionId!)
-              : undefined,
-          // Разобранный материал годится и для слайдов, и как опора лекции.
-          makeDeck:
-            d.status === 'ready'
-              ? () => newDeck({ sourceKind: 'document', sourceId: d.id })
-              : undefined,
-          makeLecture:
-            d.status === 'ready' ? () => newLecture({ documentIds: [d.id] }) : undefined,
-          // Расшифровку удаляют вместе с записью — на её экране, там же, где аудио.
-          del:
-            d.kind === 'transcript'
-              ? undefined
-              : () => void removeAt(`/api/documents/${d.id}`, 'Документ удалён'),
-        };
-      }),
-    ...lectures
-      .filter((l) => l.status === 'ready')
-      .map<Item>((l) => ({
-        key: `lecture:${l.id}`,
-        kind: 'lecture',
-        id: l.id,
-        title: l.title,
-        folderId: l.folderId,
-        meta: allDocs.some((d) => d.lectureId === l.id)
-          ? 'лекция · текст в поиске'
-          : 'лекция · готова',
-        tone: '',
-        createdAt: l.createdAt,
-        open: () => openLecture(l.id),
-        del: () => void removeAt(`/api/lectures/${l.id}`, 'Лекция удалена'),
-        makeDeck: () => newDeck({ sourceKind: 'lecture', sourceId: l.id }),
-        makeLecture: (() => {
-          // Опереться на лекцию можно через её текст в поиске: он и есть
-          // тот материал, который читает следующая лекция.
-          const copy = allDocs.find((d) => d.lectureId === l.id && d.status === 'ready');
-          return copy ? () => newLecture({ documentIds: [copy.id] }) : undefined;
-        })(),
-      })),
-    ...decks
-      .filter((k) => k.status === 'ready')
-      .map<Item>((k) => ({
-        key: `deck:${k.id}`,
-        kind: 'deck',
-        id: k.id,
-        title: k.title,
-        folderId: k.folderId,
-        meta: allDocs.some((d) => d.deckId === k.id)
-          ? 'презентация · текст в поиске'
-          : 'презентация · готова',
-        tone: '',
-        createdAt: k.createdAt,
-        open: () => openDeck(k.id),
-        del: () => void removeAt(`/api/decks/${k.id}`, 'Презентация удалена'),
-        makeLecture: (() => {
-          const copy = allDocs.find((d) => d.deckId === k.id && d.status === 'ready');
-          return copy ? () => newLecture({ documentIds: [copy.id] }) : undefined;
-        })(),
-      })),
-  ].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-
-  /** Сейчас в работе: то, что делается или ждёт решения автора. */
-  const working: Item[] = [
-    ...transcriptions
-      .filter((t) => t.status !== 'done')
-      .map<Item>((t) => ({
-        key: `tr:${t.id}`,
-        kind: 'transcript',
-        id: t.id,
-        title: t.title,
-        folderId: null,
-        meta:
-          t.status === 'error'
-            ? 'не удалось — откройте, чтобы повторить'
-            : t.statusMessage || 'расшифровываю…',
-        tone: t.status === 'error' ? 'bad' : 'busy',
-        createdAt: t.createdAt,
-        open: () => openTranscription(t.id),
-      })),
-    ...lectures
-      .filter((l) => l.status !== 'ready')
-      .map<Item>((l) => ({
-        key: `lecture:${l.id}`,
-        kind: 'lecture',
-        id: l.id,
-        title: l.title,
-        folderId: l.folderId,
-        meta:
-          l.status === 'plan_ready'
-            ? 'план ждёт вашего решения'
-            : l.status === 'error'
-              ? 'ошибка — откройте, чтобы повторить'
-              : l.statusMessage || 'пишу…',
-        tone: l.status === 'error' ? 'bad' : 'busy',
-        createdAt: l.createdAt,
-        open: () => openLecture(l.id),
-      })),
-    ...decks
-      .filter((k) => k.status !== 'ready')
-      .map<Item>((k) => ({
-        key: `deck:${k.id}`,
-        kind: 'deck',
-        id: k.id,
-        title: k.title,
-        folderId: k.folderId,
-        meta:
-          k.status === 'storyboard_ready'
-            ? 'раскадровка ждёт вашего решения'
-            : k.status === 'error'
-              ? 'ошибка — откройте, чтобы повторить'
-              : k.statusMessage || 'собираю…',
-        tone: k.status === 'error' ? 'bad' : 'busy',
-        createdAt: k.createdAt,
-        open: () => openDeck(k.id),
-      })),
-  ].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const items = buildItems(data, act);
+  const working = buildWorking(data, act);
 
   const countIn = (folderId: number) => items.filter((i) => i.folderId === folderId).length;
   const openFolder = folders.find((f) => f.id === openFolderId) ?? null;
@@ -555,7 +238,7 @@ export function Library() {
 
   // ── Перетаскивание ──────────────────────────────────────────────────────
 
-  const onFolderDrop = (e: DragEvent, folderId: number | null) => {
+  const onDropTo = (e: DragEvent, folderId: number | null) => {
     e.preventDefault();
     e.stopPropagation();
     setDropTarget(null);
@@ -572,153 +255,29 @@ export function Library() {
     void moveTo(item, folderId);
   };
 
-  const dropProps = (folderId: number | null, key: number | 'root') => ({
-    onDragOver: (e: DragEvent) => {
-      // Смотрим на сам dataTransfer, а не на состояние React: первый dragover
-      // прилетает раньше, чем доедет setState.
-      const types = e.dataTransfer.types;
-      const isItem = types.indexOf(ITEM_MIME) !== -1;
-      const isFile = types.indexOf('Files') !== -1;
-      if (!isItem && !isFile) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = isItem ? 'move' : 'copy';
-      setDropTarget(key);
-    },
-    onDragLeave: (e: DragEvent) => {
-      // Уход к дочернему элементу — не уход из зоны.
-      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-      setDropTarget((t) => (t === key ? null : t));
-    },
-    onDrop: (e: DragEvent) => onFolderDrop(e, folderId),
-  });
-
-  if (screen !== 's-home') return null;
+  if (!active) return null;
 
   // ── Кусочки разметки ────────────────────────────────────────────────────
 
-  const card = (i: Item, movable: boolean) => (
-    <div key={i.key}>
-      <div
-        className={`doc-card ${i.tone === 'bad' ? 'error' : ''} ${dragKey === i.key ? 'dragging' : ''}`}
-        draggable={movable && grabbable === i.key}
-        onDragStart={(e) => {
-          e.dataTransfer.setData(ITEM_MIME, i.key);
-          e.dataTransfer.effectAllowed = 'move';
-          setDragKey(i.key);
-        }}
+  const cards = (list: Item[], movable: boolean) =>
+    list.map((i) => (
+      <ItemCard
+        key={i.key}
+        item={i}
+        movable={movable}
+        folders={folders}
+        menu={menu?.key === i.key ? menu.menu : null}
+        onMenu={(m) => setMenu(m ? { key: i.key, menu: m } : null)}
+        onMove={(item, folderId) => void moveTo(item, folderId)}
+        onCreateFolder={createFolder}
+        dragging={dragKey === i.key}
+        onDragStart={() => setDragKey(i.key)}
         onDragEnd={() => {
           setDragKey(null);
           setDropTarget(null);
         }}
-      >
-        <span
-          className={`doc-ico ${movable ? 'grip' : ''}`}
-          title={movable ? 'Потяните, чтобы переложить в папку' : undefined}
-          onMouseEnter={() => movable && setGrabbable(i.key)}
-          onMouseLeave={() => setGrabbable((g) => (g === i.key ? null : g))}
-        >
-          <Icon name={KIND_ICON[i.kind]} />
-        </span>
-
-        <div className="doc-body">
-          {i.open ? (
-            <b className="doc-title doc-link" onClick={i.open}>
-              {i.title}
-            </b>
-          ) : (
-            <b className="doc-title">{i.title}</b>
-          )}
-          <span className={`doc-meta ${i.tone}`}>{i.meta}</span>
-        </div>
-
-        {(i.makeDeck || i.makeLecture) && (
-          <button
-            className="btn ghost doc-use"
-            title="Сделать из этого"
-            onClick={() => {
-              setMovingKey(null);
-              setUsingKey((u) => (u === i.key ? null : i.key));
-            }}
-          >
-            <Icon name="spark" />
-          </button>
-        )}
-
-        {movable && (
-          <button
-            className="btn ghost doc-move"
-            title="Переложить в папку"
-            onClick={() => {
-              setUsingKey(null);
-              setMovingKey((m) => (m === i.key ? null : i.key));
-            }}
-          >
-            <Icon name="folder" />
-          </button>
-        )}
-
-        {i.del ? (
-          confirmKey === i.key ? (
-            <button className="btn danger doc-del" onClick={i.del}>
-              Точно удалить?
-            </button>
-          ) : (
-            <button
-              className="btn ghost doc-del"
-              title="Удалить"
-              onClick={() => {
-                setConfirmKey(i.key);
-                setTimeout(() => setConfirmKey((c) => (c === i.key ? null : c)), 4000);
-              }}
-            >
-              <Icon name="trash" />
-            </button>
-          )
-        ) : i.kind === 'transcript' && i.open ? (
-          <button className="btn ghost doc-del" title="Удалить можно на экране записи" onClick={i.open}>
-            <Icon name="trash" />
-          </button>
-        ) : null}
-      </div>
-
-      {usingKey === i.key && (
-        <div className="pills folder-pills">
-          {i.makeDeck && (
-            <button className="pill-opt" onClick={i.makeDeck}>
-              собрать презентацию
-            </button>
-          )}
-          {i.makeLecture && (
-            <button className="pill-opt" onClick={i.makeLecture}>
-              написать лекцию на основе
-            </button>
-          )}
-        </div>
-      )}
-
-      {movingKey === i.key && (
-        <div className="pills folder-pills">
-          {folders
-            .filter((f) => f.id !== i.folderId)
-            .map((f) => (
-              <button key={f.id} className="pill-opt" onClick={() => void moveTo(i, f.id)}>
-                {f.name}
-              </button>
-            ))}
-          {i.folderId !== null && (
-            <button className="pill-opt" onClick={() => void moveTo(i, null)}>
-              вынуть из папки
-            </button>
-          )}
-          {folders.length === 0 && (
-            <button className="pill-opt" onClick={createFolder}>
-              создать папку
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
+      />
+    ));
 
   const dropzone = (folderId: number | null) => (
     <div
@@ -759,6 +318,12 @@ export function Library() {
     />
   );
 
+  const uploadingNote = uploading.length > 0 && (
+    <div className="panel doc-uploading">
+      <Icon name="upload" /> Загружаю: {uploading.join(', ')}
+    </div>
+  );
+
   // ── Внутри папки ────────────────────────────────────────────────────────
 
   if (openFolder) {
@@ -769,7 +334,7 @@ export function Library() {
         <button
           className={`btn ghost back-link crumb-drop ${dropTarget === 'root' ? 'drop-over' : ''}`}
           onClick={() => setOpenFolderId(null)}
-          {...dropProps(null, 'root')}
+          {...dropZone('root', setDropTarget, (e) => onDropTo(e, null))}
         >
           <Icon name="back" /> Библиотека
         </button>
@@ -782,15 +347,10 @@ export function Library() {
 
         {filePicker(openFolder.id)}
         {dropzone(openFolder.id)}
-
-        {uploading.length > 0 && (
-          <div className="panel doc-uploading">
-            <Icon name="upload" /> Загружаю: {uploading.join(', ')}
-          </div>
-        )}
+        {uploadingNote}
 
         {visible.length > 0 ? (
-          <div className="doc-list">{visible.map((i) => card(i, true))}</div>
+          <div className="doc-list">{cards(visible, true)}</div>
         ) : (
           <div className="emptybox">
             <p className="start-hint">
@@ -815,8 +375,9 @@ export function Library() {
 
   // ── Главный экран ───────────────────────────────────────────────────────
 
+  const searchOpen = query.trim().length >= MIN_QUERY;
   const emptyAll =
-    docs !== null && items.length === 0 && working.length === 0 && folders.length === 0 &&
+    loaded && items.length === 0 && working.length === 0 && folders.length === 0 &&
     uploading.length === 0;
 
   return (
@@ -846,7 +407,7 @@ export function Library() {
       {working.length > 0 && (
         <>
           <div className="label">Сейчас в работе</div>
-          <div className="doc-list work-list">{working.map((i) => card(i, false))}</div>
+          <div className="doc-list work-list">{cards(working, false)}</div>
         </>
       )}
 
@@ -871,71 +432,9 @@ export function Library() {
       />
 
       {filePicker(null)}
-      {query.trim().length >= 2 && (
-        <div className="hits">
-          {searching && hits === null && <p className="doc-meta">Ищу…</p>}
-          {hits !== null && hits.length === 0 && !searching && (
-            <p className="doc-meta">Ничего не нашла. Попробуйте другими словами.</p>
-          )}
-          {(hits ?? []).map((h) => {
-            const kind = (h.kind === 'lecture' || h.kind === 'deck' || h.kind === 'transcript'
-              ? h.kind
-              : 'book') as ItemKind;
-            return (
-              <div key={h.documentId} className="panel hit">
-                <div className="hit-head">
-                  <span className="doc-ico"><Icon name={KIND_ICON[kind]} /></span>
-                  <div className="doc-body">
-                    <b className="doc-title">{h.title}</b>
-                    <span className="doc-meta">{KIND_LABEL[kind]}</span>
-                  </div>
-                </div>
-                {h.quotes.map((q, j) => (
-                  <p key={j} className="hit-quote">
-                    {q.heading && <span className="hit-where">{q.heading}: </span>}
-                    {q.text}
-                  </p>
-                ))}
-                <div className="pills">
-                  <button
-                    className="pill-opt"
-                    onClick={() =>
-                      h.lectureId
-                        ? newDeck({ sourceKind: 'lecture', sourceId: h.lectureId })
-                        : newDeck({ sourceKind: 'document', sourceId: h.documentId })
-                    }
-                  >
-                    собрать презентацию
-                  </button>
-                  <button
-                    className="pill-opt"
-                    onClick={() => newLecture({ documentIds: [h.documentId] })}
-                  >
-                    написать лекцию на основе
-                  </button>
-                  {h.transcriptionId && (
-                    <button className="pill-opt" onClick={() => openTranscription(h.transcriptionId!)}>
-                      открыть запись
-                    </button>
-                  )}
-                  {h.lectureId && (
-                    <button className="pill-opt" onClick={() => openLecture(h.lectureId!)}>
-                      открыть лекцию
-                    </button>
-                  )}
-                  {h.deckId && (
-                    <button className="pill-opt" onClick={() => openDeck(h.deckId!)}>
-                      открыть презентацию
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {searchOpen && <SearchResults hits={hits} searching={searching} act={act} />}
 
-      {docs === null && <p className="lead dim">Открываю библиотеку…</p>}
+      {!loaded && <p className="lead dim">Открываю библиотеку…</p>}
 
       {emptyAll && (
         <>
@@ -946,44 +445,27 @@ export function Library() {
         </>
       )}
 
-      {uploading.length > 0 && (
-        <div className="panel doc-uploading">
-          <Icon name="upload" /> Загружаю: {uploading.join(', ')}
-        </div>
-      )}
+      {uploadingNote}
 
-      {docs !== null && !emptyAll && query.trim().length < 2 && (
+      {loaded && !emptyAll && !searchOpen && (
         <>
-          <div className="folder-grid">
-            {folders.map((f) => (
-              <button
-                key={f.id}
-                className={`folder-tile ${dropTarget === f.id ? 'drop-over' : ''}`}
-                onClick={() => setOpenFolderId(f.id)}
-                {...dropProps(f.id, f.id)}
-              >
-                <span className="folder-tile-ico"><Icon name="folder" /></span>
-                <span className="folder-tile-body">
-                  <b>{f.name}</b>
-                  <span>{countLabel(countIn(f.id))}</span>
-                </span>
-                <span className="folder-tile-chev"><Icon name="chevron" /></span>
-              </button>
-            ))}
-
-            <button className="folder-tile folder-tile-add" onClick={createFolder}>
-              <span className="folder-tile-ico"><Icon name="folder" /></span>
-              <span className="folder-tile-body"><b>Новая папка</b><span>разложить по темам</span></span>
-            </button>
-          </div>
+          <FolderTiles
+            folders={folders}
+            countIn={countIn}
+            dropTarget={dropTarget}
+            setDropTarget={setDropTarget}
+            onDropTo={onDropTo}
+            onOpen={setOpenFolderId}
+            onCreate={createFolder}
+          />
 
           <div
             className={`root-docs ${dropTarget === 'root' ? 'drop-over' : ''}`}
-            {...dropProps(null, 'root')}
+            {...dropZone('root', setDropTarget, (e) => onDropTo(e, null))}
           >
             {folders.length > 0 && <div className="label">Вне папок</div>}
             {visible.length > 0 ? (
-              <div className="doc-list">{visible.map((i) => card(i, true))}</div>
+              <div className="doc-list">{cards(visible, true)}</div>
             ) : (
               // Пустая зона остаётся целью: сюда возвращают материал из папки.
               <p className="doc-meta root-empty">
