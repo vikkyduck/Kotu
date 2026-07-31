@@ -5,3 +5,4 @@ export * from "./jobs";
 export * from "./documents";
 export * from "./password-resets";
 export * from "./lectures";
+export * from "./decks";
