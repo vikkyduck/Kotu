@@ -47,7 +47,10 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
     return;
   }
 
-  const { masked, degraded } = await maskText(plain);
+  const { masked: rawMasked, degraded } = await maskText(plain);
+  // Если текст УЖЕ содержал плейсхолдеры (маскировка на этапе расшифровки),
+  // повторная маскировка оборачивает их второй парой скобок — схлопываем.
+  const masked = rawMasked.replace(/\[{3,}((?:PER|LOC)\d+)\]{3,}/g, "[[$1]]");
   if (degraded) {
     // Эвристика перестраховывается, но не ловит имя в начале строки — а формат
     // «Имя: реплика» ставит его туда всегда. Без настоящего NER наружу нельзя:

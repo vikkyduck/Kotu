@@ -11,6 +11,12 @@
   --serif:"Cormorant Garamond",Georgia,"Times New Roman",serif;
   --sans:"Manrope","Avenir Next","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
 
+  /* Вертикальный ритм брендбука: 8 / 16 / 24 / 40 */
+  --sp-1:8px;
+  --sp-2:16px;
+  --sp-3:24px;
+  --sp-4:40px;
+
   /* Архивная ночь */
   --bg:#1d1e24;                 /* Archive Black */
   --bg-2:#232638;               /* Deep Indigo — сновидческие поля */
@@ -141,9 +147,10 @@ html{scroll-behavior:smooth}
 .top.sub .back{display:grid}
 .top .ttl{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:-.02em}
 .top .brand{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:-.02em;
-  display:flex;align-items:center;gap:11px;cursor:pointer}
-/* Знак: кот вместо иконки-плашки */
-.brand-cat{width:27px;height:auto;color:var(--ink-2);flex-shrink:0}
+  display:flex;align-items:baseline;gap:11px;cursor:pointer}
+/* Знак: кот вместо иконки-плашки, сидит на базовой линии текста */
+.brand-cat{width:27px;height:auto;color:var(--ink-2);flex-shrink:0;align-self:baseline;
+  position:relative;top:2px}
 .top .sp{margin-left:auto}
 .iconbtn{width:40px;height:40px;border-radius:var(--r-sm);border:1px solid var(--line);
   background:transparent;color:var(--ink-2);display:grid;place-items:center;cursor:pointer;
@@ -166,14 +173,25 @@ html{scroll-behavior:smooth}
 
 /* ── Типографика ─────────────────────────────────────────────────────── */
 h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:-.035em;
-  margin:6px 0 6px;line-height:1.02;text-wrap:balance}
-.lead{color:var(--ink-2);font-size:16.5px;margin:0 0 24px;line-height:1.55}
-.h2{font-family:var(--serif);font-size:27px;font-weight:600;letter-spacing:-.03em;margin:0 0 6px;line-height:1.05}
-.sub{color:var(--ink-2);font-size:15px;margin:0 0 22px}
+  margin:var(--sp-1) 0;line-height:1.02;text-wrap:balance}
+.lead{color:var(--ink-2);font-size:16.5px;margin:0 0 var(--sp-3);line-height:1.55}
+.h2{font-family:var(--serif);font-size:27px;font-weight:600;letter-spacing:-.03em;margin:0 0 var(--sp-1);line-height:1.05}
+.sub{color:var(--ink-2);font-size:15px;margin:0 0 var(--sp-3)}
 .label,.soon-label{display:flex;align-items:center;gap:8px;font-size:11.5px;
   text-transform:uppercase;letter-spacing:.13em;color:var(--accent-strong);
-  font-weight:500;margin:30px 0 12px}
-.start-hint{margin:4px 2px 2px;font-size:14.5px;color:var(--ink-2)}
+  font-weight:500;margin:var(--sp-4) 0 var(--sp-2)}
+.start-hint{margin:4px 2px 2px;font-size:12.5px;color:var(--muted)}
+
+/* Пустое состояние: короткий текст + одно действие */
+.emptybox{display:flex;flex-direction:column;align-items:flex-start;gap:var(--sp-2);
+  margin:0 0 var(--sp-3);padding:var(--sp-3);border:1px solid var(--line)}
+.emptybox .start-hint{margin:0;font-size:14.5px;color:var(--ink-2)}
+
+/* Ошибка: заголовок, причина, одно действие */
+.errblock{margin:0 0 var(--sp-3)}
+.errblock .errttl{font-family:var(--serif);font-size:24px;font-weight:600;letter-spacing:-.02em;
+  margin:0 0 var(--sp-1)}
+.errblock .errwhy{margin:0 0 var(--sp-3);font-size:14.5px;color:var(--ink-2)}
 
 /* ── Обещание (плашка-заверение) ─────────────────────────────────────── */
 .promise{display:flex;align-items:center;gap:13px;margin-bottom:26px;padding:14px 16px;
@@ -246,7 +264,9 @@ h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:
 .resume .rdel{display:grid;place-items:center;width:32px;height:32px;flex-shrink:0;border:none;
   background:transparent;color:var(--muted);cursor:pointer;opacity:.4;transition:opacity var(--fast) ease,color var(--fast) ease}
 .resume .rdel .ic-svg{width:16px;height:16px}
-.resume .r:hover .rdel{opacity:.7}
+.resume .r:hover .rdel,.resume .r:focus-within .rdel{opacity:.7}
+.resume .rdel:focus-visible{opacity:1;color:var(--danger-strong);background:var(--danger-soft);
+  outline:2px solid var(--accent-strong);outline-offset:1px}
 .resume .rdel:hover{opacity:1;color:var(--danger-strong);background:var(--danger-soft)}
 .resume .r.confirming{cursor:default;background:var(--danger-soft)}
 .resume .rconfirm{display:flex;align-items:center;gap:8px;flex-shrink:0}
@@ -362,8 +382,9 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
 .filecard .chg{margin-left:auto;flex-shrink:0}
 
 /* ── Шаги ────────────────────────────────────────────────────────────── */
-.stepper{display:flex;align-items:flex-start;margin:0 0 26px}
-.step{display:flex;flex-direction:column;align-items:center;gap:9px;flex-shrink:0;width:74px}
+.stepper{display:flex;align-items:flex-start;margin:0 0 var(--sp-3)}
+.step{display:flex;flex-direction:column;align-items:center;gap:var(--sp-1);flex-shrink:0;width:68px}
+@media (max-width:420px){.step{width:56px}.step .slbl{font-size:10.5px}}
 .step .sdot{position:relative;z-index:0;width:34px;height:34px;display:grid;place-items:center;
   font-size:13px;font-weight:500;font-variant-numeric:tabular-nums;color:var(--muted)}
 /* Ромб рисует псевдоэлемент: цифры и иконки остаются неповёрнутыми */
@@ -402,6 +423,8 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
 @keyframes platePulse{0%{transform:scale(.72);opacity:.55}100%{transform:scale(1.25);opacity:0}}
 @keyframes coreBeat{0%,100%{opacity:1}50%{opacity:.45}}
 .pstat{font-size:19px;font-weight:600;margin:0 0 8px;font-family:var(--serif);letter-spacing:-.02em}
+.proc .pstage{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  margin:var(--sp-1) 0 var(--sp-1)}
 .proc .pbar{height:2px;background:var(--hairline);overflow:hidden;margin:18px auto 14px;max-width:280px}
 .proc .pbar i{display:block;height:100%;width:0;background:var(--accent-strong);transition:width .5s var(--ease)}
 .proc .preassure{font-size:13.5px;color:var(--muted);max-width:360px;margin:0 auto;line-height:1.55}
@@ -677,6 +700,45 @@ button.doc-card:hover{border-color:var(--accent-strong)}
 /* Некликабельная пластина не должна «нажиматься» на таче */
 @media(hover:none){.slide.still:active{transform:none}}
 
+/* ── Шлифовка интерфейса: иерархия действий, меню, тумблеры ───────────── */
+
+/* Главная: одно первичное действие, остальное — тише */
+.task.hero.primary-task{border-color:var(--accent-strong);box-shadow:var(--plate-shadow)}
+.task-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px}
+.task.secondary{padding:16px;gap:13px;background:var(--panel);align-items:flex-start}
+.task.secondary .ti{width:38px;height:38px;background:transparent;color:var(--accent-strong)}
+.task.secondary .ti .ic-svg{width:19px;height:19px}
+.task.secondary .tb h3{font-size:17px}
+.task.secondary .tb p{font-size:12.5px}
+@media(max-width:520px){.task-grid{grid-template-columns:1fr}}
+
+/* Топбар: «Как это работает» и профиль собраны в одно меню */
+.topmenu{position:relative;display:inline-flex}
+.iconbtn.on{border-color:var(--accent-strong);background:var(--accent-soft);color:var(--ink)}
+.topmenu-pop{position:absolute;top:calc(100% + 8px);right:0;z-index:40;min-width:212px;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);
+  box-shadow:var(--shadow);padding:6px;display:flex;flex-direction:column}
+.topmenu-pop button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  padding:10px 11px;background:none;border:none;color:var(--ink);font:inherit;font-size:14px;
+  cursor:pointer;border-radius:var(--r-sm)}
+.topmenu-pop button:hover:not(:disabled){background:var(--accent-soft)}
+.topmenu-pop button:disabled{color:var(--muted);cursor:default}
+.topmenu-pop .ic-svg{width:17px;height:17px;color:var(--accent-strong)}
+
+/* Настройки записи: тумблеры вместо текстовых ссылок */
+.setgroup-title{font-family:var(--serif);font-size:18px;font-weight:600;letter-spacing:-.02em;
+  margin-bottom:2px}
+.setrow .st{flex:1;min-width:0}
+.setrow .st b{display:block;font-size:14.5px;font-weight:500;margin-bottom:2px}
+.setrow .st p{margin:0;font-size:13px;color:var(--muted);line-height:1.45}
+.switch{position:relative;flex-shrink:0;width:46px;height:26px;padding:0;cursor:pointer;
+  border:1px solid var(--line);border-radius:999px;background:transparent;
+  transition:background var(--fast) var(--ease),border-color var(--fast) var(--ease)}
+.switch .knob{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:999px;
+  background:var(--muted);transition:transform var(--fast) var(--ease),background var(--fast) var(--ease)}
+.switch.on{background:var(--accent);border-color:transparent}
+.switch.on .knob{transform:translateX(20px);background:var(--paper)}
+
 /* ── Библиотека: папки ───────────────────────────────────────────────── */
 .folder-label{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .folder-tools{display:inline-flex;gap:12px;margin-left:auto}
@@ -688,3 +750,13 @@ button.doc-card:hover{border-color:var(--accent-strong)}
 .doc-link:hover{text-decoration-color:var(--accent-strong)}
 .doc-move{flex-shrink:0;padding:9px 10px}
 .doc-move .ic-svg{width:16px;height:16px}
+
+/* ── Схемы ── */
+/* Мини-схема на пластине: тем же пером, что рамка серии, — полупрозрачный пергамент */
+.slide .th.th-diagram{color:rgba(229,216,193,.7)}
+.slide .th.th-diagram svg{width:78%;height:auto;position:relative}
+/* Строка «Схема: N шагов» в раскадровке — голосом служебной подписи, как «Образ» */
+.sb-diagram{margin:-2px 0 8px;font-size:11px;font-weight:500;text-transform:uppercase;
+  letter-spacing:.11em;color:var(--steel-text)}
+.sb-diagram-items{display:block;margin-top:3px;font-size:13px;font-weight:400;
+  text-transform:none;letter-spacing:0;color:var(--ink-2);line-height:1.5}

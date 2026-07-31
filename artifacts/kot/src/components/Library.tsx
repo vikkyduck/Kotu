@@ -319,9 +319,15 @@ export function Library() {
       {docs === null && <p className="lead dim">Открываю библиотеку…</p>}
 
       {empty && (
-        <p className="start-hint">
-          Пока пусто. Загрузите первую книгу — и лекции начнут опираться на неё.
-        </p>
+        <div className="emptybox">
+          <p className="start-hint">
+            Пока пусто. Загрузите первую книгу — и лекции начнут опираться на неё.
+          </p>
+          {/* Дублирует клик по дропзоне: с пустого экрана путь к действию должен быть очевиден */}
+          <button className="btn primary" onClick={() => fileInput.current?.click()}>
+            Выбрать файл <Icon name="arrow" />
+          </button>
+        </div>
       )}
 
       {docs !== null && (docs.length > 0 || folders.length > 0) && (

@@ -22,6 +22,12 @@ interface SlideContent {
   plate?: string;
 }
 
+/** Схема diagram-слайда, которую рисует код (контракт — lib/db, DiagramSpec). */
+interface DiagramSpec {
+  kind: 'flow' | 'pillars';
+  items: { label: string; sub?: string }[];
+}
+
 interface DeckSlide {
   id: number;
   ord: number;
@@ -32,6 +38,7 @@ interface DeckSlide {
   imageSide: 'left' | 'right';
   imageId: number | null;
   imageStatus: 'none' | 'queued' | 'drawing' | 'ready' | 'error';
+  diagramSpec: DiagramSpec | null;
 }
 
 interface DeckImage {
@@ -48,8 +55,15 @@ interface DeckFull {
   status: DeckStatus;
   statusMessage: string;
   error: string | null;
+  stylePackId: number | null;
   slides: DeckSlide[];
   images: DeckImage[];
+}
+
+/** Стилевой пакет из GET /style-packs — фронту нужны только id и имя. */
+interface StylePackItem {
+  id: number;
+  name: string;
 }
 
 interface LectureItem {
@@ -77,6 +91,48 @@ const STATUS_RU: Record<DeckStatus, string> = {
   error: 'ошибка',
 };
 
+/**
+ * Мини-схема на пластине готовой колоды: пиктограмма структуры без подписей —
+ * с плитки читается состав (сколько шагов и как они стоят), текст есть в
+ * раскадровке и в самом PPTX. stroke currentColor, чтобы схема писалась
+ * тем же пером, что рамка серии.
+ */
+function DiagramThumb({ spec }: { spec: DiagramSpec }) {
+  const pad = 18;
+  if (spec.kind === 'flow') {
+    const n = spec.items.length;
+    const gap = 11;
+    const h = (180 - pad * 2 - gap * (n - 1)) / n;
+    const w = 150;
+    const x = (320 - w) / 2;
+    return (
+      <svg viewBox="0 0 320 180" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+        {spec.items.map((_, i) => {
+          const y = pad + i * (h + gap);
+          return (
+            <g key={i}>
+              <rect x={x} y={y} width={w} height={h} />
+              {/* стрелка вниз: линия в просвете + шеврон на конце */}
+              {i < n - 1 && <path d={`M160 ${y + h + 2} v${gap - 5} m-4 -4 l4 4 l4 -4`} />}
+            </g>
+          );
+        })}
+      </svg>
+    );
+  }
+  // Колонны: как в экспорте, больше четырёх рядом не ставим.
+  const cols = spec.items.slice(0, 4);
+  const gap = 12;
+  const w = (320 - pad * 2 - gap * (cols.length - 1)) / cols.length;
+  return (
+    <svg viewBox="0 0 320 180" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      {cols.map((_, i) => (
+        <rect key={i} x={pad + i * (w + gap)} y={pad} width={w} height={180 - pad * 2} />
+      ))}
+    </svg>
+  );
+}
+
 export function Slides() {
   const { screen, go, toast, openSheet } = useApp();
   const [list, setList] = useState<DeckListItem[]>([]);
@@ -88,6 +144,11 @@ export function Slides() {
   const [pickedLecture, setPickedLecture] = useState<number | null>(null);
   const [rawText, setRawText] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Стиль серии: список доступных пакетов и явный выбор автора.
+  // null в pickedPack = «не выбирал», тогда действует первый из списка.
+  const [packs, setPacks] = useState<StylePackItem[]>([]);
+  const [pickedPack, setPickedPack] = useState<number | null>(null);
 
   // Сеть моргнула — показываем то, что уже есть; поллинг сам догонит.
   const loadList = useCallback(async () => {
@@ -102,6 +163,13 @@ export function Slides() {
       const res = await fetch('/api/lectures');
       if (res.ok) setLectures(((await res.json()) as LectureItem[]).filter((x) => x.status === 'ready'));
     } catch { /* тихо */ }
+  }, []);
+
+  const loadPacks = useCallback(async () => {
+    try {
+      const res = await fetch('/api/style-packs');
+      if (res.ok) setPacks(await res.json());
+    } catch { /* тихо: без списка стилей сервер сам возьмёт первый доступный */ }
   }, []);
 
   const loadOne = useCallback(async (id: number) => {
@@ -126,11 +194,17 @@ export function Slides() {
     if (creating) void loadLectures();
   }, [creating, loadLectures]);
 
+  // Список стилей нужен и форме создания (выбор), и открытой колоде (имя стиля).
+  useEffect(() => {
+    if (creating || openId !== null) void loadPacks();
+  }, [creating, openId, loadPacks]);
+
   useEffect(() => {
     if (screen !== 's-slides') {
       setOpenId(null);
       setCreating(false);
       setPickedLecture(null);
+      setPickedPack(null);
     }
   }, [screen]);
 
@@ -166,10 +240,15 @@ export function Slides() {
     }
     setBusy(true);
     try {
-      const body =
-        pickedLecture !== null
+      // Явный выбор либо первый из списка; список пуст (сеть моргнула) —
+      // поле не шлём, сервер возьмёт первый доступный сам.
+      const stylePackId = pickedPack ?? packs[0]?.id;
+      const body = {
+        ...(pickedLecture !== null
           ? { sourceKind: 'lecture', sourceId: pickedLecture }
-          : { sourceKind: 'raw', rawText: raw };
+          : { sourceKind: 'raw', rawText: raw }),
+        ...(stylePackId !== undefined ? { stylePackId } : {}),
+      };
       const res = await fetch('/api/decks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -179,6 +258,7 @@ export function Slides() {
         const created = await res.json();
         setRawText('');
         setPickedLecture(null);
+        setPickedPack(null);
         setCreating(false);
         await loadList();
         setOpenId(created.id);
@@ -289,6 +369,8 @@ export function Slides() {
   if (deck) {
     const working = deck.status === 'storyboarding' || deck.status === 'drawing';
     const briefCount = deck.slides.filter((s) => s.imageBrief !== null).length;
+    // Имя стиля серии — из списка пакетов; не нашли — строку не показываем.
+    const packName = packs.find((p) => p.id === deck.stylePackId)?.name;
 
     // Судьбу картинки решает последняя попытка. «Последняя» — по id, а не по
     // attempt: перерисовка начинает счёт попыток заново с 1.
@@ -313,10 +395,9 @@ export function Slides() {
         <h2 className="h2">{deck.title}</h2>
 
         {deck.status === 'error' && (
-          <>
-            <div className="wip-note">
-              <Icon name="info" /> {deck.error ?? 'Что-то пошло не так.'}
-            </div>
+          <div className="errblock">
+            <h3 className="errttl">Не получилось</h3>
+            <p className="errwhy">{deck.error ?? 'Что-то пошло не так.'}</p>
             <div className="btnrow">
               <button className="btn primary" style={{ flex: 1 }} disabled={busy} onClick={() => void retry()}>
                 {busy ? 'Запускаю…' : 'Попробовать ещё раз'}
@@ -325,7 +406,7 @@ export function Slides() {
                 <Icon name="trash" /> Удалить
               </button>
             </div>
-          </>
+          </div>
         )}
 
         {working && (
@@ -357,6 +438,18 @@ export function Slides() {
                 </div>
                 {(s.content.title || s.content.quote) && (
                   <h3 className="sb-title">{s.content.title || s.content.quote}</h3>
+                )}
+                {/* Схема — не образ: показываем состав, рисовать её будет код */}
+                {s.layout === 'diagram' && s.diagramSpec && (
+                  <div className="sb-diagram">
+                    Схема: {s.diagramSpec.items.length}{' '}
+                    {s.diagramSpec.items.length < 5 ? 'шага' : 'шагов'}
+                    <span className="sb-diagram-items">
+                      {s.diagramSpec.items
+                        .map((it) => it.label)
+                        .join(s.diagramSpec.kind === 'flow' ? ' → ' : ' · ')}
+                    </span>
+                  </div>
                 )}
                 {s.content.bullets && s.content.bullets.length > 0 && (
                   <ul className="sb-bullets">
@@ -398,7 +491,7 @@ export function Slides() {
                       </button>
                     </div>
                   </div>
-                ) : (
+                ) : s.layout !== 'diagram' ? (
                   <div className="sb-actions">
                     <button
                       className="btn ghost"
@@ -411,7 +504,7 @@ export function Slides() {
                       добавить образ
                     </button>
                   </div>
-                )}
+                ) : null}
               </div>
             ))}
             <div className="sb-total">Образов: {briefCount}</div>
@@ -430,6 +523,9 @@ export function Slides() {
                 <p>Слайдов: {deck.slides.length}. Можно скачать или доработать образы.</p>
               </div>
             </div>
+            {packName && (
+              <p className="doc-meta" style={{ marginBottom: 10 }}>Стиль: {packName}</p>
+            )}
             <p className="tnote">
               <Icon name="info" /> Не нравится образ — нажмите на слайд и скажите своими
               словами, что изменить.
@@ -459,6 +555,11 @@ export function Slides() {
                           alt={s.content.title || ''}
                         />
                         {doubted && <span className="tag-draft">стоит посмотреть</span>}
+                      </div>
+                    ) : s.layout === 'diagram' && s.diagramSpec ? (
+                      /* Схема на пластине — мини-SVG вместо текстовой заглушки */
+                      <div className={`th th-p${i % 4} th-diagram`}>
+                        <DiagramThumb spec={s.diagramSpec} />
                       </div>
                     ) : (
                       <div className={`th th-p${i % 4}`}>
@@ -542,6 +643,24 @@ export function Slides() {
             onChange={(e) => setRawText(e.target.value)}
             placeholder="Вставьте текст выступления — хотя бы пару абзацев."
           />
+
+          {/* Стиль серии показываем, только когда есть из чего выбирать */}
+          {packs.length > 1 && (
+            <>
+              <div className="fieldlbl">Стиль серии</div>
+              <div className="pills">
+                {packs.map((p) => (
+                  <span
+                    key={p.id}
+                    className={`pill-opt ${(pickedPack ?? packs[0].id) === p.id ? 'on' : ''}`}
+                    onClick={() => setPickedPack(p.id)}
+                  >
+                    {p.name}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         <button className="btn primary big" disabled={busy} onClick={() => void create()}>
