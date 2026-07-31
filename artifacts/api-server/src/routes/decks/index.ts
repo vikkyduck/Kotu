@@ -19,6 +19,7 @@ import {
 } from "@workspace/db";
 import { inArray, sql } from "drizzle-orm";
 import { enqueue } from "../../lib/jobs";
+import { ownFolderId } from "../../lib/folders";
 import { LIBRARY_DIR } from "../../lib/library-dir";
 import { buildDeckPptx } from "../../lib/pptx";
 import { buildDeckPdf } from "../../lib/pdf";
@@ -200,6 +201,32 @@ router.post("/decks", async (req, res): Promise<void> => {
   // Вставленный текст в базе не храним — он едет прямо в задачу.
   await enqueue("deck.storyboard", deck.id, rawText ? { rawText } : {});
   res.status(201).json(deck);
+});
+
+/** Переложить презентацию в папку библиотеки — как книгу или лекцию. */
+router.patch("/decks/:id", async (req, res): Promise<void> => {
+  const deck = await loadDeck(req.params.id, req.user!.id);
+  if (!deck) {
+    res.status(404).json({ message: "Презентация не найдена" });
+    return;
+  }
+
+  const body = req.body ?? {};
+  if ("folderId" in body) {
+    const folderId = await ownFolderId(body.folderId, req.user!.id);
+    if (folderId === undefined) {
+      res.status(404).json({ message: "Папка не найдена" });
+      return;
+    }
+    // Текстовая копия в поиске переезжает вместе с колодой: материал живёт
+    // в одном месте, а не расползается по двум папкам.
+    await db.update(decksTable).set({ folderId }).where(eq(decksTable.id, deck.id));
+    await db
+      .update(documentsTable)
+      .set({ folderId })
+      .where(eq(documentsTable.deckId, deck.id));
+  }
+  res.json({ ok: true });
 });
 
 /** Правка слайда автором — только пока конвейер не работает над колодой. */
@@ -614,6 +641,8 @@ router.post("/decks/:id/to-library", async (req, res): Promise<void> => {
       title: deck.title,
       kind: "deck",
       deckId: deck.id,
+      // Копия ложится в ту же папку, что и сама презентация.
+      folderId: deck.folderId,
       sourcePath: filePath,
       mime: "text/plain",
       status: "parsing",
@@ -662,6 +691,19 @@ router.delete("/decks/:id", async (req, res): Promise<void> => {
   await db
     .delete(jobsTable)
     .where(and(sql`${jobsTable.kind} LIKE 'deck.%'`, eq(jobsTable.entityId, deck.id)));
+  // Текстовая копия в поиске — часть той же презентации, а не отдельный
+  // документ: удаляем вместе, иначе в библиотеке остался бы призрак колоды,
+  // которую уже не открыть.
+  const [copy] = await db
+    .select({ id: documentsTable.id, sourcePath: documentsTable.sourcePath })
+    .from(documentsTable)
+    .where(eq(documentsTable.deckId, deck.id))
+    .limit(1);
+  if (copy) {
+    await db.delete(documentsTable).where(eq(documentsTable.id, copy.id));
+    await rm(copy.sourcePath, { force: true }).catch(() => {});
+  }
+
   // Сначала файлы, потом запись: осиротевшая папка хуже осиротевшей строки.
   await rm(path.join(DECKS_DIR, String(deck.id)), { recursive: true, force: true });
   await db.delete(decksTable).where(eq(decksTable.id, deck.id));

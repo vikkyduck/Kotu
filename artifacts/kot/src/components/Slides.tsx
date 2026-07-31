@@ -4,17 +4,10 @@ import { Icon } from '@/lib/icons';
 import { SlideViewer } from './SlideViewer';
 import {
   LAYOUT_RU,
-  type DeckStatus,
   type DeckFull,
   type DeckImage,
   type DiagramSpec,
 } from '@/lib/deck';
-
-interface DeckListItem {
-  id: number;
-  title: string;
-  status: DeckStatus;
-}
 
 /** Стилевой пакет из GET /style-packs — фронту нужны только id и имя. */
 interface StylePackItem {
@@ -41,14 +34,6 @@ const DOC_KIND_RU: Record<string, string> = {
   article: 'статья',
   note: 'заметка',
   transcript: 'расшифровка · имена скрыты',
-};
-
-const STATUS_RU: Record<DeckStatus, string> = {
-  storyboarding: 'Раскладываю по слайдам…',
-  storyboard_ready: 'раскадровка ждёт вашего решения',
-  drawing: 'рисую образы…',
-  ready: 'готова',
-  error: 'ошибка',
 };
 
 /**
@@ -94,11 +79,11 @@ function DiagramThumb({ spec }: { spec: DiagramSpec }) {
 }
 
 export function Slides() {
-  const { screen, go, toast, openSheet } = useApp();
-  const [list, setList] = useState<DeckListItem[]>([]);
+  // Какую колоду открыть, решает библиотека: инструмент — это действие,
+  // а список сделанного лежит там же, где книги и лекции.
+  const { screen, go, toast, openSheet, activeDeckId, openDeck } = useApp();
   const [lectures, setLectures] = useState<LectureItem[]>([]);
-  const [creating, setCreating] = useState(false);
-  const [openId, setOpenId] = useState<number | null>(null);
+  const openId = activeDeckId;
   const [deck, setDeck] = useState<DeckFull | null>(null);
   /** Какой слайд открыт крупно — индекс в колоде; null = просмотр закрыт. */
   const [openSlide, setOpenSlide] = useState<number | null>(null);
@@ -113,14 +98,6 @@ export function Slides() {
   // null в pickedPack = «не выбирал», тогда действует первый из списка.
   const [packs, setPacks] = useState<StylePackItem[]>([]);
   const [pickedPack, setPickedPack] = useState<number | null>(null);
-
-  // Сеть моргнула — показываем то, что уже есть; поллинг сам догонит.
-  const loadList = useCallback(async () => {
-    try {
-      const res = await fetch('/api/decks');
-      if (res.ok) setList(await res.json());
-    } catch { /* тихо */ }
-  }, []);
 
   const loadLectures = useCallback(async () => {
     try {
@@ -149,29 +126,25 @@ export function Slides() {
       } else if (res.status === 404) {
         // Колоду удалили в другой вкладке — не опрашивать же её вечно.
         toast('Презентация не найдена');
-        setOpenId(null);
+        go('s-home');
       }
     } catch { /* тихо: поллинг повторит */ }
-  }, [toast]);
+  }, [toast, go]);
+
+  // Форма новой презентации — то, что видно, когда ничего не открыто.
+  const creating = openId === null;
 
   useEffect(() => {
-    if (screen !== 's-slides') return;
-    void loadList();
-  }, [screen, loadList]);
-
-  useEffect(() => {
-    if (creating) void loadLectures();
-  }, [creating, loadLectures]);
+    if (screen === 's-slides' && creating) void loadLectures();
+  }, [screen, creating, loadLectures]);
 
   // Список стилей нужен и форме создания (выбор), и открытой колоде (имя стиля).
   useEffect(() => {
-    if (creating || openId !== null) void loadPacks();
-  }, [creating, openId, loadPacks]);
+    if (screen === 's-slides') void loadPacks();
+  }, [screen, loadPacks]);
 
   useEffect(() => {
     if (screen !== 's-slides') {
-      setOpenId(null);
-      setCreating(false);
       setPickedLecture(null);
       setPickedDoc(null);
       setPickedPack(null);
@@ -194,14 +167,6 @@ export function Slides() {
     const t = setInterval(() => void loadOne(openId), 3000);
     return () => clearInterval(t);
   }, [openId, deck, loadOne]);
-
-  // Список тоже живой: статусы «в работе» должны доехать до «готова» без перезагрузки.
-  useEffect(() => {
-    if (screen !== 's-slides' || openId !== null) return;
-    if (!list.some((d) => d.status === 'storyboarding' || d.status === 'drawing')) return;
-    const t = setInterval(() => void loadList(), 3000);
-    return () => clearInterval(t);
-  }, [screen, openId, list, loadList]);
 
   const create = async () => {
     const raw = rawText.trim();
@@ -232,9 +197,7 @@ export function Slides() {
         setRawText('');
         setPickedLecture(null);
         setPickedPack(null);
-        setCreating(false);
-        await loadList();
-        setOpenId(created.id);
+        openDeck(created.id);
       } else {
         const data = await res.json().catch(() => ({}));
         toast(data.message ?? 'Не удалось создать презентацию');
@@ -361,15 +324,14 @@ export function Slides() {
     }
   };
 
-  /** Удалить можно на любом этапе — в том числе прямо из списка. */
-  const removeDeck = async (id: number, ask = true) => {
-    if (ask && !window.confirm('Удалить презентацию? Вернуть её будет нельзя.')) return;
+  /** Удалить можно на любом этапе — ждать окончания работы незачем. */
+  const removeDeck = async (id: number) => {
+    if (!window.confirm('Удалить презентацию? Вернуть её будет нельзя.')) return;
     try {
       const res = await fetch(`/api/decks/${id}`, { method: 'DELETE' });
       if (res.ok) {
         toast('Презентация удалена');
-        if (openId === id) setOpenId(null);
-        await loadList();
+        if (openId === id) go('s-home');
       } else {
         const data = await res.json().catch(() => ({}));
         toast(data.message ?? 'Не удалось удалить');
@@ -399,14 +361,8 @@ export function Slides() {
 
     return (
       <section className="screen active" id="s-slides">
-        <button
-          className="btn ghost back-link"
-          onClick={() => {
-            setOpenId(null);
-            void loadList();
-          }}
-        >
-          <Icon name="back" /> К списку презентаций
+        <button className="btn ghost back-link" onClick={() => go('s-home')}>
+          <Icon name="back" /> В библиотеку
         </button>
 
         <h2 className="h2">{deck.title}</h2>
@@ -644,14 +600,13 @@ export function Slides() {
   }
 
   // ── Новая презентация ───────────────────────────────────────────────────
-  if (creating) {
-    return (
-      <section className="screen active" id="s-slides">
-        <button className="btn ghost back-link" onClick={() => setCreating(false)}>
-          <Icon name="back" /> К списку презентаций
+  return (
+    <section className="screen active" id="s-slides">
+        <button className="btn ghost back-link" onClick={() => go('s-home')}>
+          <Icon name="back" /> В библиотеку
         </button>
 
-        <h2 className="h2">Новая презентация</h2>
+        <h2 className="h2">Собрать презентацию</h2>
         <p className="sub">
           Возьму за основу готовую лекцию, документ из библиотеки — или текст, который вставите.
         </p>
@@ -744,60 +699,6 @@ export function Slides() {
         <button className="btn primary big" disabled={busy} onClick={() => void create()}>
           {busy ? 'Начинаю…' : 'Разложить по слайдам'} <Icon name="arrow" />
         </button>
-      </section>
-    );
-  }
-
-  // ── Список ──────────────────────────────────────────────────────────────
-  return (
-    <section className="screen active" id="s-slides">
-      <button className="btn ghost back-link" onClick={() => go('s-home')}>
-        <Icon name="back" /> Назад
-      </button>
-
-      <h2 className="h2">Собрать презентацию</h2>
-      <p className="sub">
-        Из лекции или текста выступления — слайды с образами в едином стиле серии.
-      </p>
-
-      {list.length > 0 && (
-        <div className="doc-list" style={{ marginBottom: 22 }}>
-          {list.map((d) => (
-            <div key={d.id} className="doc-card lec-item deck-row" onClick={() => setOpenId(d.id)}>
-              <span className="doc-ico"><Icon name="deck" /></span>
-              <div className="doc-body">
-                <b className="doc-title">{d.title}</b>
-                <span
-                  className={`doc-meta ${
-                    d.status === 'storyboarding' || d.status === 'drawing'
-                      ? 'busy'
-                      : d.status === 'error'
-                        ? 'bad'
-                        : ''
-                  }`}
-                >
-                  {STATUS_RU[d.status]}
-                </span>
-              </div>
-              <button
-                className="btn ghost doc-del"
-                title="Удалить презентацию"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void removeDeck(d.id);
-                }}
-              >
-                <Icon name="trash" />
-              </button>
-              <span className="chev"><Icon name="chevron" /></span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <button className="btn primary big" onClick={() => setCreating(true)}>
-        Новая презентация <Icon name="arrow" />
-      </button>
     </section>
   );
 }

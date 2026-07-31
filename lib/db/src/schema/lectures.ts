@@ -40,6 +40,11 @@ export const lecturesTable = pgTable("lectures", {
     .notNull()
     .references(() => usersTable.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
+  /**
+   * Папка библиотеки. Библиотека — главная папка всей работы, а не полка для
+   * одних лишь книг: лекция лежит рядом с материалом, из которого сделана.
+   */
+  folderId: integer("folder_id"),
   brief: jsonb("brief").$type<LectureBrief>().notNull(),
   plan: jsonb("plan").$type<PlannedSection[]>(),
   /**

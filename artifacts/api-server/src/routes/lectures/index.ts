@@ -9,6 +9,7 @@ import {
   type PlannedSection,
 } from "@workspace/db";
 import { enqueue } from "../../lib/jobs";
+import { ownFolderId } from "../../lib/folders";
 
 const router: IRouter = Router();
 
@@ -51,6 +52,33 @@ router.get("/lectures/:id", async (req, res): Promise<void> => {
     return;
   }
   res.json(full);
+});
+
+/** Переложить лекцию в папку библиотеки — она такой же житель, как книга. */
+router.patch("/lectures/:id", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  const [lecture] = Number.isInteger(id)
+    ? await db
+        .select({ id: lecturesTable.id })
+        .from(lecturesTable)
+        .where(and(eq(lecturesTable.id, id), eq(lecturesTable.ownerId, req.user!.id)))
+        .limit(1)
+    : [];
+  if (!lecture) {
+    res.status(404).json({ message: "Лекция не найдена" });
+    return;
+  }
+
+  const body = req.body ?? {};
+  if ("folderId" in body) {
+    const folderId = await ownFolderId(body.folderId, req.user!.id);
+    if (folderId === undefined) {
+      res.status(404).json({ message: "Папка не найдена" });
+      return;
+    }
+    await db.update(lecturesTable).set({ folderId }).where(eq(lecturesTable.id, lecture.id));
+  }
+  res.json({ ok: true });
 });
 
 router.post("/lectures", async (req, res): Promise<void> => {

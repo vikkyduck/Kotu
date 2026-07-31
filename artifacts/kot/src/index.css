@@ -987,3 +987,44 @@ input.field,textarea.topic,.sheet textarea{font-size:16px}
      На телефоне липкой её не делаем — там весь экран нужен полям. */
   .vw-stagewrap{position:sticky;top:0;z-index:2;background:var(--bg)}
 }
+
+/* ── Три инструмента над библиотекой ──────────────────────────────────────
+   Действия равны между собой: расшифровать, написать, собрать. Раньше одно
+   было героем во всю ширину, а два других — «другими инструментами» внизу,
+   хотя работа идёт всеми тремя. */
+.tools{display:grid;grid-template-columns:1fr;gap:10px;margin:0 0 var(--sp-3)}
+.tool{display:grid;grid-template-columns:auto 1fr;grid-template-areas:"ic ttl" "ic sub";
+  gap:2px 14px;align-items:center;width:100%;text-align:left;cursor:pointer;
+  padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-md);
+  background:var(--panel);color:var(--ink);transition:border-color .16s var(--ease),
+  box-shadow .16s var(--ease),transform .16s var(--ease)}
+.tool:hover{border-color:var(--accent-strong);box-shadow:var(--plate-shadow);
+  transform:translate(-2px,-2px)}
+.tool-ic{grid-area:ic;width:42px;height:42px;border:1px solid var(--line);
+  background:var(--accent-soft);color:var(--accent-strong);display:grid;place-items:center;
+  border-radius:var(--r-sm)}
+.tool-ic .ic-svg{width:20px;height:20px}
+.tool b{grid-area:ttl;font-family:var(--serif);font-size:18px;font-weight:600;
+  letter-spacing:-.02em;align-self:end}
+.tool span:last-child{grid-area:sub;font-size:13px;color:var(--muted);align-self:start}
+@media(min-width:620px){
+  .tools{grid-template-columns:repeat(3,1fr)}
+  .tool{grid-template-columns:1fr;grid-template-areas:"ic" "ttl" "sub";gap:8px 0;
+    align-items:start;padding:16px}
+  .tool b,.tool span:last-child{align-self:auto}
+}
+
+/* Заголовок библиотеки с действиями в одну строку */
+.lib-head{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;margin-bottom:var(--sp-1)}
+.lib-head .h2{margin:0;flex:1;min-width:0}
+.lib-head .chg{font-size:13px;white-space:nowrap}
+
+/* Полоса «сейчас в работе»: те же карточки, но без грипа и корзины —
+   работу нельзя разложить по папкам, пока она не закончена */
+.work-list{margin-bottom:var(--sp-3)}
+.work-list .doc-card{cursor:default}
+.work-list .doc-ico{color:var(--accent-strong);border-color:var(--accent-strong)}
+/* Длинное название карточки — максимум две строки: список читается как список,
+   а не как абзацы. Целиком имя видно в подсказке и на экране самой работы. */
+.doc-title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden}

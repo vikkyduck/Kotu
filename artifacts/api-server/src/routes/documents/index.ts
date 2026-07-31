@@ -6,6 +6,7 @@ import { mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { db, documentsTable, docChunksTable, foldersTable } from "@workspace/db";
 import { enqueue } from "../../lib/jobs";
+import { ownFolderId } from "../../lib/folders";
 import { decodeUploadName } from "../../lib/filename";
 
 // Книги бывают толстыми, но не гигабайтными.
@@ -111,23 +112,12 @@ router.patch("/documents/:id", async (req, res): Promise<void> => {
   const patch: Partial<typeof documentsTable.$inferInsert> = {};
 
   if ("folderId" in body) {
-    if (body.folderId === null) {
-      patch.folderId = null;
-    } else {
-      const folderId = Number(body.folderId);
-      const [folder] = Number.isInteger(folderId)
-        ? await db
-            .select({ id: foldersTable.id })
-            .from(foldersTable)
-            .where(and(eq(foldersTable.id, folderId), eq(foldersTable.ownerId, req.user!.id)))
-            .limit(1)
-        : [];
-      if (!folder) {
-        res.status(404).json({ message: "Папка не найдена" });
-        return;
-      }
-      patch.folderId = folder.id;
+    const folderId = await ownFolderId(body.folderId, req.user!.id);
+    if (folderId === undefined) {
+      res.status(404).json({ message: "Папка не найдена" });
+      return;
     }
+    patch.folderId = folderId;
   }
   if (typeof body.title === "string" && body.title.trim() !== "") {
     // У библиотечной копии расшифровки имя нейтральное и своё: правка здесь
