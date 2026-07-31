@@ -9,6 +9,7 @@ import type {
   SlideContent,
   DiagramSpec,
 } from "@workspace/db";
+import { SLIDE_SPEC, SLIDE_TYPE as T, SHEET } from "@workspace/db/slides";
 
 /**
  * Сборка PPTX по утверждённой раскадровке. Макеты — раздел 9 брендбука
@@ -18,8 +19,10 @@ import type {
 
 const PAGE_W = 13.333;
 const PAGE_H = 7.5;
+/** Пункты общей таблицы → дюймы PowerPoint. */
+const inch = (pt: number): number => pt / 72;
 /** Музейное поле по краям: текст не прижимается к обрезу листа. */
-const MARGIN = 0.85;
+const MARGIN = inch(SLIDE_SPEC.margin);
 
 /**
  * Палитра пакета может прийти неполной — фолбэки из брендбука (раздел 2),
@@ -88,7 +91,7 @@ function addFolio(out: PptxGenJS.Slide, st: Style, idx: number): void {
     w: 2,
     h: 0.35,
     fontFace: st.body,
-    fontSize: 11,
+    fontSize: T.folio,
     color: st.color("museumIndigo"),
     charSpacing: 2,
   });
@@ -105,7 +108,7 @@ function addCover(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
   out.background = { color: st.color("archiveBlack") };
 
   // Брендбук: текст слева 42%, образ справа 58%.
-  const imgW = PAGE_W * 0.58;
+  const imgW = PAGE_W * SLIDE_SPEC.imageShare.cover;
   if (img) addPlateImage(out, img, PAGE_W - imgW, imgW);
   const textW = img ? PAGE_W - imgW - MARGIN - 0.35 : PAGE_W - MARGIN * 2;
 
@@ -116,7 +119,7 @@ function addCover(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
       w: textW,
       h: 0.4,
       fontFace: st.body,
-      fontSize: 12,
+      fontSize: T.coverEyebrow,
       charSpacing: 2.5,
       color: lighten(st.color("burntUmber"), 0.3),
     });
@@ -127,7 +130,7 @@ function addCover(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
     w: textW,
     h: 2.7,
     fontFace: st.display,
-    fontSize: 44,
+    fontSize: T.coverTitle,
     color: VELLUM,
     valign: "top",
     lineSpacingMultiple: 1.05,
@@ -139,7 +142,7 @@ function addCover(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
       w: textW,
       h: 0.9,
       fontFace: st.body,
-      fontSize: 16,
+      fontSize: T.coverSubtitle,
       color: st.color("deepSepia"),
       valign: "top",
     });
@@ -151,7 +154,7 @@ function addDivider(out: PptxGenJS.Slide, c: SlideContent, img: string | null, s
   out.background = { color: st.color("deepIndigo") };
 
   // Образ — узкий край архивной пластины; 60–70% листа остаются воздухом.
-  const imgW = PAGE_W * 0.3;
+  const imgW = PAGE_W * SLIDE_SPEC.imageShare.divider;
   if (img) addPlateImage(out, img, PAGE_W - imgW, imgW);
 
   const runs: PptxGenJS.TextProps[] = [];
@@ -160,7 +163,7 @@ function addDivider(out: PptxGenJS.Slide, c: SlideContent, img: string | null, s
       text: c.eyebrow.toUpperCase(),
       options: {
         fontFace: st.body,
-        fontSize: 13,
+        fontSize: T.dividerEyebrow,
         charSpacing: 2.5,
         color: lighten(st.color("burntUmber"), 0.3),
         breakLine: true,
@@ -170,7 +173,7 @@ function addDivider(out: PptxGenJS.Slide, c: SlideContent, img: string | null, s
   }
   runs.push({
     text: c.title ?? "",
-    options: { fontFace: st.display, fontSize: 48, color: VELLUM, lineSpacingMultiple: 1.05 },
+    options: { fontFace: st.display, fontSize: T.dividerTitle, color: VELLUM, lineSpacingMultiple: 1.05 },
   });
   // Один текстовый блок на всю высоту: имя части само встаёт по центру вертикали.
   out.addText(runs, {
@@ -185,7 +188,7 @@ function addDivider(out: PptxGenJS.Slide, c: SlideContent, img: string | null, s
 function addTheory(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st: Style, side: "left" | "right"): void {
   out.background = { color: st.color("archiveBlack") };
 
-  const imgW = PAGE_W * 0.45;
+  const imgW = PAGE_W * SLIDE_SPEC.imageShare.theory;
   const imgX = side === "left" ? 0 : PAGE_W - imgW;
   if (img) addPlateImage(out, img, imgX, imgW);
 
@@ -199,7 +202,7 @@ function addTheory(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st
     w: textW,
     h: 1.35,
     fontFace: st.display,
-    fontSize: 34,
+    fontSize: T.theoryTitle,
     color: VELLUM,
     valign: "top",
     lineSpacingMultiple: 1.05,
@@ -217,7 +220,7 @@ function addTheory(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st
       w: textW,
       h: 3.7,
       fontFace: st.body,
-      fontSize: 19,
+      fontSize: T.bullets,
       color: VELLUM,
       valign: "top",
       lineSpacingMultiple: 1.1,
@@ -232,7 +235,7 @@ function addTheory(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st
       w: textW,
       h: 1.0,
       fontFace: st.body,
-      fontSize: 16,
+      fontSize: T.question,
       color: st.color("burntUmber"),
       valign: "top",
     });
@@ -246,7 +249,7 @@ function addTheory(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st
       w: imgW - 0.6,
       h: 0.32,
       fontFace: st.body,
-      fontSize: 11,
+      fontSize: T.plate,
       charSpacing: 2,
       color: VELLUM,
       transparency: 25,
@@ -259,7 +262,7 @@ function addQuote(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
   // Бумажная пластина: светлый фон, текст тушью.
   out.background = { color: st.color("agedPaper") };
 
-  const imgW = PAGE_W * 0.4;
+  const imgW = PAGE_W * SLIDE_SPEC.imageShare.quote;
   if (img) addPlateImage(out, img, side === "left" ? 0 : PAGE_W - imgW, imgW);
 
   // Текст — на противоположном от образа краю, с воздухом.
@@ -271,7 +274,7 @@ function addQuote(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
       text: c.quote ?? c.title ?? "",
       options: {
         fontFace: st.display,
-        fontSize: 34,
+        fontSize: T.quote,
         color: st.color("etchingInk"),
         lineSpacingMultiple: 1.15,
         breakLine: true,
@@ -282,7 +285,7 @@ function addQuote(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
   if (c.attribution) {
     runs.push({
       text: c.attribution,
-      options: { fontFace: st.body, fontSize: 13, color: st.color("etchingInk"), transparency: 40 },
+      options: { fontFace: st.body, fontSize: T.attribution, color: st.color("etchingInk"), transparency: 40 },
     });
   }
   out.addText(runs, { x: textX, y: 0.9, w: textW, h: PAGE_H - 1.8, valign: "middle" });
@@ -292,7 +295,7 @@ function addClinical(out: PptxGenJS.Slide, c: SlideContent, img: string | null, 
   out.background = { color: st.color("agedPaper") };
   const ink = st.color("etchingInk");
 
-  const imgW = PAGE_W * 0.4;
+  const imgW = PAGE_W * SLIDE_SPEC.imageShare.clinical;
   if (img) addPlateImage(out, img, side === "left" ? 0 : PAGE_W - imgW, imgW);
 
   const textX = img && side === "left" ? imgW + 0.55 : MARGIN;
@@ -305,7 +308,7 @@ function addClinical(out: PptxGenJS.Slide, c: SlideContent, img: string | null, 
     w: textW,
     h: 1.1,
     fontFace: st.display,
-    fontSize: 28,
+    fontSize: T.clinicalTitle,
     color: ink,
     valign: "top",
   });
@@ -322,7 +325,7 @@ function addClinical(out: PptxGenJS.Slide, c: SlideContent, img: string | null, 
       w: textW,
       h: 3.9,
       fontFace: st.body,
-      fontSize: 18,
+      fontSize: T.clinicalBody,
       color: ink,
       valign: "top",
       lineSpacingMultiple: 1.15,
@@ -337,7 +340,7 @@ function addClinical(out: PptxGenJS.Slide, c: SlideContent, img: string | null, 
       w: textW,
       h: 1.0,
       fontFace: st.body,
-      fontSize: 16,
+      fontSize: T.question,
       color: st.color("burntUmber"),
       valign: "top",
     });
@@ -348,7 +351,7 @@ function addComparison(out: PptxGenJS.Slide, c: SlideContent, img: string | null
   out.background = { color: st.color("archiveBlack") };
 
   // Общая гравюра — полосой сверху, обе колонки остаются под одним образом.
-  const imgH = PAGE_H * 0.38;
+  const imgH = PAGE_H * SLIDE_SPEC.comparisonBand;
   if (img) {
     out.addImage({ path: img, x: 0, y: 0, w: PAGE_W, h: imgH, sizing: { type: "cover", w: PAGE_W, h: imgH } });
   }
@@ -360,7 +363,7 @@ function addComparison(out: PptxGenJS.Slide, c: SlideContent, img: string | null
     w: PAGE_W - MARGIN * 2,
     h: 0.8,
     fontFace: st.display,
-    fontSize: 30,
+    fontSize: T.comparisonTitle,
     color: VELLUM,
     valign: "top",
   });
@@ -374,11 +377,11 @@ function addComparison(out: PptxGenJS.Slide, c: SlideContent, img: string | null
     const runs: PptxGenJS.TextProps[] = [
       {
         text: card.title,
-        options: { fontFace: st.display, fontSize: 22, color: VELLUM, breakLine: true, paraSpaceAfter: 8 },
+        options: { fontFace: st.display, fontSize: T.cardTitle, color: VELLUM, breakLine: true, paraSpaceAfter: 8 },
       },
       {
         text: card.body,
-        options: { fontFace: st.body, fontSize: 16, color: st.color("deepSepia"), lineSpacingMultiple: 1.15 },
+        options: { fontFace: st.body, fontSize: T.cardBody, color: st.color("deepSepia"), lineSpacingMultiple: 1.15 },
       },
     ];
     out.addText(runs, {
@@ -408,7 +411,7 @@ function addFinal(out: PptxGenJS.Slide, c: SlideContent, st: Style, idx: number)
   const runs: PptxGenJS.TextProps[] = [
     {
       text: c.title ?? c.quote ?? c.subtitle ?? "",
-      options: { fontFace: st.display, fontSize: 36, color: VELLUM, lineSpacingMultiple: 1.1 },
+      options: { fontFace: st.display, fontSize: T.finalTitle, color: VELLUM, lineSpacingMultiple: 1.1 },
     },
   ];
   if (c.subtitle && c.title) {
@@ -416,7 +419,7 @@ function addFinal(out: PptxGenJS.Slide, c: SlideContent, st: Style, idx: number)
     runs[0]!.options!.paraSpaceAfter = 18;
     runs.push({
       text: c.subtitle,
-      options: { fontFace: st.body, fontSize: 16, color: st.color("deepSepia") },
+      options: { fontFace: st.body, fontSize: T.finalSubtitle, color: st.color("deepSepia") },
     });
   }
   out.addText(runs, { x: MARGIN, y: 0, w: 9.8, h: PAGE_H, valign: "middle" });
@@ -439,7 +442,7 @@ function addDiagram(out: PptxGenJS.Slide, c: SlideContent, spec: DiagramSpec, st
     w: PAGE_W - MARGIN * 2,
     h: 1.1,
     fontFace: st.display,
-    fontSize: 34,
+    fontSize: T.diagramTitle,
     color: VELLUM,
     valign: "top",
     lineSpacingMultiple: 1.05,
@@ -463,14 +466,14 @@ function addDiagram(out: PptxGenJS.Slide, c: SlideContent, spec: DiagramSpec, st
     spec.items.forEach((it, i) => {
       out.addShape("rect", { x, y, w: boxW, h: boxH, fill, line: border });
       const runs: PptxGenJS.TextProps[] = [
-        { text: it.label, options: { fontFace: st.display, fontSize: 20, color: VELLUM } },
+        { text: it.label, options: { fontFace: st.display, fontSize: T.nodeLabel, color: VELLUM } },
       ];
       if (it.sub) {
         runs[0]!.options!.breakLine = true;
         runs[0]!.options!.paraSpaceAfter = 4;
         runs.push({
           text: it.sub,
-          options: { fontFace: st.body, fontSize: 12, color: st.color("deepSepia") },
+          options: { fontFace: st.body, fontSize: T.nodeSub, color: st.color("deepSepia") },
         });
       }
       out.addText(runs, { x: x + 0.25, y, w: boxW - 0.5, h: boxH, valign: "middle", align: "center" });
@@ -501,13 +504,13 @@ function addDiagram(out: PptxGenJS.Slide, c: SlideContent, spec: DiagramSpec, st
     const runs: PptxGenJS.TextProps[] = [
       {
         text: it.label,
-        options: { fontFace: st.display, fontSize: 20, color: VELLUM, breakLine: true, paraSpaceAfter: 8 },
+        options: { fontFace: st.display, fontSize: T.nodeLabel, color: VELLUM, breakLine: true, paraSpaceAfter: 8 },
       },
     ];
     if (it.sub) {
       runs.push({
         text: it.sub,
-        options: { fontFace: st.body, fontSize: 12, color: st.color("deepSepia"), lineSpacingMultiple: 1.2 },
+        options: { fontFace: st.body, fontSize: T.nodeSub, color: st.color("deepSepia"), lineSpacingMultiple: 1.2 },
       });
     }
     out.addText(runs, {

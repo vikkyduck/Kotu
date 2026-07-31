@@ -14,21 +14,11 @@ import {
   type ImageSide,
   type DiagramSpec,
 } from "@workspace/db";
+import { SLIDE_LAYOUTS } from "@workspace/db/slides";
 import { askJson } from "../claude";
 import { sanitizeSlideContent } from "../slide-content";
 import { registerHandler } from "../jobs";
 import { logger } from "../logger";
-
-const LAYOUTS: SlideLayout[] = [
-  "cover",
-  "divider",
-  "theory",
-  "quote",
-  "clinical",
-  "comparison",
-  "final",
-  "diagram",
-];
 
 interface StoryboardSlide {
   layout: string;
@@ -143,7 +133,7 @@ async function run(job: Job): Promise<void> {
     "",
     // Порядок из брендбука: сперва функция слайда, из неё — композиция.
     // Поэтому в layout идёт задача, а не вёрстка.
-    `— Сначала определи ФУНКЦИЮ слайда. Только из списка: ${LAYOUTS.join(", ")}.`,
+    `— Сначала определи ФУНКЦИЮ слайда. Только из списка: ${SLIDE_LAYOUTS.join(", ")}.`,
     "  cover — обложка, divider — разделитель части, theory — теория (тезис и 3–5 пунктов),",
     "  quote — цитата до 35 слов, clinical — клинический фрагмент (случай, сцена, материал),",
     "  comparison — сопоставление двух понятий, final — финальный, diagram — структура/схема.",
@@ -185,7 +175,7 @@ async function run(job: Job): Promise<void> {
   await db.delete(deckSlidesTable).where(eq(deckSlidesTable.deckId, id));
   await db.insert(deckSlidesTable).values(
     slides.map((s, i) => {
-      const layout: SlideLayout = LAYOUTS.includes(s.layout as SlideLayout)
+      const layout: SlideLayout = SLIDE_LAYOUTS.includes(s.layout as SlideLayout)
         ? (s.layout as SlideLayout)
         : "theory";
       const brief = typeof s.imageBrief === "string" && s.imageBrief.trim() !== ""

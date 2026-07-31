@@ -4,7 +4,7 @@ import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
 import { Icon } from '@/lib/icons';
 import { SlideViewer } from './SlideViewer';
 import {
-  LAYOUT_RU,
+  layoutName,
   type DeckFull,
   type DeckImage,
   type DiagramSpec,
@@ -450,7 +450,7 @@ export function Slides() {
             {deck.slides.map((s, i) => (
               <div key={s.id} className="panel sb-slide">
                 <div className="sb-num">
-                  {String(i + 1).padStart(2, '0')} · {LAYOUT_RU[s.layout] ?? s.layout}
+                  {String(i + 1).padStart(2, '0')} · {layoutName(s.layout)}
                   <button className="sb-open" onClick={() => setOpenSlide(i)}>
                     <Icon name="eye" /> открыть слайд
                   </button>
@@ -572,7 +572,7 @@ export function Slides() {
                     ) : (
                       <div className={`th th-p${i % 4}`}>
                         <span className="st">
-                          {s.content.title || s.content.quote || LAYOUT_RU[s.layout] || s.layout}
+                          {s.content.title || s.content.quote || layoutName(s.layout)}
                         </span>
                       </div>
                     )}
@@ -582,7 +582,7 @@ export function Slides() {
                       ) : canRedraw ? (
                         <><Icon name="eye" /> открыть и изменить</>
                       ) : (
-                        <><Icon name="eye" /> {LAYOUT_RU[s.layout] ?? s.layout}</>
+                        <><Icon name="eye" /> {layoutName(s.layout)}</>
                       )}
                     </div>
                   </div>

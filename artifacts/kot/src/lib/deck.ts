@@ -1,3 +1,5 @@
+import { SLIDE_LAYOUTS, LAYOUT_RU } from '@workspace/db/slides';
+
 /**
  * Форма презентации на фронте — общая для списка слайдов и для просмотра
  * слайда крупно. Вынесена из Slides.tsx, чтобы два экрана описывали колоду
@@ -58,18 +60,18 @@ export interface DeckFull {
   images: DeckImage[];
 }
 
-export const LAYOUT_RU: Record<string, string> = {
-  cover: 'Обложка',
-  divider: 'Разделитель',
-  theory: 'Теория',
-  quote: 'Цитата',
-  clinical: 'Клинический фрагмент',
-  comparison: 'Сопоставление',
-  final: 'Финал',
-  diagram: 'Схема',
-};
+// Названия и порядок макетов — из общей таблицы: тот же список, по которому
+// собираются PPTX и PDF. Иначе в браузере появлялся бы макет, которого нет
+// в выгрузке (или наоборот).
+export { LAYOUT_RU } from '@workspace/db/slides';
+export const LAYOUTS: readonly string[] = SLIDE_LAYOUTS;
 
-export const LAYOUTS = Object.keys(LAYOUT_RU);
+/**
+ * Название макета для показа. Слайд приходит с сервера строкой, а таблица
+ * знает ровно восемь макетов — незнакомый показываем как есть, вместо пустоты.
+ */
+export const layoutName = (layout: string): string =>
+  (LAYOUT_RU as Record<string, string>)[layout] ?? layout;
 
 /**
  * Какие поля осмысленны на каком макете. Тот же список, что у модели в

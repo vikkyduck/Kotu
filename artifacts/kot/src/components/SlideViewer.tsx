@@ -6,7 +6,7 @@ import {
   FIELDS_BY_LAYOUT,
   FIELD_RU,
   LAYOUTS,
-  LAYOUT_RU,
+  layoutName,
   type DeckFull,
   type DeckSlide,
   type SlideContent,
@@ -274,7 +274,7 @@ export function SlideViewer({
           <Icon name="x" />
         </button>
         <span className="vw-count">
-          Слайд {index + 1} из {deck.slides.length} · {LAYOUT_RU[slide.layout] ?? slide.layout}
+          Слайд {index + 1} из {deck.slides.length} · {layoutName(slide.layout)}
         </span>
         <div className="vw-nav">
           <button
@@ -364,7 +364,7 @@ export function SlideViewer({
             >
               {LAYOUTS.map((l) => (
                 <option key={l} value={l}>
-                  {LAYOUT_RU[l]}
+                  {layoutName(l)}
                 </option>
               ))}
             </select>
