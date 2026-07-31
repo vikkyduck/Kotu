@@ -142,12 +142,8 @@ html{scroll-behavior:smooth}
 .top .ttl{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:-.02em}
 .top .brand{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:-.02em;
   display:flex;align-items:center;gap:11px;cursor:pointer}
-/* Знак: ромб с горизонтальной осью — как в референсе */
-.top .brand .dot{width:26px;height:26px;border:1px solid var(--ink-2);transform:rotate(45deg);
-  display:grid;place-items:center;color:var(--accent-strong);position:relative;flex-shrink:0}
-.top .brand .dot::before{content:"";position:absolute;left:-8px;right:-8px;top:50%;height:1px;
-  background:var(--accent-strong);transform:rotate(-45deg)}
-.top .brand .dot .ic-svg{width:13px;height:13px;transform:rotate(-45deg)}
+/* Знак: кот вместо иконки-плашки */
+.brand-cat{width:27px;height:auto;color:var(--ink-2);flex-shrink:0}
 .top .sp{margin-left:auto}
 .iconbtn{width:40px;height:40px;border-radius:var(--r-sm);border:1px solid var(--line);
   background:transparent;color:var(--ink-2);display:grid;place-items:center;cursor:pointer;

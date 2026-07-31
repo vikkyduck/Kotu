@@ -1,4 +1,5 @@
 import { Icon } from '@/lib/icons';
+import { CatMark } from '@/lib/cat';
 import { useApp } from '@/hooks/use-app';
 
 const TITLES: Record<string, string> = {
@@ -24,7 +25,7 @@ export function TopBar() {
       
       {isHome && (
         <span className="brand" id="brand" onClick={() => go('s-home')}>
-          <span className="dot"><span data-icon="spark"><Icon name="spark" /></span></span> Рабочая среда
+          <CatMark className="brand-cat" /> текст и слайды
         </span>
       )}
       
