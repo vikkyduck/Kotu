@@ -49,7 +49,7 @@ export function TopBar() {
 
       {isHome && (
         <span className="brand" id="brand" onClick={() => go('s-home')}>
-          <CatMark className="brand-cat" /> текст и слайды
+          <CatMark className="brand-cat" /> Библиотека Кота
         </span>
       )}
 
