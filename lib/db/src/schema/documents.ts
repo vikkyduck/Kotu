@@ -80,7 +80,7 @@ export const docChunksTable = pgTable(
     page: integer("page"),
     heading: text("heading"),
     text: text("text").notNull(),
-    embedding: vector("embedding", { dimensions: 1536 }),
+    embedding: vector("embedding", { dimensions: 1024 }),
   },
   (t) => ({
     byDoc: index("doc_chunks_doc_idx").on(t.documentId, t.ord),
