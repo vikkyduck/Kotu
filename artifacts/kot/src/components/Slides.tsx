@@ -72,6 +72,14 @@ interface LectureItem {
   status: string;
 }
 
+/** Документ библиотеки — тоже законный источник презентации. */
+interface DocItem {
+  id: number;
+  title: string;
+  kind: string;
+  status: string;
+}
+
 const LAYOUT_RU: Record<string, string> = {
   cover: 'Обложка',
   divider: 'Разделитель',
@@ -81,6 +89,13 @@ const LAYOUT_RU: Record<string, string> = {
   comparison: 'Сопоставление',
   final: 'Финал',
   diagram: 'Схема',
+};
+
+const DOC_KIND_RU: Record<string, string> = {
+  book: 'книга',
+  article: 'статья',
+  note: 'заметка',
+  transcript: 'расшифровка · имена скрыты',
 };
 
 const STATUS_RU: Record<DeckStatus, string> = {
@@ -142,6 +157,8 @@ export function Slides() {
   const [deck, setDeck] = useState<DeckFull | null>(null);
 
   const [pickedLecture, setPickedLecture] = useState<number | null>(null);
+  const [docsList, setDocsList] = useState<DocItem[]>([]);
+  const [pickedDoc, setPickedDoc] = useState<number | null>(null);
   const [rawText, setRawText] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -160,8 +177,13 @@ export function Slides() {
 
   const loadLectures = useCallback(async () => {
     try {
-      const res = await fetch('/api/lectures');
-      if (res.ok) setLectures(((await res.json()) as LectureItem[]).filter((x) => x.status === 'ready'));
+      const [l, d] = await Promise.all([
+        fetch('/api/lectures').then((r) => (r.ok ? r.json() : null)),
+        fetch('/api/documents').then((r) => (r.ok ? r.json() : null)),
+      ]);
+      if (l) setLectures((l as LectureItem[]).filter((x) => x.status === 'ready'));
+      // Разобранный документ библиотеки — такой же материал, как лекция.
+      if (d) setDocsList((d as DocItem[]).filter((x) => x.status === 'ready'));
     } catch { /* тихо */ }
   }, []);
 
@@ -204,6 +226,7 @@ export function Slides() {
       setOpenId(null);
       setCreating(false);
       setPickedLecture(null);
+      setPickedDoc(null);
       setPickedPack(null);
     }
   }, [screen]);
@@ -234,8 +257,8 @@ export function Slides() {
 
   const create = async () => {
     const raw = rawText.trim();
-    if (pickedLecture === null && raw === '') {
-      toast('Выберите лекцию или вставьте текст выступления');
+    if (pickedLecture === null && pickedDoc === null && raw === '') {
+      toast('Выберите лекцию, документ из библиотеки или вставьте текст');
       return;
     }
     setBusy(true);
@@ -246,7 +269,9 @@ export function Slides() {
       const body = {
         ...(pickedLecture !== null
           ? { sourceKind: 'lecture', sourceId: pickedLecture }
-          : { sourceKind: 'raw', rawText: raw }),
+          : pickedDoc !== null
+            ? { sourceKind: 'document', sourceId: pickedDoc }
+            : { sourceKind: 'raw', rawText: raw }),
         ...(stylePackId !== undefined ? { stylePackId } : {}),
       };
       const res = await fetch('/api/decks', {
@@ -609,19 +634,24 @@ export function Slides() {
         </button>
 
         <h2 className="h2">Новая презентация</h2>
-        <p className="sub">Выберите готовую лекцию или вставьте текст выступления.</p>
+        <p className="sub">
+          Возьму за основу готовую лекцию, документ из библиотеки — или текст, который вставите.
+        </p>
 
         <div className="panel">
           <div className="fieldlbl">Из готовой лекции</div>
           {lectures.length === 0 ? (
-            <p className="doc-meta">Готовых лекций пока нет — можно вставить текст ниже.</p>
+            <p className="doc-meta">Готовых лекций пока нет.</p>
           ) : (
             <div className="resume" style={{ marginBottom: 6 }}>
               {lectures.map((l) => (
                 <div
                   key={l.id}
                   className="r sel-lec"
-                  onClick={() => setPickedLecture((p) => (p === l.id ? null : l.id))}
+                  onClick={() => {
+                    setPickedDoc(null);
+                    setPickedLecture((p) => (p === l.id ? null : l.id));
+                  }}
                 >
                   <span className="ri"><Icon name="pen" /></span>
                   <span className="rt">
@@ -629,6 +659,36 @@ export function Slides() {
                     <span>Лекция готова</span>
                   </span>
                   {pickedLecture === l.id && (
+                    <span className="chev sel-mark"><Icon name="check" /></span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Книга, статья или расшифровка — материал для слайдов не хуже лекции */}
+          <div className="fieldlbl">Из библиотеки</div>
+          {docsList.length === 0 ? (
+            <p className="doc-meta">В библиотеке пока нет разобранных документов.</p>
+          ) : (
+            <div className="resume" style={{ marginBottom: 6 }}>
+              {docsList.map((d) => (
+                <div
+                  key={d.id}
+                  className="r sel-lec"
+                  onClick={() => {
+                    setPickedLecture(null);
+                    setPickedDoc((p) => (p === d.id ? null : d.id));
+                  }}
+                >
+                  <span className="ri">
+                    <Icon name={d.kind === 'transcript' ? 'mic' : 'book'} />
+                  </span>
+                  <span className="rt">
+                    <b>{d.title}</b>
+                    <span>{DOC_KIND_RU[d.kind] ?? 'документ'}</span>
+                  </span>
+                  {pickedDoc === d.id && (
                     <span className="chev sel-mark"><Icon name="check" /></span>
                   )}
                 </div>
