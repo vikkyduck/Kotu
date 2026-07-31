@@ -8,6 +8,7 @@
  * текст здесь переносится по правилам браузера, в экспорте по правилам pdfkit.
  */
 import type { CSSProperties } from 'react';
+import { SLIDE_TYPE as T, SLIDE_SPEC, SHEET } from '@workspace/db/slides';
 
 export interface StageContent {
   eyebrow?: string;
@@ -56,8 +57,11 @@ function lighten(color: string, amount: number): string {
   return `#${rgb.toString(16).padStart(6, '0')}`;
 }
 
-/** Кегль из пунктов листа 960pt в доли ширины пластины. */
-const pt = (size: number) => `${(size / 960) * 100}cqw`;
+/** Кегль из пунктов общей таблицы в доли ширины пластины. */
+const pt = (size: number) => `${(size / SHEET.width) * 100}cqw`;
+
+/** Доля ширины под образ — из той же таблицы, что и выгрузка. */
+const share = (v: number) => `0 0 ${v * 100}%`;
 
 interface Props {
   slide: StageSlide;
@@ -79,7 +83,7 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
   const side = slide.imageSide;
 
   const folio = (
-    <span className="stg-folio" style={{ color: color('museumIndigo'), fontSize: pt(11) }}>
+    <span className="stg-folio" style={{ color: color('museumIndigo'), fontSize: pt(T.folio) }}>
       {String(index + 1).padStart(2, '0')}
     </span>
   );
@@ -97,21 +101,21 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
             {c.eyebrow && (
               <div
                 className="stg-eyebrow"
-                style={{ color: lighten(color('burntUmber'), 0.3), fontSize: pt(12) }}
+                style={{ color: lighten(color('burntUmber'), 0.3), fontSize: pt(T.coverEyebrow) }}
               >
                 {c.eyebrow}
               </div>
             )}
-            <div className="stg-display" style={{ color: VELLUM, fontSize: pt(44) }}>
+            <div className="stg-display" style={{ color: VELLUM, fontSize: pt(T.coverTitle) }}>
               {c.title}
             </div>
             {c.subtitle && (
-              <div className="stg-body" style={{ color: color('deepSepia'), fontSize: pt(16) }}>
+              <div className="stg-body" style={{ color: color('deepSepia'), fontSize: pt(T.coverSubtitle) }}>
                 {c.subtitle}
               </div>
             )}
           </div>
-          {img && <div className="stg-plate" style={{ flex: '0 0 58%' }}>{plate}</div>}
+          {img && <div className="stg-plate" style={{ flex: share(SLIDE_SPEC.imageShare.cover) }}>{plate}</div>}
         </div>
         {folio}
       </div>
@@ -127,16 +131,16 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
             {c.eyebrow && (
               <div
                 className="stg-eyebrow"
-                style={{ color: lighten(color('burntUmber'), 0.3), fontSize: pt(13) }}
+                style={{ color: lighten(color('burntUmber'), 0.3), fontSize: pt(T.dividerEyebrow) }}
               >
                 {c.eyebrow}
               </div>
             )}
-            <div className="stg-display" style={{ color: VELLUM, fontSize: pt(48) }}>
+            <div className="stg-display" style={{ color: VELLUM, fontSize: pt(T.dividerTitle) }}>
               {c.title}
             </div>
           </div>
-          {img && <div className="stg-plate" style={{ flex: '0 0 30%' }}>{plate}</div>}
+          {img && <div className="stg-plate" style={{ flex: share(SLIDE_SPEC.imageShare.divider) }}>{plate}</div>}
         </div>
       </div>
     );
@@ -150,20 +154,20 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
           <div className="stg-col stg-pad stg-mid stg-quote">
             <div
               className="stg-display"
-              style={{ color: color('etchingInk'), fontSize: pt(34), lineHeight: 1.15 }}
+              style={{ color: color('etchingInk'), fontSize: pt(T.quote), lineHeight: 1.15 }}
             >
               {c.quote ?? c.title}
             </div>
             {c.attribution && (
               <div
                 className="stg-body"
-                style={{ color: color('etchingInk'), opacity: 0.6, fontSize: pt(13) }}
+                style={{ color: color('etchingInk'), opacity: 0.6, fontSize: pt(T.attribution) }}
               >
                 {c.attribution}
               </div>
             )}
           </div>
-          {img && <div className="stg-plate" style={{ flex: '0 0 40%' }}>{plate}</div>}
+          {img && <div className="stg-plate" style={{ flex: share(SLIDE_SPEC.imageShare.quote) }}>{plate}</div>}
         </div>
       </div>
     );
@@ -177,23 +181,23 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
       <div className="stg" style={{ background: color('agedPaper') }}>
         <div className={`stg-row ${side === 'left' ? 'rev' : ''}`}>
           <div className="stg-col stg-pad">
-            <div className="stg-display" style={{ color: ink, fontSize: pt(28) }}>
+            <div className="stg-display" style={{ color: ink, fontSize: pt(T.clinicalTitle) }}>
               {c.title}
             </div>
             <div className="stg-flow">
               {paragraphs.map((p, i) => (
-                <p key={i} className="stg-body" style={{ color: ink, fontSize: pt(18) }}>
+                <p key={i} className="stg-body" style={{ color: ink, fontSize: pt(T.clinicalBody) }}>
                   {p}
                 </p>
               ))}
             </div>
             {c.question && (
-              <div className="stg-body" style={{ color: color('burntUmber'), fontSize: pt(16) }}>
+              <div className="stg-body" style={{ color: color('burntUmber'), fontSize: pt(T.question) }}>
                 {c.question}
               </div>
             )}
           </div>
-          {img && <div className="stg-plate" style={{ flex: '0 0 40%' }}>{plate}</div>}
+          {img && <div className="stg-plate" style={{ flex: share(SLIDE_SPEC.imageShare.clinical) }}>{plate}</div>}
         </div>
       </div>
     );
@@ -205,21 +209,21 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
     return (
       <div className="stg stg-vert" style={{ background: color('archiveBlack') }}>
         {img && (
-          <div className="stg-band" style={{ flex: '0 0 38%' }}>
+          <div className="stg-band" style={{ flex: share(SLIDE_SPEC.comparisonBand) }}>
             {plate}
           </div>
         )}
         <div className="stg-col stg-pad" style={{ flex: 1 }}>
-          <div className="stg-display" style={{ color: VELLUM, fontSize: pt(30) }}>
+          <div className="stg-display" style={{ color: VELLUM, fontSize: pt(T.comparisonTitle) }}>
             {c.title}
           </div>
           <div className="stg-cols" style={{ borderColor: SEAM }}>
             {cards.slice(0, 2).map((card, i) => (
               <div key={i} className="stg-cell">
-                <div className="stg-display" style={{ color: VELLUM, fontSize: pt(22) }}>
+                <div className="stg-display" style={{ color: VELLUM, fontSize: pt(T.cardTitle) }}>
                   {card.title}
                 </div>
-                <div className="stg-body" style={{ color: color('deepSepia'), fontSize: pt(16) }}>
+                <div className="stg-body" style={{ color: color('deepSepia'), fontSize: pt(T.cardBody) }}>
                   {card.body}
                 </div>
               </div>
@@ -237,12 +241,12 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
         <div className="stg-col stg-pad stg-mid" style={{ width: '82%' }}>
           <div
             className="stg-display"
-            style={{ color: VELLUM, fontSize: pt(36), lineHeight: 1.1 }}
+            style={{ color: VELLUM, fontSize: pt(T.finalTitle), lineHeight: 1.1 }}
           >
             {c.title ?? c.quote ?? c.subtitle}
           </div>
           {c.subtitle && c.title && (
-            <div className="stg-body" style={{ color: color('deepSepia'), fontSize: pt(16) }}>
+            <div className="stg-body" style={{ color: color('deepSepia'), fontSize: pt(T.finalSubtitle) }}>
               {c.subtitle}
             </div>
           )}
@@ -258,11 +262,11 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
     const line = color('museumIndigo');
     const node = (item: { label: string; sub?: string }, i: number) => (
       <div key={i} className="stg-node" style={{ background: panel, borderColor: line }}>
-        <div className="stg-body" style={{ color: VELLUM, fontSize: pt(17) }}>
+        <div className="stg-display" style={{ color: VELLUM, fontSize: pt(T.nodeLabel) }}>
           {item.label}
         </div>
         {item.sub && (
-          <div className="stg-body" style={{ color: color('deepSepia'), fontSize: pt(13) }}>
+          <div className="stg-body" style={{ color: color('deepSepia'), fontSize: pt(T.nodeSub) }}>
             {item.sub}
           </div>
         )}
@@ -271,7 +275,7 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
     return (
       <div className="stg stg-vert" style={{ background: color('archiveBlack') }}>
         <div className="stg-col stg-pad" style={{ flex: 1 }}>
-          <div className="stg-display" style={{ color: VELLUM, fontSize: pt(34) }}>
+          <div className="stg-display" style={{ color: VELLUM, fontSize: pt(T.theoryTitle) }}>
             {c.title}
           </div>
           {diagram.kind === 'flow' ? (
@@ -296,30 +300,30 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
   }
 
   /** Теория и всё остальное: тезис, пункты, рабочий вопрос. */
-  const plateCap: CSSProperties = { color: VELLUM, opacity: 0.75, fontSize: pt(11) };
+  const plateCap: CSSProperties = { color: VELLUM, opacity: 0.75, fontSize: pt(T.folio) };
   return (
     <div className="stg" style={{ background: color('archiveBlack') }}>
       <div className={`stg-row ${side === 'left' ? 'rev' : ''}`}>
         <div className="stg-col stg-pad">
-          <div className="stg-display" style={{ color: VELLUM, fontSize: pt(34) }}>
+          <div className="stg-display" style={{ color: VELLUM, fontSize: pt(T.theoryTitle) }}>
             {c.title}
           </div>
           <div className="stg-flow">
             {(c.bullets ?? []).map((b, i) => (
-              <div key={i} className="stg-bullet" style={{ color: VELLUM, fontSize: pt(19) }}>
+              <div key={i} className="stg-bullet" style={{ color: VELLUM, fontSize: pt(T.bullets) }}>
                 <span className="stg-dia">◇</span>
                 <span>{b}</span>
               </div>
             ))}
           </div>
           {c.question && (
-            <div className="stg-body" style={{ color: color('burntUmber'), fontSize: pt(16) }}>
+            <div className="stg-body" style={{ color: color('burntUmber'), fontSize: pt(T.question) }}>
               {c.question}
             </div>
           )}
         </div>
         {img && (
-          <div className="stg-plate" style={{ flex: '0 0 45%' }}>
+          <div className="stg-plate" style={{ flex: share(SLIDE_SPEC.imageShare.theory) }}>
             {plate}
             {c.plate && (
               <span className="stg-cap" style={plateCap}>

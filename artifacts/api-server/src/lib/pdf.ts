@@ -11,6 +11,7 @@ import type {
   SlideContent,
   DiagramSpec,
 } from "@workspace/db";
+import { SLIDE_SPEC, SLIDE_TYPE as T, SHEET } from "@workspace/db/slides";
 
 /**
  * PDF-раздатка по утверждённой колоде. Макеты повторяют lib/pptx.ts —
@@ -22,10 +23,10 @@ import type {
 
 /** Дюйм PPTX → пункт PDF: страница 960×540 pt = 13.333×7.5 in при 72 dpi. */
 const IN = 72;
-const PAGE_W = 960;
-const PAGE_H = 540;
-/** Музейное поле по краям — как в pptx: 0.85 дюйма. */
-const MARGIN = 0.85 * IN;
+const PAGE_W = SHEET.width;
+const PAGE_H = SHEET.height;
+/** Музейное поле по краям — то же число, что в pptx: общая таблица. */
+const MARGIN = SLIDE_SPEC.margin;
 
 /** Фолбэки палитры из брендбука (раздел 2) — колода собирается всегда. */
 const BRAND_FALLBACK = {
@@ -265,7 +266,7 @@ function imagePath(s: DeckSlide, imagesById: Map<number, DeckImage>): string | n
 function drawFolio(doc: PDFKit.PDFDocument, st: Style, idx: number): void {
   doc
     .font("body")
-    .fontSize(11)
+    .fontSize(T.folio)
     .fillColor(st.color("museumIndigo"), 1)
     .text(String(idx + 1).padStart(2, "0"), MARGIN, PAGE_H - 0.6 * IN, {
       characterSpacing: 2,
@@ -283,7 +284,7 @@ function addCover(doc: PDFKit.PDFDocument, c: SlideContent, img: string | null, 
   fillBackground(doc, st.color("archiveBlack"));
 
   // Брендбук: текст слева 42%, образ справа 58%.
-  const imgW = PAGE_W * 0.58;
+  const imgW = PAGE_W * SLIDE_SPEC.imageShare.cover;
   if (img) drawPlateImage(doc, img, PAGE_W - imgW, imgW);
   const textW = img ? PAGE_W - imgW - MARGIN - 0.35 * IN : PAGE_W - MARGIN * 2;
 
@@ -294,7 +295,7 @@ function addCover(doc: PDFKit.PDFDocument, c: SlideContent, img: string | null, 
         {
           text: c.eyebrow.toUpperCase(),
           font: "medium",
-          size: 12,
+          size: T.coverEyebrow,
           charSpacing: 2.5,
           color: lighten(st.color("burntUmber"), 0.3),
         },
@@ -307,7 +308,7 @@ function addCover(doc: PDFKit.PDFDocument, c: SlideContent, img: string | null, 
   }
   drawRuns(
     doc,
-    [{ text: c.title ?? "", font: "display", size: 44, color: VELLUM, lineMult: 1.05 }],
+    [{ text: c.title ?? "", font: "display", size: T.coverTitle, color: VELLUM, lineMult: 1.05 }],
     MARGIN,
     2.0 * IN,
     textW,
@@ -316,7 +317,7 @@ function addCover(doc: PDFKit.PDFDocument, c: SlideContent, img: string | null, 
   if (c.subtitle) {
     drawRuns(
       doc,
-      [{ text: c.subtitle, font: "body", size: 16, color: st.color("deepSepia") }],
+      [{ text: c.subtitle, font: "body", size: T.coverSubtitle, color: st.color("deepSepia") }],
       MARGIN,
       4.85 * IN,
       textW,
@@ -330,7 +331,7 @@ function addDivider(doc: PDFKit.PDFDocument, c: SlideContent, img: string | null
   fillBackground(doc, st.color("deepIndigo"));
 
   // Образ — узкий край архивной пластины; 60–70% листа остаются воздухом.
-  const imgW = PAGE_W * 0.3;
+  const imgW = PAGE_W * SLIDE_SPEC.imageShare.divider;
   if (img) drawPlateImage(doc, img, PAGE_W - imgW, imgW);
 
   const runs: Run[] = [];
@@ -338,13 +339,13 @@ function addDivider(doc: PDFKit.PDFDocument, c: SlideContent, img: string | null
     runs.push({
       text: c.eyebrow.toUpperCase(),
       font: "medium",
-      size: 13,
+      size: T.dividerEyebrow,
       charSpacing: 2.5,
       color: lighten(st.color("burntUmber"), 0.3),
       spaceAfter: 14,
     });
   }
-  runs.push({ text: c.title ?? "", font: "display", size: 48, color: VELLUM, lineMult: 1.05 });
+  runs.push({ text: c.title ?? "", font: "display", size: T.dividerTitle, color: VELLUM, lineMult: 1.05 });
   // Один блок на всю высоту: имя части само встаёт по центру вертикали.
   drawRuns(
     doc,
@@ -366,7 +367,7 @@ function addTheory(
 ): void {
   fillBackground(doc, st.color("archiveBlack"));
 
-  const imgW = PAGE_W * 0.45;
+  const imgW = PAGE_W * SLIDE_SPEC.imageShare.theory;
   const imgX = side === "left" ? 0 : PAGE_W - imgW;
   if (img) drawPlateImage(doc, img, imgX, imgW);
 
@@ -376,7 +377,7 @@ function addTheory(
 
   drawRuns(
     doc,
-    [{ text: c.title ?? "", font: "display", size: 34, color: VELLUM, lineMult: 1.05 }],
+    [{ text: c.title ?? "", font: "display", size: T.theoryTitle, color: VELLUM, lineMult: 1.05 }],
     textX,
     0.75 * IN,
     textW,
@@ -384,14 +385,14 @@ function addTheory(
   );
 
   if (c.bullets?.length) {
-    drawBullets(doc, c.bullets, textX, 2.25 * IN, textW, 3.7 * IN, 19, VELLUM);
+    drawBullets(doc, c.bullets, textX, 2.25 * IN, textW, 3.7 * IN, T.bullets, VELLUM);
   }
 
   if (c.question) {
     // Рабочий вопрос выделяется умброй, а не курсивом (приём брендбука).
     drawRuns(
       doc,
-      [{ text: c.question, font: "body", size: 16, color: st.color("burntUmber") }],
+      [{ text: c.question, font: "body", size: T.question, color: st.color("burntUmber") }],
       textX,
       6.15 * IN,
       textW,
@@ -407,7 +408,7 @@ function addTheory(
         {
           text: c.plate.toUpperCase(),
           font: "medium",
-          size: 11,
+          size: T.plate,
           charSpacing: 2,
           color: VELLUM,
           opacity: 0.75,
@@ -432,7 +433,7 @@ function addQuote(
   // Бумажная пластина: светлый фон, текст тушью.
   fillBackground(doc, st.color("agedPaper"));
 
-  const imgW = PAGE_W * 0.4;
+  const imgW = PAGE_W * SLIDE_SPEC.imageShare.quote;
   if (img) drawPlateImage(doc, img, side === "left" ? 0 : PAGE_W - imgW, imgW);
 
   // Текст — на противоположном от образа краю, с воздухом.
@@ -443,7 +444,7 @@ function addQuote(
     {
       text: c.quote ?? c.title ?? "",
       font: "display",
-      size: 34,
+      size: T.quote,
       color: st.color("etchingInk"),
       lineMult: 1.15,
       spaceAfter: 16,
@@ -453,7 +454,7 @@ function addQuote(
     runs.push({
       text: c.attribution,
       font: "body",
-      size: 13,
+      size: T.attribution,
       color: st.color("etchingInk"),
       opacity: 0.6,
     });
@@ -471,14 +472,14 @@ function addClinical(
   fillBackground(doc, st.color("agedPaper"));
   const ink = st.color("etchingInk");
 
-  const imgW = PAGE_W * 0.4;
+  const imgW = PAGE_W * SLIDE_SPEC.imageShare.clinical;
   if (img) drawPlateImage(doc, img, side === "left" ? 0 : PAGE_W - imgW, imgW);
 
   const textX = img && side === "left" ? imgW + 0.55 * IN : MARGIN;
   // Спокойная бумажная колонка ~55%; шире не делаем даже без образа.
   const textW = img ? PAGE_W - imgW - MARGIN - 0.55 * IN : 8.0 * IN;
 
-  drawRuns(doc, [{ text: c.title ?? "", font: "display", size: 28, color: ink }], textX, 0.8 * IN, textW, 1.1 * IN);
+  drawRuns(doc, [{ text: c.title ?? "", font: "display", size: T.clinicalTitle, color: ink }], textX, 0.8 * IN, textW, 1.1 * IN);
 
   const paragraphs = c.bullets?.length ? c.bullets : c.subtitle ? [c.subtitle] : [];
   if (paragraphs.length) {
@@ -487,7 +488,7 @@ function addClinical(
       paragraphs.map((p) => ({
         text: p,
         font: "body" as const,
-        size: 18,
+        size: T.clinicalBody,
         color: ink,
         lineMult: 1.15,
         spaceAfter: 12,
@@ -502,7 +503,7 @@ function addClinical(
   if (c.question) {
     drawRuns(
       doc,
-      [{ text: c.question, font: "body", size: 16, color: st.color("burntUmber") }],
+      [{ text: c.question, font: "body", size: T.question, color: st.color("burntUmber") }],
       textX,
       6.1 * IN,
       textW,
@@ -515,13 +516,13 @@ function addComparison(doc: PDFKit.PDFDocument, c: SlideContent, img: string | n
   fillBackground(doc, st.color("archiveBlack"));
 
   // Общая гравюра — полосой сверху, обе колонки остаются под одним образом.
-  const imgH = PAGE_H * 0.38;
+  const imgH = PAGE_H * SLIDE_SPEC.comparisonBand;
   if (img) drawImageCover(doc, img, 0, 0, PAGE_W, imgH);
   const top = img ? imgH + 0.25 * IN : 0.75 * IN;
 
   drawRuns(
     doc,
-    [{ text: c.title ?? "", font: "display", size: 30, color: VELLUM }],
+    [{ text: c.title ?? "", font: "display", size: T.comparisonTitle, color: VELLUM }],
     MARGIN,
     top,
     PAGE_W - MARGIN * 2,
@@ -537,8 +538,8 @@ function addComparison(doc: PDFKit.PDFDocument, c: SlideContent, img: string | n
     drawRuns(
       doc,
       [
-        { text: card.title, font: "display", size: 22, color: VELLUM, spaceAfter: 8 },
-        { text: card.body, font: "body", size: 16, color: st.color("deepSepia"), lineMult: 1.15 },
+        { text: card.title, font: "display", size: T.cardTitle, color: VELLUM, spaceAfter: 8 },
+        { text: card.body, font: "body", size: T.cardBody, color: st.color("deepSepia"), lineMult: 1.15 },
       ],
       i === 0 ? MARGIN : PAGE_W / 2 + 0.45 * IN,
       colY,
@@ -563,14 +564,14 @@ function addFinal(doc: PDFKit.PDFDocument, c: SlideContent, st: Style, idx: numb
     {
       text: c.title ?? c.quote ?? c.subtitle ?? "",
       font: "display",
-      size: 36,
+      size: T.finalTitle,
       color: VELLUM,
       lineMult: 1.1,
     },
   ];
   if (c.subtitle && c.title) {
     runs[0]!.spaceAfter = 18;
-    runs.push({ text: c.subtitle, font: "body", size: 16, color: st.color("deepSepia") });
+    runs.push({ text: c.subtitle, font: "body", size: T.finalSubtitle, color: st.color("deepSepia") });
   }
   drawRuns(doc, runs, MARGIN, 0, 9.8 * IN, PAGE_H, "middle");
   drawFolio(doc, st, idx);
@@ -610,10 +611,10 @@ function drawNodeText(
   h: number,
 ): void {
   const runs: Run[] = [
-    { text: item.label, font: "display", size: 20, color: VELLUM, align: "center", spaceAfter: 4 },
+    { text: item.label, font: "display", size: T.nodeLabel, color: VELLUM, align: "center", spaceAfter: 4 },
   ];
   if (item.sub) {
-    runs.push({ text: item.sub, font: "body", size: 12, color: st.color("deepSepia"), align: "center" });
+    runs.push({ text: item.sub, font: "body", size: T.nodeSub, color: st.color("deepSepia"), align: "center" });
   }
   drawRuns(doc, runs, x, y, w, h, "middle");
 }
@@ -628,7 +629,7 @@ function addDiagram(doc: PDFKit.PDFDocument, c: SlideContent, spec: DiagramSpec,
   // Заголовок сверху — как в theory.
   drawRuns(
     doc,
-    [{ text: c.title ?? "", font: "display", size: 34, color: VELLUM, lineMult: 1.05 }],
+    [{ text: c.title ?? "", font: "display", size: T.diagramTitle, color: VELLUM, lineMult: 1.05 }],
     MARGIN,
     0.75 * IN,
     PAGE_W - MARGIN * 2,

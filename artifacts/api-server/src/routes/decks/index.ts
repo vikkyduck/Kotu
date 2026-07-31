@@ -17,6 +17,7 @@ import {
   type SlideLayout,
 } from "@workspace/db";
 import { inArray, sql } from "drizzle-orm";
+import { SLIDE_LAYOUTS } from "@workspace/db/slides";
 import { enqueue } from "../../lib/jobs";
 import { ownFolderId } from "../../lib/folders";
 import { deckToLibrary, dropDeckCopies } from "../../lib/work-doc";
@@ -26,17 +27,6 @@ import { buildDeckPdf } from "../../lib/pdf";
 import { sanitizeSlideContent } from "../../lib/slide-content";
 
 const router: IRouter = Router();
-
-const LAYOUTS: SlideLayout[] = [
-  "cover",
-  "divider",
-  "theory",
-  "quote",
-  "clinical",
-  "comparison",
-  "final",
-  "diagram",
-];
 
 /**
  * Колода строго своего владельца — проверка в каждой ручке, как везде.
@@ -257,7 +247,7 @@ router.patch("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
     patch.content = sanitizeSlideContent(body.content);
   }
   if (typeof body.notes === "string") patch.notes = body.notes.slice(0, 20_000);
-  if (LAYOUTS.includes(body.layout)) patch.layout = body.layout as SlideLayout;
+  if (SLIDE_LAYOUTS.includes(body.layout)) patch.layout = body.layout as SlideLayout;
   if (body.imageSide === "left" || body.imageSide === "right") patch.imageSide = body.imageSide;
 
   if ("imageBrief" in body) {
