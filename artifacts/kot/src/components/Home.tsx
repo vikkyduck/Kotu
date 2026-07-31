@@ -17,10 +17,10 @@ function formatDate(value: string | Date): string {
 
 function greeting(): string {
   const hour = new Date().getHours();
-  if (hour >= 5 && hour < 12) return 'Доброе утро, Кот.';
-  if (hour >= 12 && hour < 18) return 'Добрый день, Кот.';
-  if (hour >= 18 && hour < 23) return 'Добрый вечер, Кот.';
-  return 'Доброй ночи, Кот.';
+  if (hour >= 5 && hour < 12) return 'Доброе утро, Кот';
+  if (hour >= 12 && hour < 18) return 'Добрый день, Кот';
+  if (hour >= 18 && hour < 23) return 'Добрый вечер, Кот';
+  return 'Доброй ночи, Кот';
 }
 
 export function Home() {
@@ -57,11 +57,6 @@ export function Home() {
     <section className="screen active" id="s-home">
       <h1 className="hello">{greeting()}</h1>
       <p className="lead">С чего начнём сегодня?</p>
-
-      <div className="promise">
-        <span className="pico" data-icon="shield"><Icon name="shield" /></span>
-        <span className="pt"><b>Просто откройте и работайте.</b> Без ВПН и отдельных паролей, всё сохраняется само, данные остаются у вас.</span>
-      </div>
 
       <button className="task hero" onClick={() => newTranscription()}>
         <span className="ti"><span data-icon="mic"><Icon name="mic" /></span></span>
