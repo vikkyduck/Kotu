@@ -53,6 +53,7 @@
   --paper:#d8c7a7;              /* Aged Paper */
   --paper-deep:#c4ad87;         /* Deep Sepia */
   --ink:#F0EBE2;                /* тёплый почти белый: бежевые буквы ушли */
+  --ink-strong:#FAF7F1;         /* заголовки — ещё светлее */
   --ink-2:#D2CABC;              /* вторичный текст */
   --muted:#ABA294;              /* подписи */
   --ink-etch:#302b27;           /* Etching Ink — текст на бумаге */
@@ -105,9 +106,10 @@
   --panel-2:#EDE6D7;
   --paper:#EFE8D9;
   --paper-deep:#DECFB2;
-  --ink:#1D1915;
-  --ink-2:#453D33;
-  --muted:#5C5347;
+  --ink:#141210;          /* основной текст — как в образце */
+  --ink-strong:#0B0A08;   /* заголовки и подзаголовки */
+  --ink-2:#221E19;        /* вторичный текст: тоже почти чёрный */
+  --muted:#3A352E;        /* подписи — тёмные, читаются при любой яркости */
   --ink-etch:#241F1A;
   --line:#D3CABA;
   --hairline:rgba(29,25,21,.14);
@@ -137,12 +139,16 @@
   --glow:none;
 }
 
+/* Заголовки — самым тёмным тоном: иерархия читается яркостью, а не догадкой */
+h1.hello,.h2,.top .brand,.top .ttl,.task .tb h3,.tool b,.errblock .errttl,.pstat,
+.sheet h3,.done-head h3{color:var(--ink-strong)}
+
 /* ── База ─────────────────────────────────────────────────────────────── */
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 :focus-visible{outline:2px solid var(--accent-strong);outline-offset:3px}
 html,body{margin:0;height:100%}
 body{font-family:var(--sans);background:var(--glow),var(--bg);color:var(--ink);
-  font-size:18px;line-height:1.66;letter-spacing:-.01em;
+  font-size:19px;line-height:1.64;letter-spacing:-.008em;font-weight:450;
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
   transition:background .3s var(--ease),color .3s var(--ease)}
 /* Бумажное зерно поверх всего — материальность старой печати */
@@ -207,10 +213,10 @@ h1.hello{font-family:var(--serif);font-size:36px;font-weight:600;letter-spacing:
   margin:var(--sp-1) 0;line-height:1.02;text-wrap:balance}
 .lead{color:var(--ink-2);font-size:19px;margin:0 0 var(--sp-3);line-height:1.55}
 .h2{font-family:var(--serif);font-size:29px;font-weight:600;letter-spacing:-.03em;margin:0 0 var(--sp-1);line-height:1.05}
-.sub{color:var(--ink-2);font-size:17px;margin:0 0 var(--sp-3)}
+.sub{color:var(--ink-2);font-size:17px;font-weight:500;margin:0 0 var(--sp-3)}
 .label,.soon-label{display:flex;align-items:center;gap:8px;font-size:12.5px;
-  text-transform:uppercase;letter-spacing:.13em;color:var(--accent-strong);
-  font-weight:500;margin:var(--sp-4) 0 var(--sp-2)}
+  text-transform:uppercase;letter-spacing:.13em;color:var(--ink-2);
+  font-weight:700;margin:var(--sp-4) 0 var(--sp-2)}
 .start-hint{margin:4px 2px 2px;font-size:15px;color:var(--muted)}
 
 /* Пустое состояние: короткий текст + одно действие */
@@ -245,7 +251,7 @@ h1.hello{font-family:var(--serif);font-size:36px;font-weight:600;letter-spacing:
 .task .ti .ic-svg{width:24px;height:24px}
 .task .tb{flex:1;min-width:0}
 .task .tb h3{margin:0 0 3px;font-family:var(--serif);font-size:21px;font-weight:600;letter-spacing:-.02em}
-.task .tb p{margin:0;font-size:15.5px;color:var(--muted);line-height:1.45}
+.task .tb p{margin:0;font-size:15.5px;font-weight:500;color:var(--muted);line-height:1.45}
 .task .tc{color:var(--muted);flex-shrink:0}
 .task .tc .ic-svg{width:20px;height:20px}
 .task .th-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:3px}
@@ -609,8 +615,8 @@ button.doc-card:hover{border-color:var(--accent-strong)}
   border:1px solid var(--line);border-radius:var(--r-sm);color:var(--ink-2)}
 .doc-ico .ic-svg{width:17px;height:17px}
 .doc-body{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
-.doc-title{font-size:17px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.doc-meta{font-size:15px;color:var(--muted)}
+.doc-title{font-size:17px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-meta{font-size:15px;font-weight:500;color:var(--muted)}
 .doc-meta.busy{color:var(--amber)}
 .doc-meta.bad{color:var(--danger-strong)}
 .doc-del{flex-shrink:0;padding:9px 12px;font-size:13.5px}
@@ -1009,7 +1015,7 @@ input.field,textarea.topic,.sheet textarea{font-size:17px}
 .tool-ic .ic-svg{width:20px;height:20px}
 .tool b{grid-area:ttl;font-family:var(--serif);font-size:20px;font-weight:600;
   letter-spacing:-.02em;align-self:end}
-.tool span:last-child{grid-area:sub;font-size:15.5px;color:var(--muted);align-self:start}
+.tool span:last-child{grid-area:sub;font-size:15.5px;font-weight:500;color:var(--muted);align-self:start}
 @media(min-width:620px){
   .tools{grid-template-columns:repeat(3,1fr)}
   .tool{grid-template-columns:1fr;grid-template-areas:"ic" "ttl" "sub";gap:8px 0;
