@@ -15,11 +15,23 @@ import { searchLibrary } from "../../routes/documents";
 import { embedAll } from "../embeddings";
 import { research, isResearchAvailable, type WebSource } from "../perplexity";
 import { planPrompt, sectionPrompt, bibliographyPrompt } from "../lecture-prompt";
+
+/**
+ * Какие источники включены. Старые записи несли одиночный mode «или/или» —
+ * читаем его как совместимость; новые несут два независимых флага.
+ */
+function briefSources(brief: LectureBrief): { lib: boolean; res: boolean } {
+  if (brief.useLibrary !== undefined || brief.useResearch !== undefined) {
+    return { lib: brief.useLibrary === true, res: brief.useResearch === true };
+  }
+  if (brief.mode === "research") return { lib: false, res: true };
+  return { lib: true, res: false };
+}
 import { registerHandler, enqueue } from "../jobs";
 import { lectureToLibrary } from "../work-doc";
 import { logger } from "../logger";
 
-const MODEL = process.env["MODEL_LECTURE"] ?? "gpt-5.6-terra";
+const MODEL = process.env["MODEL_LECTURE"] ?? "gpt-5.6-sol";
 
 /** Сколько фрагментов библиотеки даём модели на одну главу. */
 const CHUNKS_PER_SECTION = 10;
@@ -73,24 +85,27 @@ async function runPlan(job: Job): Promise<void> {
     .set({ status: "planning", statusMessage: "Смотрю, что есть в библиотеке…", error: null })
     .where(eq(lecturesTable.id, id));
 
-  // Режим исследования: материал собирает модель, библиотека не обязательна.
-  const isResearch = brief.mode === "research";
-  let material = "";
-  if (isResearch) {
-    if (isResearchAvailable()) {
-      await setStatus(id, "Исследую тему в веб-источниках…");
-      const found = await research(
-        `Тема лекции по психоанализу: ${brief.topic}. Собери материал для плана лекции.`,
-      ).catch((err) => {
-        logger.warn({ err }, "Веб-поиск не ответил — планирую по знаниям модели");
-        return null;
-      });
-      if (found) material = found.summary;
-    }
-  } else {
+  // Источники независимы: библиотека И исследование складываются в общий
+  // материал; ни одного — план пишется по знаниям модели.
+  const src = briefSources(brief);
+  const isResearch = src.res;
+  const parts: string[] = [];
+  if (src.lib && brief.documentIds.length > 0) {
+    await setStatus(id, "Смотрю, что есть в библиотеке…");
     const excerpts = await findExcerpts(lecture.ownerId, brief.topic, brief.documentIds, 14);
-    material = renderExcerpts(excerpts);
+    if (excerpts.length > 0) parts.push(`Выдержки из библиотеки автора:\n\n${renderExcerpts(excerpts)}`);
   }
+  if (src.res && isResearchAvailable()) {
+    await setStatus(id, "Исследую тему в веб-источниках…");
+    const found = await research(
+      `Тема лекции по психоанализу: ${brief.topic}. Собери материал для плана лекции.`,
+    ).catch((err) => {
+      logger.warn({ err }, "Веб-поиск не ответил — планирую без него");
+      return null;
+    });
+    if (found) parts.push(`Материал веб-исследования:\n\n${found.summary}`);
+  }
+  const material = parts.join("\n\n═══\n\n");
 
   await setStatus(id, "Продумываю структуру…");
 
@@ -105,9 +120,7 @@ async function runPlan(job: Job): Promise<void> {
       { role: "system", content: planPrompt(brief, lecture.title, blocks) },
       {
         role: "user",
-        content: material
-          ? `${isResearch ? "Материал веб-исследования" : "Выдержки из библиотеки автора"}:\n\n${material}`
-          : "Материала под рукой нет — опирайся на профессиональный корпус психоанализа.",
+        content: material || "Материала под рукой нет — опирайся на профессиональный корпус психоанализа.",
       },
     ],
   });
@@ -199,37 +212,45 @@ async function runWrite(job: Job): Promise<void> {
       .where(eq(lectureSectionsTable.id, section.id));
 
     const query = `${section.heading}. ${section.abstract}`;
-    const isResearch = brief.mode === "research";
+    const src = briefSources(brief);
 
-    // Материал главы — по режиму: выдержки библиотеки, веб-исследование
-    // или честное «пишем по знаниям модели», если поиск не настроен.
+    // Материал блока: выдержки библиотеки и веб-исследование складываются.
+    // Нумерация ссылок единая: выдержки 1..k, веб-источники k+1..k+m —
+    // иначе [2] значило бы двоих разных.
     let excerpts: Excerpt[] = [];
     let webSources: WebSource[] = [];
-    let material = "";
-    let materialLabel = "Выдержки из библиотеки";
+    const parts: string[] = [];
 
-    if (!isResearch) {
+    if (src.lib && brief.documentIds.length > 0) {
       excerpts = await findExcerpts(lecture.ownerId, query, brief.documentIds, CHUNKS_PER_SECTION);
-      material = renderExcerpts(excerpts);
-    } else if (isResearchAvailable()) {
-      await setStatus(id, `Исследую главу ${section.ord + 1} из ${total}: ${section.heading}`);
+      if (excerpts.length > 0) parts.push(`Выдержки из библиотеки автора:\n\n${renderExcerpts(excerpts)}`);
+    }
+
+    if (src.res && isResearchAvailable()) {
+      await setStatus(id, `Исследую блок ${section.ord + 1} из ${total}: ${section.heading}`);
       const found = await research(
-        `Глава лекции по психоанализу: «${section.heading}». О чём она: ${section.abstract}. ` +
-          `Тема всей лекции: ${brief.topic}. Собери материал для этой главы.`,
+        `Блок лекции по психоанализу: «${section.heading}». Тезис: ${section.abstract}. ` +
+          `Тема всей лекции: ${brief.topic}. Собери материал для этого блока.`,
       ).catch((err) => {
-        logger.warn({ err, sectionId: section.id }, "Веб-поиск не ответил — пишу по знаниям модели");
+        logger.warn({ err, sectionId: section.id }, "Веб-поиск не ответил — пишу без него");
         return null;
       });
       if (found) {
-        webSources = found.sources;
-        materialLabel = "Материал веб-исследования (ссылки [n] — на источники ниже)";
-        material =
-          found.summary +
-          (found.sources.length > 0
-            ? "\n\nИсточники:\n" + found.sources.map((w) => `[${w.n}] ${w.title} — ${w.url}`).join("\n")
-            : "");
+        const shift = excerpts.length;
+        // Сдвигаем ссылки внутри сводки и номера источников на k выдержек.
+        const summary = found.summary.replace(/\[(\d{1,2})\]/g, (_, n) => `[${Number(n) + shift}]`);
+        webSources = found.sources.map((w) => ({ ...w, n: w.n + shift }));
+        parts.push(
+          `Материал веб-исследования (ссылки [n] — на источники ниже):\n\n${summary}` +
+            (webSources.length > 0
+              ? "\n\nИсточники:\n" + webSources.map((w) => `[${w.n}] ${w.title} — ${w.url}`).join("\n")
+              : ""),
+        );
       }
     }
+
+    const material = parts.join("\n\n═══\n\n");
+    const materialLabel = "Материал";
 
     await setStatus(id, `Пишу блок ${section.ord + 1} из ${total}: ${section.heading}`);
 
@@ -294,7 +315,9 @@ async function runWrite(job: Job): Promise<void> {
           })),
         );
       }
-    } else if (webSources.length > 0) {
+    }
+
+    if (webSources.length > 0) {
       // Веб-источник открывается по ссылке; цитатой кладём фразы выжимки,
       // которые на него ссылались, — их и стоит сверять.
       const used = webSources.filter((w) => cited.has(w.n));
@@ -312,8 +335,10 @@ async function runWrite(job: Job): Promise<void> {
           })),
         );
       }
-    } else if (isResearch) {
-      // Ни библиотеки, ни поиска: говорим об этом прямо, а не молчим.
+    }
+
+    if (material === "") {
+      // Материала не вышло ниоткуда: говорим об этом прямо, а не молчим.
       await db.insert(lectureSourcesTable).values({
         lectureId: id,
         sectionId: section.id,

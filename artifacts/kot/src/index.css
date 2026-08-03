@@ -1069,3 +1069,14 @@ input.field.lib-search{margin:0 0 var(--sp-2)}
 .biblio-lvl{margin:14px 0 6px;font-size:14px;font-weight:700;color:var(--ink-2)}
 .biblio ol{margin:0;padding-left:22px}
 .biblio li{margin:6px 0;font-size:15.5px;line-height:1.5}
+
+/* Оглавление готовой лекции и панель «что дальше» */
+.lec-toc{margin:18px 0}
+.lec-toc ol{margin:0;padding-left:22px}
+.lec-toc li{margin:7px 0}
+.lec-toc a{color:var(--ink);text-decoration:underline;text-underline-offset:3px;
+  text-decoration-color:var(--line)}
+.lec-toc a:hover{color:var(--accent-strong)}
+.lec-next{margin-top:22px}
+.lec-section{scroll-margin-top:70px}
+.plan-editing .field{margin-bottom:8px}

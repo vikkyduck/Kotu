@@ -1,4 +1,4 @@
-import type { LectureBrief } from "@workspace/db";
+import type { LectureBrief, LectureFocus } from "@workspace/db";
 
 /**
  * Методика автора, по которой пишутся лекции. Текст задан Викторией дословно
@@ -11,11 +11,24 @@ import type { LectureBrief } from "@workspace/db";
  * блоки по одному, чтобы автор правил по ходу.
  */
 
-const FOCUS_RU: Record<NonNullable<LectureBrief["focus"]>, string> = {
-  clinical: "клинический — важнее случаи, техника, работа в кабинете",
-  theoretical: "теоретический — важнее концептуальный аппарат и его строение",
-  historical: "исторический — важнее генезис понятия, датировка, контекст эпохи",
+const FOCUS_RU: Record<LectureFocus, string> = {
+  clinical: "клинический — случаи, техника, работа в кабинете",
+  theoretical: "теоретический — концептуальный аппарат и его строение",
+  historical: "исторический — генезис понятия, датировка, контекст эпохи",
 };
+
+/** Акцентов может быть несколько или ни одного; старые записи — строка. */
+export function focusList(brief: LectureBrief): LectureFocus[] {
+  if (Array.isArray(brief.focus)) return brief.focus;
+  return brief.focus ? [brief.focus] : [];
+}
+
+function focusLine(brief: LectureBrief): string {
+  const list = focusList(brief);
+  if (list.length === 0)
+    return "Акцент: автор не задавал — сбалансируй теорию, клинику и историю по собственному суждению.";
+  return `Акцент${list.length > 1 ? "ы" : ""}: ${list.map((f) => FOCUS_RU[f]).join("; ")}`;
+}
 
 /** Роль, аудитория и планка качества — общая шапка обоих этапов. */
 export function roleAndRequirements(brief: LectureBrief, title: string): string[] {
@@ -32,7 +45,7 @@ export function roleAndRequirements(brief: LectureBrief, title: string): string[
     `Тема лекции: ${title}`,
     `Замысел автора: ${brief.topic}`,
     `Хронометраж: ${brief.durationMin} минут`,
-    `Акцент: ${FOCUS_RU[brief.focus ?? "theoretical"]}`,
+    focusLine(brief),
     `Аудитория (уточнение автора): ${brief.audience}`,
     "",
     "ТРЕБОВАНИЯ К КАЧЕСТВУ МАТЕРИАЛА",

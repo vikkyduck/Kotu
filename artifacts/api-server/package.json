@@ -18,6 +18,7 @@
     "@workspace/integrations-openai-ai-server": "workspace:*",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
+    "docx": "^9.7.1",
     "drizzle-orm": "catalog:",
     "express": "^5.2.1",
     "jszip": "^3.10.1",
