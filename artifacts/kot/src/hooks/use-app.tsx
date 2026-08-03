@@ -116,9 +116,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       t = localStorage.getItem('kot-theme') || '';
     } catch (e) {}
-    if (!t) {
-      t = (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme:dark)').matches) ? 'dark' : 'light';
-    }
+    // По умолчанию — бумага: платформа читается как документ, а не как ночь.
+    // Тёмная тема осталась переключателем в меню; сохранённый выбор уважается.
+    if (!t) t = 'light';
     const next = (t === 'dark' ? 'dark' : 'light') as Theme;
     document.documentElement.setAttribute('data-theme', next);
     setThemeState(next);
