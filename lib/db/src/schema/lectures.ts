@@ -26,6 +26,13 @@ export interface LectureBrief {
   mustInclude?: string;
   mustAvoid?: string;
   documentIds: number[];
+  /**
+   * Откуда материал: 'library' — из выбранных документов библиотеки (как
+   * всегда было; отсутствие поля читается так же), 'research' — библиотека
+   * не обязательна, модель исследует тему сама: через веб-поиск с источниками,
+   * а без настроенного поиска — по собственным знаниям с честной пометкой.
+   */
+  mode?: "library" | "research";
 }
 
 /** Одна глава в плане — до того, как она написана. */
@@ -99,7 +106,8 @@ export const lectureSourcesTable = pgTable(
     sectionId: integer("section_id").references(() => lectureSectionsTable.id, {
       onDelete: "cascade",
     }),
-    kind: text("kind").$type<"doc" | "web">().notNull().default("doc"),
+    /** doc — фрагмент библиотеки, web — найдено поиском, model — знания модели. */
+    kind: text("kind").$type<"doc" | "web" | "model">().notNull().default("doc"),
     chunkId: integer("chunk_id"),
     url: text("url"),
     title: text("title").notNull(),

@@ -34,6 +34,8 @@ interface Section {
 interface Source {
   id: number;
   sectionId: number | null;
+  kind?: 'doc' | 'web' | 'model';
+  url?: string | null;
   title: string;
   quote: string;
 }
@@ -70,6 +72,8 @@ export function Lecture() {
   const [audience, setAudience] = useState('студенты');
   const [duration, setDuration] = useState(150);
   const [picked, setPicked] = useState<number[]>([]);
+  /** Откуда материал: из выбранных документов или собственное исследование ИИ. */
+  const [mode, setMode] = useState<'library' | 'research'>('library');
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
@@ -95,6 +99,7 @@ export function Lecture() {
   // в опоре уже отмечен.
   useEffect(() => {
     if (screen !== 's-lecture' || openId !== null || !lectureSeed) return;
+    setMode('library');
     setPicked(lectureSeed.documentIds);
   }, [screen, openId, lectureSeed]);
 
@@ -123,8 +128,8 @@ export function Lecture() {
       toast('Расскажите в двух словах, о чём лекция');
       return;
     }
-    if (picked.length === 0) {
-      toast('Выберите, на что опереться из библиотеки');
+    if (mode === 'library' && picked.length === 0) {
+      toast('Выберите материал — или включите «Исследование ИИ»');
       return;
     }
     setBusy(true);
@@ -132,7 +137,13 @@ export function Lecture() {
       const res = await fetch('/api/lectures', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, audience, durationMin: duration, documentIds: picked }),
+        body: JSON.stringify({
+          topic,
+          audience,
+          durationMin: duration,
+          mode,
+          documentIds: mode === 'library' ? picked : [],
+        }),
       });
       if (res.ok) {
         const created = await res.json();
@@ -314,7 +325,14 @@ export function Lecture() {
                       <ol>
                         {sources.map((src) => (
                           <li key={src.id}>
-                            <b>{src.title}</b>
+                            {/* Веб-источник открывается по ссылке — его можно сверить */}
+                            {src.url ? (
+                              <a href={src.url} target="_blank" rel="noreferrer noopener">
+                                <b>{src.title}</b>
+                              </a>
+                            ) : (
+                              <b>{src.title}</b>
+                            )}
                             <span>{src.quote.slice(0, 220)}…</span>
                           </li>
                         ))}
@@ -385,30 +403,56 @@ export function Lecture() {
           ))}
         </div>
 
-        <div className="fieldlbl">На что опереться из библиотеки?</div>
-        {docs.length === 0 ? (
-          <p className="doc-meta">
-            Библиотека пуста —{' '}
-            <span className="inline-link" onClick={() => go('s-home')}>
-              загрузите книги
-            </span>
-            , и лекция будет опираться на них.
+        <div className="fieldlbl">Откуда взять материал?</div>
+        <div className="pills">
+          <span
+            className={`pill-opt ${mode === 'library' ? 'on' : ''}`}
+            onClick={() => setMode('library')}
+          >
+            Из моей библиотеки
+          </span>
+          <span
+            className={`pill-opt ${mode === 'research' ? 'on' : ''}`}
+            onClick={() => setMode('research')}
+          >
+            Исследование ИИ
+          </span>
+        </div>
+
+        {mode === 'research' ? (
+          <p className="doc-meta" style={{ marginTop: 10 }}>
+            Материал соберу сама: план и главы — по исследованию темы, с источниками.
+            Библиотека не нужна, но каждую главу стоит просмотреть — источники будут
+            указаны под текстом.
           </p>
         ) : (
-          <div className="pills">
-            {docs.map((d) => (
-              <span
-                key={d.id}
-                className={`pill-opt ${picked.includes(d.id) ? 'on' : ''}`}
-                onClick={() =>
-                  setPicked((p) => (p.includes(d.id) ? p.filter((x) => x !== d.id) : [...p, d.id]))
-                }
-              >
-                {d.title}
-                {DOC_KIND_RU[d.kind] ? ` · ${DOC_KIND_RU[d.kind]}` : ''}
-              </span>
-            ))}
-          </div>
+          <>
+            <div className="fieldlbl">На что опереться из библиотеки?</div>
+            {docs.length === 0 ? (
+              <p className="doc-meta">
+                Библиотека пуста —{' '}
+                <span className="inline-link" onClick={() => go('s-home')}>
+                  загрузите книги
+                </span>
+                {' '}или включите «Исследование ИИ» выше.
+              </p>
+            ) : (
+              <div className="pills">
+                {docs.map((d) => (
+                  <span
+                    key={d.id}
+                    className={`pill-opt ${picked.includes(d.id) ? 'on' : ''}`}
+                    onClick={() =>
+                      setPicked((p) => (p.includes(d.id) ? p.filter((x) => x !== d.id) : [...p, d.id]))
+                    }
+                  >
+                    {d.title}
+                    {DOC_KIND_RU[d.kind] ? ` · ${DOC_KIND_RU[d.kind]}` : ''}
+                  </span>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -421,7 +465,7 @@ export function Lecture() {
       )}
       <button
         className="btn primary big"
-        disabled={busy || docs.length === 0}
+        disabled={busy || (mode === 'library' && docs.length === 0)}
         onClick={() => void create()}
       >
         {busy ? 'Начинаю…' : 'Составить план'} <Icon name="arrow" />

@@ -97,15 +97,26 @@ router.post("/lectures", async (req, res): Promise<void> => {
   }
 
   const durationMin = Number(body.durationMin);
+  const documentIds = Array.isArray(body.documentIds)
+    ? body.documentIds.map(Number).filter(Number.isInteger)
+    : [];
+  // Исследование — единственный режим, где пустая опора допустима: материал
+  // собирает модель. Обычной лекции без документов не бывает.
+  const mode: LectureBrief["mode"] = body.mode === "research" ? "research" : "library";
+  if (mode === "library" && documentIds.length === 0) {
+    res.status(400).json({
+      message: "Выберите материал из библиотеки — или включите «Исследование ИИ»",
+    });
+    return;
+  }
   const brief: LectureBrief = {
     topic,
     audience: typeof body.audience === "string" && body.audience ? body.audience : "смешанная",
     durationMin: Number.isFinite(durationMin) ? Math.min(480, Math.max(30, durationMin)) : 90,
     mustInclude: typeof body.mustInclude === "string" ? body.mustInclude : undefined,
     mustAvoid: typeof body.mustAvoid === "string" ? body.mustAvoid : undefined,
-    documentIds: Array.isArray(body.documentIds)
-      ? body.documentIds.map(Number).filter(Number.isInteger)
-      : [],
+    documentIds,
+    mode,
   };
 
   const title =

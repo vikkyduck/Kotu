@@ -11,6 +11,7 @@ import {
 } from "@workspace/db";
 import { searchLibrary } from "../../routes/documents";
 import { embedAll } from "../embeddings";
+import { research, isResearchAvailable, type WebSource } from "../perplexity";
 import { registerHandler, enqueue } from "../jobs";
 import { lectureToLibrary } from "../work-doc";
 import { logger } from "../logger";
@@ -69,7 +70,24 @@ async function runPlan(job: Job): Promise<void> {
     .set({ status: "planning", statusMessage: "Смотрю, что есть в библиотеке…", error: null })
     .where(eq(lecturesTable.id, id));
 
-  const excerpts = await findExcerpts(lecture.ownerId, brief.topic, brief.documentIds, 14);
+  // Режим исследования: материал собирает модель, библиотека не обязательна.
+  const isResearch = brief.mode === "research";
+  let material = "";
+  if (isResearch) {
+    if (isResearchAvailable()) {
+      await setStatus(id, "Исследую тему в веб-источниках…");
+      const found = await research(
+        `Тема лекции по психоанализу: ${brief.topic}. Собери материал для плана лекции.`,
+      ).catch((err) => {
+        logger.warn({ err }, "Веб-поиск не ответил — планирую по знаниям модели");
+        return null;
+      });
+      if (found) material = found.summary;
+    }
+  } else {
+    const excerpts = await findExcerpts(lecture.ownerId, brief.topic, brief.documentIds, 14);
+    material = renderExcerpts(excerpts);
+  }
 
   await setStatus(id, "Продумываю структуру…");
 
@@ -79,9 +97,13 @@ async function runPlan(job: Job): Promise<void> {
 
   const system = [
     "Ты помогаешь преподавателю психоанализа спланировать лекцию на русском языке.",
-    "Тебе дан замысел лекции и выдержки из личной библиотеки автора.",
+    isResearch
+      ? "Тебе дан замысел лекции" + (material ? " и материал веб-исследования по теме." : ". Материала нет — опирайся на устоявшиеся знания психоанализа: классические работы, признанных авторов.")
+      : "Тебе дан замысел лекции и выдержки из личной библиотеки автора.",
     `Составь план примерно из ${target} глав на ${brief.durationMin} минут для аудитории: ${brief.audience}.`,
-    "Опирайся на выдержки: план должен быть про то, что в них есть, а не про тему вообще.",
+    isResearch
+      ? "План должен быть конкретным: понятия, авторы, работы — не «обзор темы вообще»."
+      : "Опирайся на выдержки: план должен быть про то, что в них есть, а не про тему вообще.",
     "Главы идут от простого к сложному, каждая продолжает предыдущую, без повторов.",
     'Верни СТРОГО JSON: {"sections":[{"heading":"...","abstract":"..."}]}.',
     "heading — короткий заголовок главы. abstract — два-три предложения о том, что внутри.",
@@ -96,7 +118,11 @@ async function runPlan(job: Job): Promise<void> {
       { role: "system", content: system.join("\n") },
       {
         role: "user",
-        content: `Замысел лекции:\n${brief.topic}\n\nВыдержки из библиотеки:\n\n${renderExcerpts(excerpts)}`,
+        content:
+          `Замысел лекции:\n${brief.topic}` +
+          (material
+            ? `\n\n${isResearch ? "Материал веб-исследования" : "Выдержки из библиотеки"}:\n\n${material}`
+            : ""),
       },
     ],
   });
@@ -174,22 +200,58 @@ async function runWrite(job: Job): Promise<void> {
       .where(eq(lectureSectionsTable.id, section.id));
 
     const query = `${section.heading}. ${section.abstract}`;
-    const excerpts = await findExcerpts(
-      lecture.ownerId,
-      query,
-      brief.documentIds,
-      CHUNKS_PER_SECTION,
-    );
+    const isResearch = brief.mode === "research";
+
+    // Материал главы — по режиму: выдержки библиотеки, веб-исследование
+    // или честное «пишем по знаниям модели», если поиск не настроен.
+    let excerpts: Excerpt[] = [];
+    let webSources: WebSource[] = [];
+    let material = "";
+    let materialLabel = "Выдержки из библиотеки";
+
+    if (!isResearch) {
+      excerpts = await findExcerpts(lecture.ownerId, query, brief.documentIds, CHUNKS_PER_SECTION);
+      material = renderExcerpts(excerpts);
+    } else if (isResearchAvailable()) {
+      await setStatus(id, `Исследую главу ${section.ord + 1} из ${total}: ${section.heading}`);
+      const found = await research(
+        `Глава лекции по психоанализу: «${section.heading}». О чём она: ${section.abstract}. ` +
+          `Тема всей лекции: ${brief.topic}. Собери материал для этой главы.`,
+      ).catch((err) => {
+        logger.warn({ err, sectionId: section.id }, "Веб-поиск не ответил — пишу по знаниям модели");
+        return null;
+      });
+      if (found) {
+        webSources = found.sources;
+        materialLabel = "Материал веб-исследования (ссылки [n] — на источники ниже)";
+        material =
+          found.summary +
+          (found.sources.length > 0
+            ? "\n\nИсточники:\n" + found.sources.map((w) => `[${w.n}] ${w.title} — ${w.url}`).join("\n")
+            : "");
+      }
+    }
+
+    await setStatus(id, `Пишу главу ${section.ord + 1} из ${total}: ${section.heading}`);
 
     const system = [
       "Ты пишешь главу лекции по психоанализу на русском языке для преподавателя.",
       `Аудитория: ${brief.audience}. Это часть лекции «${lecture.title}».`,
       "Пиши живым устным языком, как говорят с кафедры: без канцелярита и без academese.",
-      "Опирайся ТОЛЬКО на предоставленные выдержки. Не выдумывай фактов, дат, имён и цитат.",
-      "Если в выдержках нет нужного — просто не пиши об этом, не додумывай.",
-      "Когда опираешься на выдержку, ставь ссылку в квадратных скобках: [1], [2].",
-      "Ссылку ставь сразу после утверждения, к которому она относится.",
-      "Не пересказывай выдержки подряд — выстрой связное рассуждение.",
+      ...(material !== ""
+        ? [
+            "Опирайся ТОЛЬКО на предоставленный материал. Не выдумывай фактов, дат, имён и цитат.",
+            "Если в материале нет нужного — просто не пиши об этом, не додумывай.",
+            "Когда опираешься на фрагмент материала, ставь ссылку в квадратных скобках: [1], [2].",
+            "Ссылку ставь сразу после утверждения, к которому она относится.",
+            "Не пересказывай материал подряд — выстрой связное рассуждение.",
+          ]
+        : [
+            // Поиска нет: пишем по устоявшимся знаниям, без имитации точности.
+            "Опирайся на устоявшиеся знания психоанализа: классические работы и признанных авторов.",
+            "НЕ выдумывай дословных цитат, точных дат и номеров страниц.",
+            "Работы упоминай по названию только там, где уверен. Ссылок [n] не ставь.",
+          ]),
       "Не повторяй заголовок главы в начале текста.",
       `Объём: примерно ${wordsPerSection} слов — это ${Math.round(wordsPerSection / 125)} минут звучащей речи.`,
       "Разворачивай мысль: примеры, оговорки, переходы — так, как говорят на лекции, а не тезисами.",
@@ -203,8 +265,8 @@ async function runWrite(job: Job): Promise<void> {
         {
           role: "user",
           content:
-            `Глава: ${section.heading}\nО чём она: ${section.abstract}\n\n` +
-            `Выдержки из библиотеки:\n\n${renderExcerpts(excerpts)}`,
+            `Глава: ${section.heading}\nО чём она: ${section.abstract}` +
+            (material !== "" ? `\n\n${materialLabel}:\n\n${material}` : ""),
         },
       ],
     });
@@ -223,18 +285,51 @@ async function runWrite(job: Job): Promise<void> {
       [...text.matchAll(/\[(\d{1,2})\]/g)].map((m) => Number(m[1])).filter((n) => n > 0),
     );
     await db.delete(lectureSourcesTable).where(eq(lectureSourcesTable.sectionId, section.id));
-    const used = excerpts.filter((e) => cited.has(e.n));
-    if (used.length > 0) {
-      await db.insert(lectureSourcesTable).values(
-        used.map((e) => ({
-          lectureId: id,
-          sectionId: section.id,
-          kind: "doc" as const,
-          chunkId: e.chunkId,
-          title: e.heading ? `${e.title} — ${e.heading}` : e.title,
-          quote: e.text.slice(0, 600),
-        })),
-      );
+
+    if (excerpts.length > 0) {
+      const used = excerpts.filter((e) => cited.has(e.n));
+      if (used.length > 0) {
+        await db.insert(lectureSourcesTable).values(
+          used.map((e) => ({
+            lectureId: id,
+            sectionId: section.id,
+            kind: "doc" as const,
+            chunkId: e.chunkId,
+            title: e.heading ? `${e.title} — ${e.heading}` : e.title,
+            quote: e.text.slice(0, 600),
+          })),
+        );
+      }
+    } else if (webSources.length > 0) {
+      // Веб-источник открывается по ссылке; цитатой кладём фразы выжимки,
+      // которые на него ссылались, — их и стоит сверять.
+      const used = webSources.filter((w) => cited.has(w.n));
+      if (used.length > 0) {
+        const sentences = material.split(/(?<=[.!?…])\s+/);
+        await db.insert(lectureSourcesTable).values(
+          used.map((w) => ({
+            lectureId: id,
+            sectionId: section.id,
+            kind: "web" as const,
+            url: w.url,
+            title: w.title.slice(0, 300),
+            quote: (sentences.filter((t) => t.includes(`[${w.n}]`)).join(" ").trim() ||
+              "Найдено веб-поиском — откройте источник по ссылке.").slice(0, 600),
+          })),
+        );
+      }
+    } else if (isResearch) {
+      // Ни библиотеки, ни поиска: говорим об этом прямо, а не молчим.
+      await db.insert(lectureSourcesTable).values({
+        lectureId: id,
+        sectionId: section.id,
+        kind: "model" as const,
+        title: "Написано по знаниям модели",
+        quote:
+          "Веб-поиск не настроен, глава основана на общих знаниях модели: имена, даты и " +
+          "формулировки стоит сверить. Ключ Perplexity (./set-ai-key.sh, пункт 3) включит " +
+          "настоящие источники со ссылками.",
+      });
     }
   }
 
