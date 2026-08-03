@@ -90,7 +90,8 @@
   --ease:cubic-bezier(.22,1,.36,1);
   --fast:150ms;
   --base:320ms;
-  --r-xl:8px; --r-lg:2px; --r-md:2px; --r-sm:0;
+  /* Мягкие углы по просьбе автора: карточки 14, кнопки и поля 10 */
+  --r-xl:20px; --r-lg:16px; --r-md:14px; --r-sm:10px;
 }
 
 /* Бумажная тема — основная. Ключ — «Год Гуру»: тёплая почти белая бумага,
@@ -141,7 +142,7 @@
 :focus-visible{outline:2px solid var(--accent-strong);outline-offset:3px}
 html,body{margin:0;height:100%}
 body{font-family:var(--sans);background:var(--glow),var(--bg);color:var(--ink);
-  font-size:17px;line-height:1.66;letter-spacing:-.011em;
+  font-size:18px;line-height:1.66;letter-spacing:-.01em;
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
   transition:background .3s var(--ease),color .3s var(--ease)}
 /* Бумажное зерно поверх всего — материальность старой печати */
@@ -175,8 +176,8 @@ html{scroll-behavior:smooth}
 .top .back:hover{border-color:var(--accent-strong);background:var(--accent-soft)}
 .top .back .ic-svg{width:19px;height:19px}
 .top.sub .back{display:grid}
-.top .ttl{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:-.02em}
-.top .brand{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:-.02em;
+.top .ttl{font-family:var(--serif);font-size:20px;font-weight:600;letter-spacing:-.02em}
+.top .brand{font-family:var(--serif);font-size:20px;font-weight:600;letter-spacing:-.02em;
   display:flex;align-items:baseline;gap:11px;cursor:pointer}
 /* Знак: кот вместо иконки-плашки, сидит на базовой линии текста */
 .brand-cat{width:27px;height:auto;color:var(--ink-2);flex-shrink:0;align-self:baseline;
@@ -202,15 +203,15 @@ html{scroll-behavior:smooth}
 @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 
 /* ── Типографика ─────────────────────────────────────────────────────── */
-h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:-.035em;
+h1.hello{font-family:var(--serif);font-size:36px;font-weight:600;letter-spacing:-.035em;
   margin:var(--sp-1) 0;line-height:1.02;text-wrap:balance}
-.lead{color:var(--ink-2);font-size:18px;margin:0 0 var(--sp-3);line-height:1.55}
-.h2{font-family:var(--serif);font-size:27px;font-weight:600;letter-spacing:-.03em;margin:0 0 var(--sp-1);line-height:1.05}
-.sub{color:var(--ink-2);font-size:16px;margin:0 0 var(--sp-3)}
-.label,.soon-label{display:flex;align-items:center;gap:8px;font-size:11.5px;
+.lead{color:var(--ink-2);font-size:19px;margin:0 0 var(--sp-3);line-height:1.55}
+.h2{font-family:var(--serif);font-size:29px;font-weight:600;letter-spacing:-.03em;margin:0 0 var(--sp-1);line-height:1.05}
+.sub{color:var(--ink-2);font-size:17px;margin:0 0 var(--sp-3)}
+.label,.soon-label{display:flex;align-items:center;gap:8px;font-size:12.5px;
   text-transform:uppercase;letter-spacing:.13em;color:var(--accent-strong);
   font-weight:500;margin:var(--sp-4) 0 var(--sp-2)}
-.start-hint{margin:4px 2px 2px;font-size:14px;color:var(--muted)}
+.start-hint{margin:4px 2px 2px;font-size:15px;color:var(--muted)}
 
 /* Пустое состояние: короткий текст + одно действие */
 .emptybox{display:flex;flex-direction:column;align-items:flex-start;gap:var(--sp-2);
@@ -243,8 +244,8 @@ h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:
   color:var(--accent-strong);display:grid;place-items:center;flex-shrink:0}
 .task .ti .ic-svg{width:24px;height:24px}
 .task .tb{flex:1;min-width:0}
-.task .tb h3{margin:0 0 3px;font-family:var(--serif);font-size:20px;font-weight:600;letter-spacing:-.02em}
-.task .tb p{margin:0;font-size:14.5px;color:var(--muted);line-height:1.45}
+.task .tb h3{margin:0 0 3px;font-family:var(--serif);font-size:21px;font-weight:600;letter-spacing:-.02em}
+.task .tb p{margin:0;font-size:15.5px;color:var(--muted);line-height:1.45}
 .task .tc{color:var(--muted);flex-shrink:0}
 .task .tc .ic-svg{width:20px;height:20px}
 .task .th-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:3px}
@@ -286,8 +287,8 @@ h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:
   display:grid;place-items:center;flex-shrink:0}
 .resume .ri .ic-svg{width:18px;height:18px}
 .resume .rt{flex:1;min-width:0}
-.resume .rt b{font-size:15.5px;font-weight:500;display:block}
-.resume .rt span{font-size:14px;color:var(--muted)}
+.resume .rt b{font-size:16.5px;font-weight:500;display:block}
+.resume .rt span{font-size:15px;color:var(--muted)}
 .resume .chev{color:var(--muted);opacity:.55}
 .resume .chev.sel-mark{color:var(--accent-strong);opacity:1}
 .resume .chev .ic-svg{width:17px;height:17px}
@@ -320,7 +321,7 @@ h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:
 /* ── Кнопки ──────────────────────────────────────────────────────────── */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:13px 20px;
   border-radius:var(--r-sm);border:1px solid var(--line);background:transparent;color:var(--ink);
-  font-size:15px;cursor:pointer;font-weight:500;letter-spacing:.01em;font-family:inherit;
+  font-size:16px;cursor:pointer;font-weight:500;letter-spacing:.01em;font-family:inherit;
   transition:color var(--fast) ease,border-color var(--fast) ease,background var(--fast) ease,transform var(--fast) ease;
   text-decoration:none}
 .btn:hover{border-color:var(--accent-strong);background:var(--accent-soft)}
@@ -329,7 +330,7 @@ h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:
 /* главная кнопка — «оттиск»: бумага на тёмном / чернила на бумаге */
 .btn.primary{background:var(--press-bg);color:var(--press-ink);border-color:var(--press-bg)}
 .btn.primary:hover{background:var(--accent-strong);border-color:var(--accent-strong);color:var(--accent-contrast)}
-.btn.big{width:100%;padding:16px;font-size:16px}
+.btn.big{width:100%;padding:17px;font-size:17px}
 .btn.ghost{border-color:transparent;background:transparent;color:var(--ink-2);
   border-bottom:1px solid var(--line);border-radius:0;padding:6px 2px}
 .btn.ghost:hover{color:var(--accent-strong);background:transparent;border-bottom-color:var(--accent-strong)}
@@ -344,11 +345,11 @@ h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:
 .howlink{display:inline-flex;align-items:center;gap:7px;margin-top:26px;color:var(--accent-strong);
   font-size:14px;cursor:pointer;background:none;border:none;font-family:inherit;padding:0}
 .howlink .ic-svg{width:16px;height:16px}
-.chg{color:var(--accent-strong);font-size:14px;cursor:pointer;background:none;border:none;
+.chg{color:var(--accent-strong);font-size:15px;cursor:pointer;background:none;border:none;
   font-family:inherit;transition:color var(--fast) ease}
 .chg:hover{color:var(--ink)}
 .inline-link{color:var(--accent-strong);cursor:pointer;text-decoration:underline;text-underline-offset:.2em}
-.back-link{padding:8px 0;margin-bottom:10px;font-size:15.5px}
+.back-link{padding:8px 0;margin-bottom:10px;font-size:16.5px}
 .dim{opacity:.6}
 
 /* ── Формы ───────────────────────────────────────────────────────────── */
@@ -362,10 +363,10 @@ input.field:focus,textarea.topic:focus,.sheet textarea:focus{outline:none;
 input.field::placeholder,textarea.topic::placeholder,.sheet textarea::placeholder{color:var(--muted);opacity:1}
 /* автозаполнение WebKit на тёмном — без жёлтой заливки */
 input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-webkit-text-fill-color:var(--ink)}
-.fieldlbl{font-size:14px;font-weight:500;letter-spacing:.04em;margin:18px 0 9px;color:var(--ink-2)}
+.fieldlbl{font-size:15px;font-weight:500;letter-spacing:.04em;margin:18px 0 9px;color:var(--ink-2)}
 .fieldlbl:first-child{margin-top:0}
 .pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
-.pill-opt{font-size:15px;padding:9px 15px;border-radius:var(--r-sm);border:1px solid var(--line);
+.pill-opt{font-size:16px;padding:9px 15px;border-radius:var(--r-sm);border:1px solid var(--line);
   background:transparent;color:var(--ink-2);cursor:pointer;font-family:inherit;
   transition:color var(--fast) ease,border-color var(--fast) ease,background var(--fast) ease}
 .pill-opt:hover{border-color:var(--accent-strong);color:var(--ink)}
@@ -466,7 +467,7 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
 .bigjob .bi .ic-svg{width:28px;height:28px}
 
 /* ── Расшифровка ─────────────────────────────────────────────────────── */
-.tnote{font-size:14.5px;color:var(--muted);margin:0 0 14px;display:flex;gap:8px;align-items:flex-start}
+.tnote{font-size:15.5px;color:var(--muted);margin:0 0 14px;display:flex;gap:8px;align-items:flex-start}
 .tnote .ic-svg{width:16px;height:16px;color:var(--accent-strong);flex-shrink:0;margin-top:2px}
 .tline{padding:14px 0;border-bottom:1px solid var(--hairline);position:relative}
 .tline:last-child{border-bottom:none}
@@ -605,11 +606,11 @@ button.doc-card{cursor:pointer;width:100%;font-size:inherit;
   transition:border-color var(--fast) ease,background var(--fast) ease}
 button.doc-card:hover{border-color:var(--accent-strong)}
 .doc-ico{display:flex;align-items:center;justify-content:center;width:36px;height:36px;flex-shrink:0;
-  border:1px solid var(--line);color:var(--ink-2)}
+  border:1px solid var(--line);border-radius:var(--r-sm);color:var(--ink-2)}
 .doc-ico .ic-svg{width:17px;height:17px}
 .doc-body{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
-.doc-title{font-size:16px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.doc-meta{font-size:14px;color:var(--muted)}
+.doc-title{font-size:17px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-meta{font-size:15px;color:var(--muted)}
 .doc-meta.busy{color:var(--amber)}
 .doc-meta.bad{color:var(--danger-strong)}
 .doc-del{flex-shrink:0;padding:9px 12px;font-size:13.5px}
@@ -682,7 +683,7 @@ button.doc-card:hover{border-color:var(--accent-strong)}
   .dropzone{padding:16px;gap:11px}
   .dz-text b{font-size:14.5px}
   .doc-card{padding:12px 13px;gap:11px}
-  .doc-title{font-size:15px}
+  .doc-title{font-size:16px}
   .lec-head{font-size:19px}
   .lec-para{font-size:15.5px;line-height:1.68}
 }
@@ -815,8 +816,8 @@ button.doc-card:hover{border-color:var(--accent-strong)}
   border:1px solid var(--line);color:var(--accent-strong)}
 .folder-tile-ico .ic-svg{width:19px;height:19px}
 .folder-tile-body{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
-.folder-tile-body b{font-size:16px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.folder-tile-body span{font-size:14px;color:var(--muted)}
+.folder-tile-body b{font-size:17px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.folder-tile-body span{font-size:15px;color:var(--muted)}
 .folder-tile-chev{color:var(--muted);flex-shrink:0}
 .folder-tile-chev .ic-svg{width:17px;height:17px}
 /* Цель перетаскивания — плитка целиком, промахнуться сложно */
@@ -859,7 +860,7 @@ button.doc-card:hover{border-color:var(--accent-strong)}
 
 /* Поля ввода — ровно 16px: при меньшем кегле iOS зумит страницу на фокусе,
    и человек проваливается в увеличенный экран без пути назад. */
-input.field,textarea.topic,.sheet textarea{font-size:16px}
+input.field,textarea.topic,.sheet textarea{font-size:17px}
 
 /* Пластины презентации: на телефоне две колонки превращают слайд в марку */
 @media(max-width:560px){
@@ -1006,9 +1007,9 @@ input.field,textarea.topic,.sheet textarea{font-size:16px}
   background:var(--accent-soft);color:var(--accent-strong);display:grid;place-items:center;
   border-radius:var(--r-sm)}
 .tool-ic .ic-svg{width:20px;height:20px}
-.tool b{grid-area:ttl;font-family:var(--serif);font-size:18px;font-weight:600;
+.tool b{grid-area:ttl;font-family:var(--serif);font-size:20px;font-weight:600;
   letter-spacing:-.02em;align-self:end}
-.tool span:last-child{grid-area:sub;font-size:14.5px;color:var(--muted);align-self:start}
+.tool span:last-child{grid-area:sub;font-size:15.5px;color:var(--muted);align-self:start}
 @media(min-width:620px){
   .tools{grid-template-columns:repeat(3,1fr)}
   .tool{grid-template-columns:1fr;grid-template-areas:"ic" "ttl" "sub";gap:8px 0;
