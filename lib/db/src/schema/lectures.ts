@@ -27,6 +27,12 @@ export interface LectureBrief {
   mustAvoid?: string;
   documentIds: number[];
   /**
+   * Акцент лекции — из промпта автора: что важнее в этот раз. Меняет и план,
+   * и тон глав: клиника тянет к случаям и технике, теория к концептуальному
+   * аппарату, история к генезису понятия и датам.
+   */
+  focus?: "clinical" | "theoretical" | "historical";
+  /**
    * Откуда материал: 'library' — из выбранных документов библиотеки (как
    * всегда было; отсутствие поля читается так же), 'research' — библиотека
    * не обязательна, модель исследует тему сама: через веб-поиск с источниками,
@@ -35,10 +41,34 @@ export interface LectureBrief {
   mode?: "library" | "research";
 }
 
-/** Одна глава в плане — до того, как она написана. */
+/**
+ * Один блок плана — до того, как он написан. Состав задан методикой автора:
+ * тезис, опорные концепции с авторами и «крючок» — вопрос, который держит
+ * внимание профессиональной аудитории.
+ */
 export interface PlannedSection {
   heading: string;
+  /** Тезис блока: одно-два предложения. */
   abstract: string;
+  /** Опорные концепции и авторы этого блока. */
+  concepts?: string[];
+  /** Клинический или теоретический «крючок» — вопрос для аудитории. */
+  hook?: string;
+}
+
+/**
+ * То, что сопровождает план и требует авторского решения ДО написания текста:
+ * что сознательно вынесено за скобки и где нужно занять позицию.
+ */
+export interface LecturePlanNotes {
+  outOfScope: string[];
+  decisions: string[];
+}
+
+/** Литература двумя уровнями — как просит методика: истоки и современность. */
+export interface Bibliography {
+  primary: string[];
+  modern: string[];
 }
 
 export const lecturesTable = pgTable("lectures", {
@@ -54,6 +84,10 @@ export const lecturesTable = pgTable("lectures", {
   folderId: integer("folder_id"),
   brief: jsonb("brief").$type<LectureBrief>().notNull(),
   plan: jsonb("plan").$type<PlannedSection[]>(),
+  /** Спутники плана: что за скобками и какие решения ждут автора. */
+  planNotes: jsonb("plan_notes").$type<LecturePlanNotes | null>(),
+  /** Список литературы двумя уровнями — собирается после написания глав. */
+  bibliography: jsonb("bibliography").$type<Bibliography | null>(),
   /**
    * Человек в цикле: пока план не утверждён, ни одна глава не пишется.
    * Согласовать структуру дешевле, чем переписывать шесть часов текста.
