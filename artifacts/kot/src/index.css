@@ -52,9 +52,9 @@
   --panel-2:#39322e;            /* Umber Shadow — поднятая поверхность */
   --paper:#d8c7a7;              /* Aged Paper */
   --paper-deep:#c4ad87;         /* Deep Sepia */
-  --ink:#e5d8c1;                /* Chalk Vellum — основной текст */
-  --ink-2:#cbb99d;              /* вторичный текст */
-  --muted:#9f917c;              /* Faded Script — подписи */
+  --ink:#F0EBE2;                /* тёплый почти белый: бежевые буквы ушли */
+  --ink-2:#D2CABC;              /* вторичный текст */
+  --muted:#ABA294;              /* подписи */
   --ink-etch:#302b27;           /* Etching Ink — текст на бумаге */
   --line:#65594e;               /* Hairline Sepia */
   --hairline:rgba(229,216,193,.12);
@@ -93,27 +93,29 @@
   --r-xl:8px; --r-lg:2px; --r-md:2px; --r-sm:0;
 }
 
-/* Бумажная тема — «длинное чтение»: Etching Ink на Aged Paper */
+/* Бумажная тема — основная. Ключ — «Год Гуру»: тёплая почти белая бумага,
+   почти чёрная тушь, высокий контраст. Прежняя густо-бежевая бумага осталась
+   в истории: на ней текст выглядел выцветшим и читался с трудом. */
 [data-theme="light"]{
   color-scheme:light;
-  --bg:#d8c7a7;
-  --bg-2:#cdbb98;
-  --panel:#e0d2b4;
-  --panel-2:#cdbb98;
-  --paper:#e7dcc4;
-  --paper-deep:#c4ad87;
-  --ink:#302b27;
-  --ink-2:#4c4339;
-  --muted:#4f473d;
-  --ink-etch:#302b27;
-  --line:#8d765b;
-  --hairline:rgba(48,43,39,.18);
+  --bg:#FBF9F3;
+  --bg-2:#F3EEE2;
+  --panel:#F6F2E9;
+  --panel-2:#EDE6D7;
+  --paper:#EFE8D9;
+  --paper-deep:#DECFB2;
+  --ink:#1D1915;
+  --ink-2:#453D33;
+  --muted:#5C5347;
+  --ink-etch:#241F1A;
+  --line:#D3CABA;
+  --hairline:rgba(29,25,21,.14);
   --accent:#7b432f;
   --accent-strong:#6f3c2a;
   --accent-soft:rgba(123,67,47,.12);
   --accent-ink:#5e3624;
   --steel:#5c6678;
-  --steel-text:#414a5a;
+  --steel-text:#3E4756;
   --green:#5f7158;
   --green-soft:rgba(95,113,88,.14);
   --amber:#5f472a;
@@ -123,14 +125,14 @@
   --danger-press:#7a4038;
   --accent-contrast:#e5d8c1;
   --danger-soft:rgba(149,90,82,.14);
-  --topbar-bg:rgba(216,199,167,.92);
-  --press-bg:#302b27;
-  --press-ink:#e5d8c1;
-  --shadow-sm:0 1px 0 rgba(48,43,39,.06);
-  --shadow:0 14px 38px rgba(49,35,24,.16);
-  --shadow-lg:0 28px 70px rgba(49,35,24,.24);
-  --plate-shadow:14px 14px 0 rgba(103,113,132,.12);
-  --noise-opacity:.1;
+  --topbar-bg:rgba(251,249,243,.94);
+  --press-bg:#241F1A;
+  --press-ink:#F2EDE3;
+  --shadow-sm:0 1px 0 rgba(48,43,39,.05);
+  --shadow:0 14px 38px rgba(49,35,24,.10);
+  --shadow-lg:0 28px 70px rgba(49,35,24,.16);
+  --plate-shadow:14px 14px 0 rgba(103,113,132,.10);
+  --noise-opacity:.05;
   --glow:none;
 }
 
@@ -139,7 +141,7 @@
 :focus-visible{outline:2px solid var(--accent-strong);outline-offset:3px}
 html,body{margin:0;height:100%}
 body{font-family:var(--sans);background:var(--glow),var(--bg);color:var(--ink);
-  font-size:15.5px;line-height:1.65;letter-spacing:-.012em;
+  font-size:17px;line-height:1.66;letter-spacing:-.011em;
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
   transition:background .3s var(--ease),color .3s var(--ease)}
 /* Бумажное зерно поверх всего — материальность старой печати */
@@ -202,24 +204,24 @@ html{scroll-behavior:smooth}
 /* ── Типографика ─────────────────────────────────────────────────────── */
 h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:-.035em;
   margin:var(--sp-1) 0;line-height:1.02;text-wrap:balance}
-.lead{color:var(--ink-2);font-size:16.5px;margin:0 0 var(--sp-3);line-height:1.55}
+.lead{color:var(--ink-2);font-size:18px;margin:0 0 var(--sp-3);line-height:1.55}
 .h2{font-family:var(--serif);font-size:27px;font-weight:600;letter-spacing:-.03em;margin:0 0 var(--sp-1);line-height:1.05}
-.sub{color:var(--ink-2);font-size:15px;margin:0 0 var(--sp-3)}
+.sub{color:var(--ink-2);font-size:16px;margin:0 0 var(--sp-3)}
 .label,.soon-label{display:flex;align-items:center;gap:8px;font-size:11.5px;
   text-transform:uppercase;letter-spacing:.13em;color:var(--accent-strong);
   font-weight:500;margin:var(--sp-4) 0 var(--sp-2)}
-.start-hint{margin:4px 2px 2px;font-size:12.5px;color:var(--muted)}
+.start-hint{margin:4px 2px 2px;font-size:14px;color:var(--muted)}
 
 /* Пустое состояние: короткий текст + одно действие */
 .emptybox{display:flex;flex-direction:column;align-items:flex-start;gap:var(--sp-2);
   margin:0 0 var(--sp-3);padding:var(--sp-3);border:1px solid var(--line)}
-.emptybox .start-hint{margin:0;font-size:14.5px;color:var(--ink-2)}
+.emptybox .start-hint{margin:0;font-size:15.5px;color:var(--ink-2)}
 
 /* Ошибка: заголовок, причина, одно действие */
 .errblock{margin:0 0 var(--sp-3)}
 .errblock .errttl{font-family:var(--serif);font-size:24px;font-weight:600;letter-spacing:-.02em;
   margin:0 0 var(--sp-1)}
-.errblock .errwhy{margin:0 0 var(--sp-3);font-size:14.5px;color:var(--ink-2)}
+.errblock .errwhy{margin:0 0 var(--sp-3);font-size:15.5px;color:var(--ink-2)}
 
 /* ── Обещание (плашка-заверение) ─────────────────────────────────────── */
 .promise{display:flex;align-items:center;gap:13px;margin-bottom:26px;padding:14px 16px;
@@ -242,7 +244,7 @@ h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:
 .task .ti .ic-svg{width:24px;height:24px}
 .task .tb{flex:1;min-width:0}
 .task .tb h3{margin:0 0 3px;font-family:var(--serif);font-size:20px;font-weight:600;letter-spacing:-.02em}
-.task .tb p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.45}
+.task .tb p{margin:0;font-size:14.5px;color:var(--muted);line-height:1.45}
 .task .tc{color:var(--muted);flex-shrink:0}
 .task .tc .ic-svg{width:20px;height:20px}
 .task .th-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:3px}
@@ -284,8 +286,8 @@ h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:
   display:grid;place-items:center;flex-shrink:0}
 .resume .ri .ic-svg{width:18px;height:18px}
 .resume .rt{flex:1;min-width:0}
-.resume .rt b{font-size:14.5px;font-weight:500;display:block}
-.resume .rt span{font-size:12.5px;color:var(--muted)}
+.resume .rt b{font-size:15.5px;font-weight:500;display:block}
+.resume .rt span{font-size:14px;color:var(--muted)}
 .resume .chev{color:var(--muted);opacity:.55}
 .resume .chev.sel-mark{color:var(--accent-strong);opacity:1}
 .resume .chev .ic-svg{width:17px;height:17px}
@@ -318,7 +320,7 @@ h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:
 /* ── Кнопки ──────────────────────────────────────────────────────────── */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:13px 20px;
   border-radius:var(--r-sm);border:1px solid var(--line);background:transparent;color:var(--ink);
-  font-size:14px;cursor:pointer;font-weight:500;letter-spacing:.01em;font-family:inherit;
+  font-size:15px;cursor:pointer;font-weight:500;letter-spacing:.01em;font-family:inherit;
   transition:color var(--fast) ease,border-color var(--fast) ease,background var(--fast) ease,transform var(--fast) ease;
   text-decoration:none}
 .btn:hover{border-color:var(--accent-strong);background:var(--accent-soft)}
@@ -327,7 +329,7 @@ h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:
 /* главная кнопка — «оттиск»: бумага на тёмном / чернила на бумаге */
 .btn.primary{background:var(--press-bg);color:var(--press-ink);border-color:var(--press-bg)}
 .btn.primary:hover{background:var(--accent-strong);border-color:var(--accent-strong);color:var(--accent-contrast)}
-.btn.big{width:100%;padding:16px;font-size:15px}
+.btn.big{width:100%;padding:16px;font-size:16px}
 .btn.ghost{border-color:transparent;background:transparent;color:var(--ink-2);
   border-bottom:1px solid var(--line);border-radius:0;padding:6px 2px}
 .btn.ghost:hover{color:var(--accent-strong);background:transparent;border-bottom-color:var(--accent-strong)}
@@ -342,11 +344,11 @@ h1.hello{font-family:var(--serif);font-size:34px;font-weight:600;letter-spacing:
 .howlink{display:inline-flex;align-items:center;gap:7px;margin-top:26px;color:var(--accent-strong);
   font-size:14px;cursor:pointer;background:none;border:none;font-family:inherit;padding:0}
 .howlink .ic-svg{width:16px;height:16px}
-.chg{color:var(--accent-strong);font-size:13px;cursor:pointer;background:none;border:none;
+.chg{color:var(--accent-strong);font-size:14px;cursor:pointer;background:none;border:none;
   font-family:inherit;transition:color var(--fast) ease}
 .chg:hover{color:var(--ink)}
 .inline-link{color:var(--accent-strong);cursor:pointer;text-decoration:underline;text-underline-offset:.2em}
-.back-link{padding:8px 0;margin-bottom:10px;font-size:14.5px}
+.back-link{padding:8px 0;margin-bottom:10px;font-size:15.5px}
 .dim{opacity:.6}
 
 /* ── Формы ───────────────────────────────────────────────────────────── */
@@ -360,10 +362,10 @@ input.field:focus,textarea.topic:focus,.sheet textarea:focus{outline:none;
 input.field::placeholder,textarea.topic::placeholder,.sheet textarea::placeholder{color:var(--muted);opacity:1}
 /* автозаполнение WebKit на тёмном — без жёлтой заливки */
 input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-webkit-text-fill-color:var(--ink)}
-.fieldlbl{font-size:13px;font-weight:500;letter-spacing:.04em;margin:18px 0 9px;color:var(--ink-2)}
+.fieldlbl{font-size:14px;font-weight:500;letter-spacing:.04em;margin:18px 0 9px;color:var(--ink-2)}
 .fieldlbl:first-child{margin-top:0}
 .pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
-.pill-opt{font-size:14px;padding:9px 15px;border-radius:var(--r-sm);border:1px solid var(--line);
+.pill-opt{font-size:15px;padding:9px 15px;border-radius:var(--r-sm);border:1px solid var(--line);
   background:transparent;color:var(--ink-2);cursor:pointer;font-family:inherit;
   transition:color var(--fast) ease,border-color var(--fast) ease,background var(--fast) ease}
 .pill-opt:hover{border-color:var(--accent-strong);color:var(--ink)}
@@ -377,7 +379,7 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
 .setrow .si .ic-svg{width:13px;height:13px;transform:rotate(-45deg)}
 .setrow .si.off{border-color:var(--line);color:var(--muted)}
 .setrow .st{flex:1}
-.setrow .st p{margin:0;font-size:14.5px;line-height:1.5}
+.setrow .st p{margin:0;font-size:15.5px;line-height:1.5}
 .setrow .st .chg{padding:4px 0 0;display:inline-block}
 .setrow .opts{margin-top:8px;display:none;flex-direction:column;gap:7px}
 .setrow .opts.open{display:flex}
@@ -399,14 +401,14 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
   display:grid;place-items:center;margin:0 auto 14px;transform:rotate(45deg)}
 .drop .dz .ic-svg{width:24px;height:24px;transform:rotate(-45deg)}
 .drop b{color:var(--ink);font-size:15.5px;font-weight:500}
-.drop .hint{font-size:13px;margin-top:8px}
+.drop .hint{font-size:14.5px;margin-top:8px}
 .filecard{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);
   border-radius:var(--r-md);padding:15px 16px;box-shadow:var(--shadow-sm)}
 .filecard .fi{width:42px;height:42px;border:1px solid var(--line);background:var(--accent-soft);
   color:var(--accent-strong);display:grid;place-items:center;flex-shrink:0}
 .filecard .fi .ic-svg{width:20px;height:20px}
-.filecard b{font-size:14.5px;font-weight:500;display:block;overflow:hidden;text-overflow:ellipsis}
-.filecard span{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.filecard b{font-size:15.5px;font-weight:500;display:block;overflow:hidden;text-overflow:ellipsis}
+.filecard span{font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums}
 .filecard .chg{margin-left:auto;flex-shrink:0}
 
 /* ── Шаги ────────────────────────────────────────────────────────────── */
@@ -455,7 +457,7 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
   margin:var(--sp-1) 0 var(--sp-1)}
 .proc .pbar{height:2px;background:var(--hairline);overflow:hidden;margin:18px auto 14px;max-width:280px}
 .proc .pbar i{display:block;height:100%;width:0;background:var(--accent-strong);transition:width .5s var(--ease)}
-.proc .preassure{font-size:13.5px;color:var(--muted);max-width:360px;margin:0 auto;line-height:1.55}
+.proc .preassure{font-size:15px;color:var(--muted);max-width:360px;margin:0 auto;line-height:1.55}
 
 /* ── Долгая работа (лекция/презентация) ──────────────────────────────── */
 .bigjob{text-align:center;padding:8px 6px}
@@ -464,7 +466,7 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
 .bigjob .bi .ic-svg{width:28px;height:28px}
 
 /* ── Расшифровка ─────────────────────────────────────────────────────── */
-.tnote{font-size:13.5px;color:var(--muted);margin:0 0 14px;display:flex;gap:8px;align-items:flex-start}
+.tnote{font-size:14.5px;color:var(--muted);margin:0 0 14px;display:flex;gap:8px;align-items:flex-start}
 .tnote .ic-svg{width:16px;height:16px;color:var(--accent-strong);flex-shrink:0;margin-top:2px}
 .tline{padding:14px 0;border-bottom:1px solid var(--hairline);position:relative}
 .tline:last-child{border-bottom:none}
@@ -606,8 +608,8 @@ button.doc-card:hover{border-color:var(--accent-strong)}
   border:1px solid var(--line);color:var(--ink-2)}
 .doc-ico .ic-svg{width:17px;height:17px}
 .doc-body{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
-.doc-title{font-size:14.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.doc-meta{font-size:12.5px;color:var(--muted)}
+.doc-title{font-size:16px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-meta{font-size:14px;color:var(--muted)}
 .doc-meta.busy{color:var(--amber)}
 .doc-meta.bad{color:var(--danger-strong)}
 .doc-del{flex-shrink:0;padding:9px 12px;font-size:13.5px}
@@ -680,7 +682,7 @@ button.doc-card:hover{border-color:var(--accent-strong)}
   .dropzone{padding:16px;gap:11px}
   .dz-text b{font-size:14.5px}
   .doc-card{padding:12px 13px;gap:11px}
-  .doc-title{font-size:14px}
+  .doc-title{font-size:15px}
   .lec-head{font-size:19px}
   .lec-para{font-size:15.5px;line-height:1.68}
 }
@@ -813,8 +815,8 @@ button.doc-card:hover{border-color:var(--accent-strong)}
   border:1px solid var(--line);color:var(--accent-strong)}
 .folder-tile-ico .ic-svg{width:19px;height:19px}
 .folder-tile-body{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
-.folder-tile-body b{font-size:15px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.folder-tile-body span{font-size:12.5px;color:var(--muted)}
+.folder-tile-body b{font-size:16px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.folder-tile-body span{font-size:14px;color:var(--muted)}
 .folder-tile-chev{color:var(--muted);flex-shrink:0}
 .folder-tile-chev .ic-svg{width:17px;height:17px}
 /* Цель перетаскивания — плитка целиком, промахнуться сложно */
@@ -1006,7 +1008,7 @@ input.field,textarea.topic,.sheet textarea{font-size:16px}
 .tool-ic .ic-svg{width:20px;height:20px}
 .tool b{grid-area:ttl;font-family:var(--serif);font-size:18px;font-weight:600;
   letter-spacing:-.02em;align-self:end}
-.tool span:last-child{grid-area:sub;font-size:13px;color:var(--muted);align-self:start}
+.tool span:last-child{grid-area:sub;font-size:14.5px;color:var(--muted);align-self:start}
 @media(min-width:620px){
   .tools{grid-template-columns:repeat(3,1fr)}
   .tool{grid-template-columns:1fr;grid-template-areas:"ic" "ttl" "sub";gap:8px 0;
