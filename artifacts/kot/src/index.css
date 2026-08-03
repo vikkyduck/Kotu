@@ -1056,3 +1056,16 @@ input.field.lib-search{margin:0 0 var(--sp-2)}
 .draft-note .ic-svg{width:15px;height:15px;color:var(--accent-strong);flex-shrink:0;margin-top:2px}
 /* Ссылка веб-источника под главой: видно, что открывается и сверяется */
 .lec-sources a{color:var(--accent-strong);text-decoration:underline;text-underline-offset:3px}
+
+/* ── План по методике автора: концепции, «крючок», спутники плана ────────── */
+.plan-concepts{display:block;font-size:14px;color:var(--steel-text);margin-top:4px}
+.plan-hook{display:block;font-size:14.5px;color:var(--accent-strong);margin-top:6px;font-style:italic}
+.plan-notes{margin-top:14px}
+.plan-notes ul{margin:0;padding-left:20px}
+.plan-notes li{margin:6px 0;font-size:15.5px;line-height:1.5}
+
+/* Литература двумя уровнями под готовой лекцией */
+.biblio{margin-top:20px}
+.biblio-lvl{margin:14px 0 6px;font-size:14px;font-weight:700;color:var(--ink-2)}
+.biblio ol{margin:0;padding-left:22px}
+.biblio li{margin:6px 0;font-size:15.5px;line-height:1.5}

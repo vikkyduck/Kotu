@@ -1,11 +1,12 @@
 import { Router, type IRouter } from "express";
-import { eq, and, asc, desc } from "drizzle-orm";
+import { eq, and, asc, desc, sql } from "drizzle-orm";
 import {
   db,
   lecturesTable,
   lectureSectionsTable,
   lectureSourcesTable,
   documentsTable,
+  jobsTable,
   type LectureBrief,
   type PlannedSection,
 } from "@workspace/db";
@@ -117,6 +118,10 @@ router.post("/lectures", async (req, res): Promise<void> => {
     mustAvoid: typeof body.mustAvoid === "string" ? body.mustAvoid : undefined,
     documentIds,
     mode,
+    focus:
+      body.focus === "clinical" || body.focus === "historical" || body.focus === "theoretical"
+        ? body.focus
+        : "theoretical",
   };
 
   const title =
@@ -163,10 +168,16 @@ router.patch("/lectures/:id/plan", async (req, res): Promise<void> => {
     return;
   }
 
+  // Опорные концепции и «крючок» переживают правку плана: автор убирает и
+  // переставляет блоки, а замысел каждого блока остаётся при нём.
   const plan: PlannedSection[] = incoming
     .map((s: Record<string, unknown>) => ({
       heading: typeof s.heading === "string" ? s.heading.trim() : "",
       abstract: typeof s.abstract === "string" ? s.abstract : "",
+      concepts: Array.isArray(s.concepts)
+        ? s.concepts.filter((c: unknown): c is string => typeof c === "string")
+        : [],
+      hook: typeof s.hook === "string" ? s.hook : "",
     }))
     .filter((s: PlannedSection) => s.heading !== "");
 
@@ -274,6 +285,13 @@ router.delete("/lectures/:id", async (req, res): Promise<void> => {
     res.status(404).json({ message: "Лекция не найдена" });
     return;
   }
+  // Задачи снимаем первыми: иначе они остаются в очереди, падают на
+  // «лекция не найдена», уходят в повтор и держат единственный воркер —
+  // соседние работы ждут на пустом месте.
+  await db
+    .delete(jobsTable)
+    .where(and(sql`${jobsTable.kind} LIKE 'lecture.%'`, eq(jobsTable.entityId, lecture.id)));
+
   // Текст лекции в поиске — часть самой лекции, а не отдельный документ:
   // уходит вместе с ней, иначе в библиотеке остался бы призрак.
   await dropLectureCopies(lecture.id);
@@ -296,6 +314,21 @@ router.get("/lectures/:id/export", async (req, res): Promise<void> => {
     if (used.length > 0) {
       parts.push("**Источники:**", "");
       used.forEach((s, i) => parts.push(`${i + 1}. ${s.title}`));
+      parts.push("");
+    }
+  }
+
+  const bib = full.bibliography;
+  if (bib && (bib.primary.length > 0 || bib.modern.length > 0)) {
+    parts.push("## Литература", "");
+    if (bib.primary.length > 0) {
+      parts.push("**Первоисточники**", "");
+      bib.primary.forEach((b, i) => parts.push(`${i + 1}. ${b}`));
+      parts.push("");
+    }
+    if (bib.modern.length > 0) {
+      parts.push("**Современные работы для углубления**", "");
+      bib.modern.forEach((b, i) => parts.push(`${i + 1}. ${b}`));
       parts.push("");
     }
   }

@@ -20,6 +20,20 @@ const DOC_KIND_RU: Record<string, string> = {
 interface PlanItem {
   heading: string;
   abstract: string;
+  concepts?: string[];
+  hook?: string;
+}
+
+/** Спутники плана: что за скобками и где нужно решение автора. */
+interface PlanNotes {
+  outOfScope: string[];
+  decisions: string[];
+}
+
+/** Литература двумя уровнями — истоки и современность. */
+interface Bibliography {
+  primary: string[];
+  modern: string[];
 }
 
 interface Section {
@@ -44,6 +58,8 @@ interface LectureFull {
   id: number;
   title: string;
   plan: PlanItem[] | null;
+  planNotes: PlanNotes | null;
+  bibliography: Bibliography | null;
   planApproved: boolean;
   status: 'planning' | 'plan_ready' | 'writing' | 'ready' | 'error';
   statusMessage: string;
@@ -53,6 +69,12 @@ interface LectureFull {
 }
 
 const AUDIENCES = ['студенты', 'коллеги', 'смешанная'];
+const FOCUS = [
+  { value: 'theoretical', label: 'теоретический' },
+  { value: 'clinical', label: 'клинический' },
+  { value: 'historical', label: 'исторический' },
+] as const;
+
 const DURATIONS = [
   { label: '1 час', value: 60 },
   { label: '2–3 часа', value: 150 },
@@ -74,6 +96,8 @@ export function Lecture() {
   const [picked, setPicked] = useState<number[]>([]);
   /** Откуда материал: из выбранных документов или собственное исследование ИИ. */
   const [mode, setMode] = useState<'library' | 'research'>('library');
+  /** Акцент: что важнее в этот раз — клиника, теория или история понятия. */
+  const [focus, setFocus] = useState<'clinical' | 'theoretical' | 'historical'>('theoretical');
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
@@ -141,6 +165,7 @@ export function Lecture() {
           topic,
           audience,
           durationMin: duration,
+          focus,
           mode,
           documentIds: mode === 'library' ? picked : [],
         }),
@@ -245,6 +270,10 @@ export function Lecture() {
                   <div className="doc-body">
                     <b className="plan-head">{p.heading}</b>
                     <span className="doc-meta">{p.abstract}</span>
+                    {(p.concepts?.length ?? 0) > 0 && (
+                      <span className="plan-concepts">{p.concepts!.join(' · ')}</span>
+                    )}
+                    {p.hook && <span className="plan-hook">{p.hook}</span>}
                   </div>
                   <button
                     className="btn ghost doc-del"
@@ -256,6 +285,24 @@ export function Lecture() {
                 </div>
               ))}
             </div>
+            {/* Спутники плана: их автор решает ДО того, как написан текст */}
+            {(lecture.planNotes?.decisions.length ?? 0) > 0 && (
+              <div className="panel plan-notes">
+                <div className="fieldlbl" style={{ marginTop: 0 }}>Требуют вашего решения</div>
+                <ul>
+                  {lecture.planNotes!.decisions.map((d, i) => <li key={i}>{d}</li>)}
+                </ul>
+              </div>
+            )}
+            {(lecture.planNotes?.outOfScope.length ?? 0) > 0 && (
+              <div className="panel plan-notes">
+                <div className="fieldlbl" style={{ marginTop: 0 }}>Сознательно за скобками</div>
+                <ul>
+                  {lecture.planNotes!.outOfScope.map((d, i) => <li key={i}>{d}</li>)}
+                </ul>
+              </div>
+            )}
+
             <button
               className="btn primary big"
               disabled={busy}
@@ -345,6 +392,26 @@ export function Lecture() {
           </div>
         )}
 
+        {/* Литература двумя уровнями — хвост методики: истоки и современность */}
+        {lecture.status === 'ready' && lecture.bibliography &&
+          (lecture.bibliography.primary.length > 0 || lecture.bibliography.modern.length > 0) && (
+          <div className="panel biblio">
+            <div className="fieldlbl" style={{ marginTop: 0 }}>Литература</div>
+            {lecture.bibliography.primary.length > 0 && (
+              <>
+                <p className="biblio-lvl">Первоисточники</p>
+                <ol>{lecture.bibliography.primary.map((b, i) => <li key={i}>{b}</li>)}</ol>
+              </>
+            )}
+            {lecture.bibliography.modern.length > 0 && (
+              <>
+                <p className="biblio-lvl">Современные работы для углубления</p>
+                <ol>{lecture.bibliography.modern.map((b, i) => <li key={i}>{b}</li>)}</ol>
+              </>
+            )}
+          </div>
+        )}
+
         {lecture.status === 'ready' && (
           <a
             className="btn big"
@@ -399,6 +466,19 @@ export function Lecture() {
               onClick={() => setDuration(d.value)}
             >
               {d.label}
+            </span>
+          ))}
+        </div>
+
+        <div className="fieldlbl">Что важнее в этой лекции?</div>
+        <div className="pills">
+          {FOCUS.map((f) => (
+            <span
+              key={f.value}
+              className={`pill-opt ${focus === f.value ? 'on' : ''}`}
+              onClick={() => setFocus(f.value)}
+            >
+              {f.label}
             </span>
           ))}
         </div>

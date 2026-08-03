@@ -8,15 +8,18 @@ import {
   type Job,
   type LectureBrief,
   type PlannedSection,
+  type LecturePlanNotes,
+  type Bibliography,
 } from "@workspace/db";
 import { searchLibrary } from "../../routes/documents";
 import { embedAll } from "../embeddings";
 import { research, isResearchAvailable, type WebSource } from "../perplexity";
+import { planPrompt, sectionPrompt, bibliographyPrompt } from "../lecture-prompt";
 import { registerHandler, enqueue } from "../jobs";
 import { lectureToLibrary } from "../work-doc";
 import { logger } from "../logger";
 
-const MODEL = process.env["MODEL_LECTURE"] ?? "gpt-5";
+const MODEL = process.env["MODEL_LECTURE"] ?? "gpt-5.6-terra";
 
 /** Сколько фрагментов библиотеки даём модели на одну главу. */
 const CHUNKS_PER_SECTION = 10;
@@ -91,46 +94,39 @@ async function runPlan(job: Job): Promise<void> {
 
   await setStatus(id, "Продумываю структуру…");
 
-  // Ориентир: примерно 12 минут речи на главу — так шестичасовая лекция
-  // не превращается в три необъятных куска.
-  const target = Math.max(3, Math.min(14, Math.round(brief.durationMin / 12)));
-
-  const system = [
-    "Ты помогаешь преподавателю психоанализа спланировать лекцию на русском языке.",
-    isResearch
-      ? "Тебе дан замысел лекции" + (material ? " и материал веб-исследования по теме." : ". Материала нет — опирайся на устоявшиеся знания психоанализа: классические работы, признанных авторов.")
-      : "Тебе дан замысел лекции и выдержки из личной библиотеки автора.",
-    `Составь план примерно из ${target} глав на ${brief.durationMin} минут для аудитории: ${brief.audience}.`,
-    isResearch
-      ? "План должен быть конкретным: понятия, авторы, работы — не «обзор темы вообще»."
-      : "Опирайся на выдержки: план должен быть про то, что в них есть, а не про тему вообще.",
-    "Главы идут от простого к сложному, каждая продолжает предыдущую, без повторов.",
-    'Верни СТРОГО JSON: {"sections":[{"heading":"...","abstract":"..."}]}.',
-    "heading — короткий заголовок главы. abstract — два-три предложения о том, что внутри.",
-  ];
-  if (brief.mustInclude) system.push(`Обязательно включи: ${brief.mustInclude}`);
-  if (brief.mustAvoid) system.push(`Не включай: ${brief.mustAvoid}`);
+  // Методика автора: 5–8 смысловых блоков. Хронометраж влияет на их число
+  // внутри этой вилки, а не ломает её.
+  const blocks = Math.max(5, Math.min(8, Math.round(brief.durationMin / 15)));
 
   const response = await openai.chat.completions.create({
     model: MODEL,
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: system.join("\n") },
+      { role: "system", content: planPrompt(brief, lecture.title, blocks) },
       {
         role: "user",
-        content:
-          `Замысел лекции:\n${brief.topic}` +
-          (material
-            ? `\n\n${isResearch ? "Материал веб-исследования" : "Выдержки из библиотеки"}:\n\n${material}`
-            : ""),
+        content: material
+          ? `${isResearch ? "Материал веб-исследования" : "Выдержки из библиотеки автора"}:\n\n${material}`
+          : "Материала под рукой нет — опирайся на профессиональный корпус психоанализа.",
       },
     ],
   });
 
   const raw = response.choices[0]?.message?.content ?? "";
   let sections: PlannedSection[] = [];
+  let notes: LecturePlanNotes = { outOfScope: [], decisions: [] };
+  /** Список строк из ответа модели: пустое и не-строки отбрасываем. */
+  const strings = (v: unknown): string[] =>
+    Array.isArray(v)
+      ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim())
+      : [];
+
   try {
-    const parsed = JSON.parse(raw) as { sections?: unknown };
+    const parsed = JSON.parse(raw) as {
+      sections?: unknown;
+      outOfScope?: unknown;
+      decisions?: unknown;
+    };
     if (Array.isArray(parsed.sections)) {
       sections = parsed.sections
         .map((s) => {
@@ -138,10 +134,13 @@ async function runPlan(job: Job): Promise<void> {
           return {
             heading: typeof o.heading === "string" ? o.heading : "",
             abstract: typeof o.abstract === "string" ? o.abstract : "",
+            concepts: strings(o.concepts),
+            hook: typeof o.hook === "string" ? o.hook : "",
           };
         })
         .filter((s) => s.heading.trim() !== "");
     }
+    notes = { outOfScope: strings(parsed.outOfScope), decisions: strings(parsed.decisions) };
   } catch {
     throw new Error("Модель вернула план в непонятном виде. Попробуйте ещё раз.");
   }
@@ -150,7 +149,7 @@ async function runPlan(job: Job): Promise<void> {
 
   await db
     .update(lecturesTable)
-    .set({ plan: sections, status: "plan_ready", statusMessage: "" })
+    .set({ plan: sections, planNotes: notes, status: "plan_ready", statusMessage: "" })
     .where(eq(lecturesTable.id, id));
 
   logger.info({ id, sections: sections.length }, "План лекции готов");
@@ -232,40 +231,35 @@ async function runWrite(job: Job): Promise<void> {
       }
     }
 
-    await setStatus(id, `Пишу главу ${section.ord + 1} из ${total}: ${section.heading}`);
+    await setStatus(id, `Пишу блок ${section.ord + 1} из ${total}: ${section.heading}`);
 
-    const system = [
-      "Ты пишешь главу лекции по психоанализу на русском языке для преподавателя.",
-      `Аудитория: ${brief.audience}. Это часть лекции «${lecture.title}».`,
-      "Пиши живым устным языком, как говорят с кафедры: без канцелярита и без academese.",
-      ...(material !== ""
-        ? [
-            "Опирайся ТОЛЬКО на предоставленный материал. Не выдумывай фактов, дат, имён и цитат.",
-            "Если в материале нет нужного — просто не пиши об этом, не додумывай.",
-            "Когда опираешься на фрагмент материала, ставь ссылку в квадратных скобках: [1], [2].",
-            "Ссылку ставь сразу после утверждения, к которому она относится.",
-            "Не пересказывай материал подряд — выстрой связное рассуждение.",
-          ]
-        : [
-            // Поиска нет: пишем по устоявшимся знаниям, без имитации точности.
-            "Опирайся на устоявшиеся знания психоанализа: классические работы и признанных авторов.",
-            "НЕ выдумывай дословных цитат, точных дат и номеров страниц.",
-            "Работы упоминай по названию только там, где уверен. Ссылок [n] не ставь.",
-          ]),
-      "Не повторяй заголовок главы в начале текста.",
-      `Объём: примерно ${wordsPerSection} слов — это ${Math.round(wordsPerSection / 125)} минут звучащей речи.`,
-      "Разворачивай мысль: примеры, оговорки, переходы — так, как говорят на лекции, а не тезисами.",
-      "Верни только текст главы, без JSON и пояснений.",
-    ];
+    // План хранит опорные концепции и «крючок» блока — передаём их пишущей
+    // модели, иначе утверждённый автором замысел блока теряется.
+    const planned = (lecture.plan ?? [])[section.ord];
+    const system = sectionPrompt({
+      brief,
+      title: lecture.title,
+      heading: section.heading,
+      abstract: section.abstract,
+      concepts: planned?.concepts ?? [],
+      hook: planned?.hook ?? "",
+      words: wordsPerSection,
+      nextHeading: sections[section.ord + 1]?.heading ?? null,
+      hasMaterial: material !== "",
+    });
 
     const response = await openai.chat.completions.create({
       model: MODEL,
       messages: [
-        { role: "system", content: system.join("\n") },
+        { role: "system", content: system },
         {
           role: "user",
           content:
-            `Глава: ${section.heading}\nО чём она: ${section.abstract}` +
+            `Блок: ${section.heading}\nТезис: ${section.abstract}` +
+            ((planned?.concepts?.length ?? 0) > 0
+              ? `\nОпорные концепции и авторы: ${planned!.concepts!.join("; ")}`
+              : "") +
+            (planned?.hook ? `\nКрючок для аудитории: ${planned.hook}` : "") +
             (material !== "" ? `\n\n${materialLabel}:\n\n${material}` : ""),
         },
       ],
@@ -333,9 +327,49 @@ async function runWrite(job: Job): Promise<void> {
     }
   }
 
+  // Хвост методики: литература двумя уровнями — истоки и современность.
+  // Собирается по написанному тексту, а не по плану: в текст могли войти
+  // работы, которых в плане не было.
+  await setStatus(id, "Собираю список литературы…");
+  const written = await db
+    .select()
+    .from(lectureSectionsTable)
+    .where(eq(lectureSectionsTable.lectureId, id))
+    .orderBy(asc(lectureSectionsTable.ord));
+
+  const bibliography = await openai.chat.completions
+    .create({
+      model: MODEL,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: bibliographyPrompt(brief, lecture.title) },
+        {
+          role: "user",
+          content: written
+            .map((w) => `## ${w.heading}\n${w.text}`)
+            .join("\n\n")
+            .slice(0, 120_000),
+        },
+      ],
+    })
+    .then((r) => {
+      const parsed = JSON.parse(r.choices[0]?.message?.content ?? "{}") as Record<string, unknown>;
+      const list = (v: unknown): string[] =>
+        Array.isArray(v)
+          ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim())
+          : [];
+      const out: Bibliography = { primary: list(parsed.primary), modern: list(parsed.modern) };
+      return out.primary.length + out.modern.length > 0 ? out : null;
+    })
+    // Список — украшение, а не суть: лекция готова и без него.
+    .catch((err) => {
+      logger.warn({ err, id }, "Список литературы не собрался");
+      return null;
+    });
+
   await db
     .update(lecturesTable)
-    .set({ status: "ready", statusMessage: "" })
+    .set({ status: "ready", statusMessage: "", bibliography })
     .where(eq(lecturesTable.id, id));
 
   // Написанная лекция — такой же материал, как книга: кладём её в библиотеку,
