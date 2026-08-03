@@ -12,6 +12,7 @@ import type {
   DiagramSpec,
 } from "@workspace/db";
 import { SLIDE_SPEC, SLIDE_TYPE as T, SHEET } from "@workspace/db/slides";
+import { logger } from "./logger";
 
 /**
  * PDF-раздатка по утверждённой колоде. Макеты повторяют lib/pptx.ts —
@@ -258,7 +259,12 @@ function imagePath(s: DeckSlide, imagesById: Map<number, DeckImage>): string | n
   if (!s.imageId) return null;
   const img = imagesById.get(s.imageId);
   if (!img?.path || !existsSync(img.path)) return null;
-  if (!/\.(jpe?g|png)$/i.test(img.path)) return null;
+  if (!/\.(jpe?g|png)$/i.test(img.path)) {
+    // Не тихо: без лога пропавший на раздатке образ выглядит багом рисования,
+    // хотя картинка есть и цела — просто в формате, который pdfkit не встраивает.
+    logger.warn({ slideId: s.id, path: img.path }, "PDF: пропускаю образ — формат не jpg/png");
+    return null;
+  }
   return img.path;
 }
 
