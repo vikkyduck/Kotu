@@ -3,7 +3,7 @@ import { logger } from "./lib/logger";
 import { purgeExpiredSessions } from "./lib/auth";
 import { requeueOrphans, startWorker } from "./lib/jobs";
 import { sweepTranscriptionsToLibrary } from "./lib/transcript-doc";
-import { sweepWorkToLibrary, sweepOrphanDeckDirs } from "./lib/work-doc";
+import { sweepWorkToLibrary, sweepOrphanDeckDirs, sweepStuckDeckImages } from "./lib/work-doc";
 import { registerTranscribeHandler } from "./lib/handlers/transcribe";
 import { registerIngestHandler } from "./lib/handlers/ingest";
 import { registerLectureHandlers } from "./lib/handlers/lecture";
@@ -53,6 +53,10 @@ void sweepTranscriptionsToLibrary()
 
 void sweepOrphanDeckDirs().catch((err) =>
   logger.error({ err }, "Сверка каталогов презентаций не удалась"),
+);
+
+void sweepStuckDeckImages().catch((err) =>
+  logger.error({ err }, "Сверка брошенных образов не удалась"),
 );
 
 // Готовые лекции и презентации без копии в библиотеке: бэкфилл старых и

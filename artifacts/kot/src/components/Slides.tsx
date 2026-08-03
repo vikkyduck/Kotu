@@ -9,7 +9,18 @@ import {
   type DeckFull,
   type DeckImage,
   type DiagramSpec,
+  type SlideContent,
 } from '@/lib/deck';
+
+/**
+ * Вторая строка плитки в сетке слайдов без образа — иначе плитка несёт
+ * только заголовок, и слайд с богатым содержимым выглядит пустым словом
+ * или фразой на фоне, хотя на деле полон текста (см. открытый слайд крупно).
+ */
+function tilePreview(c: SlideContent): string | undefined {
+  if (c.bullets?.length) return c.bullets.slice(0, 2).join(' · ');
+  return c.subtitle || c.cards?.[0]?.body || c.question || c.attribution;
+}
 
 export function Slides() {
   // Какую колоду открыть, решает библиотека: инструмент — это действие,
@@ -409,7 +420,12 @@ export function Slides() {
                     ) : (
                       <div className={`th th-p${i % 4}`}>
                         <span className="st">
-                          {s.content.title || s.content.quote || layoutName(s.layout)}
+                          <b className="st-title">
+                            {s.content.title || s.content.quote || layoutName(s.layout)}
+                          </b>
+                          {tilePreview(s.content) && (
+                            <span className="st-sub">{tilePreview(s.content)}</span>
+                          )}
                         </span>
                       </div>
                     )}

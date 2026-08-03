@@ -507,8 +507,11 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
 .slide:hover{border-color:var(--accent-strong);box-shadow:var(--plate-shadow);transform:translate(-2px,-2px)}
 .slide .th{aspect-ratio:16/10;display:grid;place-items:center;padding:14px;text-align:center;position:relative}
 .slide .th::before{content:"";position:absolute;inset:8px;border:1px solid rgba(229,216,193,.18);pointer-events:none}
-.slide .th .st{font-family:var(--serif);color:#e5d8c1;font-size:14.5px;font-weight:600;
-  line-height:1.2;letter-spacing:-.01em;position:relative}
+.slide .th .st{display:flex;flex-direction:column;gap:6px;position:relative}
+.slide .th .st-title{font-family:var(--serif);color:#e5d8c1;font-size:14.5px;font-weight:600;
+  line-height:1.2;letter-spacing:-.01em}
+.slide .th .st-sub{font-family:var(--sans);color:rgba(229,216,193,.62);font-size:11.5px;
+  line-height:1.35;font-weight:400;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 /* четыре пластины серии — индиго, умбра, уголь, сепия */
 .slide .th.th-p0{background:linear-gradient(150deg,#232638,#1d1e24)}
 .slide .th.th-p1{background:linear-gradient(150deg,#3b2926,#241f1d)}

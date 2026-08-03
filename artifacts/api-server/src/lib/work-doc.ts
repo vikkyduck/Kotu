@@ -8,6 +8,7 @@ import {
   lectureSectionsTable,
   decksTable,
   deckSlidesTable,
+  deckImagesTable,
 } from "@workspace/db";
 import { LIBRARY_DIR, DECKS_DIR } from "./paths";
 import { enqueue } from "./jobs";
@@ -206,6 +207,25 @@ export async function sweepOrphanDeckDirs(): Promise<number> {
   }
   if (removed > 0) logger.info({ removed }, "Убрал каталоги удалённых презентаций");
   return removed;
+}
+
+/**
+ * Попытки образа, брошенные посреди рисования: перезапуск (деплой) убивает
+ * процесс до того, как illustrateSlide успевает поймать ошибку — запись
+ * остаётся в status="drawing" навсегда, а следующий прогон нумерует попытки
+ * заново с 1, потому что счётчик локален для функции. Сверка на старте
+ * закрывает и то и другое: старая запись помечается ошибкой, а не висит
+ * незакрытым делом.
+ */
+export async function sweepStuckDeckImages(): Promise<number> {
+  const stuck = await db
+    .update(deckImagesTable)
+    .set({ status: "error", error: "Прервано перезапуском сервера" })
+    .where(eq(deckImagesTable.status, "drawing"))
+    .returning({ id: deckImagesTable.id });
+
+  if (stuck.length > 0) logger.info({ count: stuck.length }, "Закрыл образы, брошенные посреди рисования");
+  return stuck.length;
 }
 
 /**
