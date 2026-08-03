@@ -8,11 +8,13 @@ import {
   documentsTable,
   jobsTable,
   type LectureBrief,
+  type LectureFocus,
   type PlannedSection,
 } from "@workspace/db";
 import { enqueue } from "../../lib/jobs";
 import { ownFolderId } from "../../lib/folders";
 import { lectureToLibrary, dropLectureCopies } from "../../lib/work-doc";
+import { buildLectureDocx, buildLectureMarkdown } from "../../lib/lecture-export";
 
 const router: IRouter = Router();
 
@@ -101,12 +103,14 @@ router.post("/lectures", async (req, res): Promise<void> => {
   const documentIds = Array.isArray(body.documentIds)
     ? body.documentIds.map(Number).filter(Number.isInteger)
     : [];
-  // Исследование — единственный режим, где пустая опора допустима: материал
-  // собирает модель. Обычной лекции без документов не бывает.
-  const mode: LectureBrief["mode"] = body.mode === "research" ? "research" : "library";
-  if (mode === "library" && documentIds.length === 0) {
+  // Источники независимы: можно оба, можно один, можно ни одного (тогда
+  // лекция пишется по знаниям модели с честными пометками). Единственное
+  // противоречие — включённая библиотека без единого документа.
+  const useLibrary = body.useLibrary === true;
+  const useResearch = body.useResearch === true;
+  if (useLibrary && documentIds.length === 0) {
     res.status(400).json({
-      message: "Выберите материал из библиотеки — или включите «Исследование ИИ»",
+      message: "Библиотека включена, но материал не выбран — отметьте документы или выключите её",
     });
     return;
   }
@@ -117,11 +121,15 @@ router.post("/lectures", async (req, res): Promise<void> => {
     mustInclude: typeof body.mustInclude === "string" ? body.mustInclude : undefined,
     mustAvoid: typeof body.mustAvoid === "string" ? body.mustAvoid : undefined,
     documentIds,
-    mode,
-    focus:
-      body.focus === "clinical" || body.focus === "historical" || body.focus === "theoretical"
-        ? body.focus
-        : "theoretical",
+    useLibrary,
+    useResearch,
+    // Акцентов может быть несколько — или ни одного.
+    focus: Array.isArray(body.focus)
+      ? body.focus.filter(
+          (f: unknown): f is LectureFocus =>
+            f === "clinical" || f === "historical" || f === "theoretical",
+        )
+      : [],
   };
 
   const title =
@@ -307,39 +315,30 @@ router.get("/lectures/:id/export", async (req, res): Promise<void> => {
     return;
   }
 
-  const parts: string[] = [`# ${full.title}`, ""];
-  for (const section of full.sections) {
-    parts.push(`## ${section.heading}`, "", section.text || "_глава ещё не написана_", "");
-    const used = full.sources.filter((s) => s.sectionId === section.id);
-    if (used.length > 0) {
-      parts.push("**Источники:**", "");
-      used.forEach((s, i) => parts.push(`${i + 1}. ${s.title}`));
-      parts.push("");
-    }
+  const safe = full.title.replace(/[^\p{L}\p{N} .-]/gu, "").slice(0, 60) || "лекция";
+
+  // Word — для кафедр и оргкомитетов; он же открывается Google Документами
+  // после загрузки на Диск. Markdown — для всех остальных случаев.
+  if (req.query.format === "docx") {
+    const buffer = await buildLectureDocx(full);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename*=UTF-8''${encodeURIComponent(`${safe}.docx`)}`,
+    );
+    res.send(buffer);
+    return;
   }
 
-  const bib = full.bibliography;
-  if (bib && (bib.primary.length > 0 || bib.modern.length > 0)) {
-    parts.push("## Литература", "");
-    if (bib.primary.length > 0) {
-      parts.push("**Первоисточники**", "");
-      bib.primary.forEach((b, i) => parts.push(`${i + 1}. ${b}`));
-      parts.push("");
-    }
-    if (bib.modern.length > 0) {
-      parts.push("**Современные работы для углубления**", "");
-      bib.modern.forEach((b, i) => parts.push(`${i + 1}. ${b}`));
-      parts.push("");
-    }
-  }
-
-  const filename = `${full.title.replace(/[^\p{L}\p{N} .-]/gu, "").slice(0, 60) || "лекция"}.md`;
   res.setHeader("Content-Type", "text/markdown; charset=utf-8");
   res.setHeader(
     "Content-Disposition",
-    `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    `attachment; filename*=UTF-8''${encodeURIComponent(`${safe}.md`)}`,
   );
-  res.send(parts.join("\n"));
+  res.send(buildLectureMarkdown(full));
 });
 
 export default router;

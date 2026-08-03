@@ -84,7 +84,7 @@ const DURATIONS = [
 export function Lecture() {
   // Какую лекцию открыть, решает библиотека: инструмент — это действие,
   // а не ещё один список сделанного.
-  const { screen, go, toast, activeLectureId, openLecture, lectureSeed } = useApp();
+  const { screen, go, toast, activeLectureId, openLecture, lectureSeed, newDeck } = useApp();
   const [docs, setDocs] = useState<Doc[]>([]);
   const openId = activeLectureId;
   const [lecture, setLecture] = useState<LectureFull | null>(null);
@@ -95,12 +95,18 @@ export function Lecture() {
   const [duration, setDuration] = useState(150);
   const [picked, setPicked] = useState<number[]>([]);
   /** Откуда материал: из выбранных документов или собственное исследование ИИ. */
-  const [mode, setMode] = useState<'library' | 'research'>('library');
-  /** Акцент: что важнее в этот раз — клиника, теория или история понятия. */
-  const [focus, setFocus] = useState<'clinical' | 'theoretical' | 'historical'>('theoretical');
+  /** Источники независимы: можно оба, один или ни одного. */
+  const [useLibrary, setUseLibrary] = useState(false);
+  const [useResearch, setUseResearch] = useState(false);
+  /** Акцентов может быть несколько — или ни одного. */
+  const [focus, setFocus] = useState<('clinical' | 'theoretical' | 'historical')[]>([]);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
+  /** Правка блока плана: индекс и черновики заголовка с тезисом. */
+  const [planEdit, setPlanEdit] = useState<number | null>(null);
+  const [planHead, setPlanHead] = useState('');
+  const [planAbstract, setPlanAbstract] = useState('');
 
   useUnsavedWarning(screen === 's-lecture' && openId === null && topic.trim() !== '');
 
@@ -123,7 +129,7 @@ export function Lecture() {
   // в опоре уже отмечен.
   useEffect(() => {
     if (screen !== 's-lecture' || openId !== null || !lectureSeed) return;
-    setMode('library');
+    setUseLibrary(true);
     setPicked(lectureSeed.documentIds);
   }, [screen, openId, lectureSeed]);
 
@@ -152,8 +158,8 @@ export function Lecture() {
       toast('Расскажите в двух словах, о чём лекция');
       return;
     }
-    if (mode === 'library' && picked.length === 0) {
-      toast('Выберите материал — или включите «Исследование ИИ»');
+    if (useLibrary && picked.length === 0) {
+      toast('Библиотека включена — отметьте документы или выключите её');
       return;
     }
     setBusy(true);
@@ -166,8 +172,9 @@ export function Lecture() {
           audience,
           durationMin: duration,
           focus,
-          mode,
-          documentIds: mode === 'library' ? picked : [],
+          useLibrary,
+          useResearch,
+          documentIds: useLibrary ? picked : [],
         }),
       });
       if (res.ok) {
@@ -201,16 +208,40 @@ export function Lecture() {
     }
   };
 
-  const dropChapter = async (index: number) => {
-    if (!lecture?.plan) return;
-    const plan = lecture.plan.filter((_, i) => i !== index);
+  const patchPlan = async (plan: PlanItem[]) => {
+    if (!lecture) return false;
     const res = await fetch(`/api/lectures/${lecture.id}/plan`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ plan }),
     });
-    if (res.ok) await loadOne(lecture.id);
-    else toast('Не удалось изменить план');
+    if (res.ok) {
+      await loadOne(lecture.id);
+      return true;
+    }
+    toast('Не удалось изменить план');
+    return false;
+  };
+
+  const dropChapter = async (index: number) => {
+    if (!lecture?.plan) return;
+    await patchPlan(lecture.plan.filter((_, i) => i !== index));
+  };
+
+  /** Сохранить правку блока: заголовок и тезис; концепции и крючок остаются. */
+  const savePlanEdit = async () => {
+    if (!lecture?.plan || planEdit === null) return;
+    if (planHead.trim() === '') {
+      toast('У блока должно быть название');
+      return;
+    }
+    const plan = lecture.plan.map((b, i) =>
+      i === planEdit ? { ...b, heading: planHead.trim(), abstract: planAbstract.trim() } : b,
+    );
+    if (await patchPlan(plan)) {
+      setPlanEdit(null);
+      toast('План обновлён');
+    }
   };
 
   const saveSection = async (section: Section) => {
@@ -264,26 +295,66 @@ export function Lecture() {
               Посмотрите план. Лишние главы можно убрать — и только потом я напишу текст.
             </p>
             <div className="doc-list">
-              {lecture.plan.map((p, i) => (
-                <div key={i} className="doc-card">
-                  <span className="plan-num">{i + 1}</span>
-                  <div className="doc-body">
-                    <b className="plan-head">{p.heading}</b>
-                    <span className="doc-meta">{p.abstract}</span>
-                    {(p.concepts?.length ?? 0) > 0 && (
-                      <span className="plan-concepts">{p.concepts!.join(' · ')}</span>
-                    )}
-                    {p.hook && <span className="plan-hook">{p.hook}</span>}
+              {lecture.plan.map((p, i) =>
+                planEdit === i ? (
+                  <div key={i} className="doc-card plan-editing">
+                    <span className="plan-num">{i + 1}</span>
+                    <div className="doc-body">
+                      <input
+                        className="field"
+                        value={planHead}
+                        placeholder="Название блока"
+                        onChange={(e) => setPlanHead(e.target.value)}
+                      />
+                      <textarea
+                        className="topic"
+                        rows={3}
+                        value={planAbstract}
+                        placeholder="Тезис блока: о чём он"
+                        onChange={(e) => setPlanAbstract(e.target.value)}
+                      />
+                      <div className="lec-actions">
+                        <button className="btn primary" onClick={() => void savePlanEdit()}>
+                          Сохранить
+                        </button>
+                        <button className="btn ghost" onClick={() => setPlanEdit(null)}>
+                          Отмена
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <button
-                    className="btn ghost doc-del"
-                    title="Убрать главу"
-                    onClick={() => void dropChapter(i)}
-                  >
-                    <Icon name="trash" />
-                  </button>
-                </div>
-              ))}
+                ) : (
+                  <div key={i} className="doc-card">
+                    <span className="plan-num">{i + 1}</span>
+                    <div className="doc-body">
+                      <b className="plan-head">{p.heading}</b>
+                      <span className="doc-meta">{p.abstract}</span>
+                      {(p.concepts?.length ?? 0) > 0 && (
+                        <span className="plan-concepts">{p.concepts!.join(' · ')}</span>
+                      )}
+                      {p.hook && <span className="plan-hook">{p.hook}</span>}
+                    </div>
+                    <button
+                      className="btn ghost doc-move"
+                      title="Править блок"
+                      onClick={() => {
+                        setPlanEdit(i);
+                        setPlanHead(p.heading);
+                        setPlanAbstract(p.abstract);
+                      }}
+                    >
+                      <Icon name="edit" />
+                    </button>
+                    <button
+                      className="btn ghost doc-del"
+                      title="Убрать главу"
+                      onClick={() => void dropChapter(i)}
+                    >
+                      <Icon name="trash" />
+                    </button>
+                  </div>
+                ),
+              )}
             </div>
             {/* Спутники плана: их автор решает ДО того, как написан текст */}
             {(lecture.planNotes?.decisions.length ?? 0) > 0 && (
@@ -314,13 +385,27 @@ export function Lecture() {
           </>
         )}
 
+        {/* Оглавление: текст читается частями, а не простынёй */}
+        {lecture.sections.length > 1 && lecture.status === 'ready' && (
+          <nav className="lec-toc panel">
+            <div className="fieldlbl" style={{ marginTop: 0 }}>Части лекции</div>
+            <ol>
+              {lecture.sections.map((s) => (
+                <li key={s.id}>
+                  <a href={`#part-${s.ord + 1}`}>{s.heading}</a>
+                </li>
+              ))}
+            </ol>
+          </nav>
+        )}
+
         {/* Готовые главы */}
         {lecture.sections.length > 0 && lecture.status !== 'plan_ready' && (
           <div className="lec-body">
             {lecture.sections.map((s) => {
               const sources = lecture.sources.filter((x) => x.sectionId === s.id);
               return (
-                <div key={s.id} className="lec-section">
+                <div key={s.id} className="lec-section" id={`part-${s.ord + 1}`}>
                   <h3 className="lec-head">
                     {s.ord + 1}. {s.heading}
                     {s.editedByHuman && <span className="lec-edited">правлено вами</span>}
@@ -412,14 +497,46 @@ export function Lecture() {
           </div>
         )}
 
+        {/* Лекция готова: что с ней можно сделать дальше */}
         {lecture.status === 'ready' && (
-          <a
-            className="btn big"
-            href={`/api/lectures/${lecture.id}/export`}
-            style={{ marginTop: 18 }}
-          >
-            <Icon name="download" /> Скачать текстом
-          </a>
+          <div className="lec-next panel">
+            <div className="fieldlbl" style={{ marginTop: 0 }}>Лекция готова — что дальше?</div>
+            <div className="btnrow" style={{ flexWrap: 'wrap' }}>
+              <button
+                className="btn primary"
+                onClick={() => newDeck({ sourceKind: 'lecture', sourceId: lecture.id })}
+              >
+                <Icon name="deck" /> Собрать презентацию
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  const first = lecture.sections[0];
+                  if (!first) return;
+                  setEditing(first.id);
+                  setDraft(first.text);
+                  document.getElementById('part-1')?.scrollIntoView({ behavior: 'smooth' });
+                }}
+              >
+                <Icon name="edit" /> Редактировать
+              </button>
+            </div>
+            <div className="btnrow" style={{ flexWrap: 'wrap', marginTop: 10 }}>
+              <a className="btn" href={`/api/lectures/${lecture.id}/export?format=docx`}>
+                <Icon name="download" /> Скачать Word
+              </a>
+              <a className="btn" href={`/api/lectures/${lecture.id}/export`}>
+                <Icon name="download" /> Скачать Markdown
+              </a>
+            </div>
+            <p className="doc-meta" style={{ marginTop: 10 }}>
+              Для Google Документов: скачайте Word и перетащите файл на{' '}
+              <a className="inline-link" href="https://drive.google.com" target="_blank" rel="noreferrer">
+                drive.google.com
+              </a>{' '}
+              — он откроется как гуглдок.
+            </p>
+          </div>
         )}
       </section>
     );
@@ -470,42 +587,52 @@ export function Lecture() {
           ))}
         </div>
 
-        <div className="fieldlbl">Что важнее в этой лекции?</div>
+        <div className="fieldlbl">Что важнее в этой лекции? Можно несколько — или ничего</div>
         <div className="pills">
           {FOCUS.map((f) => (
             <span
               key={f.value}
-              className={`pill-opt ${focus === f.value ? 'on' : ''}`}
-              onClick={() => setFocus(f.value)}
+              className={`pill-opt ${focus.includes(f.value) ? 'on' : ''}`}
+              onClick={() =>
+                setFocus((p) =>
+                  p.includes(f.value) ? p.filter((x) => x !== f.value) : [...p, f.value],
+                )
+              }
             >
               {f.label}
             </span>
           ))}
         </div>
 
-        <div className="fieldlbl">Откуда взять материал?</div>
+        <div className="fieldlbl">Откуда взять материал? Можно оба источника — или ни одного</div>
         <div className="pills">
           <span
-            className={`pill-opt ${mode === 'library' ? 'on' : ''}`}
-            onClick={() => setMode('library')}
+            className={`pill-opt ${useLibrary ? 'on' : ''}`}
+            onClick={() => setUseLibrary((v) => !v)}
           >
             Из моей библиотеки
           </span>
           <span
-            className={`pill-opt ${mode === 'research' ? 'on' : ''}`}
-            onClick={() => setMode('research')}
+            className={`pill-opt ${useResearch ? 'on' : ''}`}
+            onClick={() => setUseResearch((v) => !v)}
           >
             Исследование ИИ
           </span>
         </div>
 
-        {mode === 'research' ? (
+        {!useLibrary && !useResearch && (
           <p className="doc-meta" style={{ marginTop: 10 }}>
-            Материал соберу сама: план и главы — по исследованию темы, с источниками.
-            Библиотека не нужна, но каждую главу стоит просмотреть — источники будут
-            указаны под текстом.
+            Без источников напишу по общим знаниям психоанализа — под главами будет
+            честная пометка, что имена и даты стоит сверить.
           </p>
-        ) : (
+        )}
+        {useResearch && (
+          <p className="doc-meta" style={{ marginTop: 10 }}>
+            Исследование: соберу материал по теме сама, источники будут указаны под главами.
+          </p>
+        )}
+
+        {useLibrary && (
           <>
             <div className="fieldlbl">На что опереться из библиотеки?</div>
             {docs.length === 0 ? (
@@ -514,7 +641,7 @@ export function Lecture() {
                 <span className="inline-link" onClick={() => go('s-home')}>
                   загрузите книги
                 </span>
-                {' '}или включите «Исследование ИИ» выше.
+                {' '}или выключите её и оставьте «Исследование ИИ».
               </p>
             ) : (
               <div className="pills">
@@ -545,7 +672,7 @@ export function Lecture() {
       )}
       <button
         className="btn primary big"
-        disabled={busy || (mode === 'library' && docs.length === 0)}
+        disabled={busy}
         onClick={() => void create()}
       >
         {busy ? 'Начинаю…' : 'Составить план'} <Icon name="arrow" />
