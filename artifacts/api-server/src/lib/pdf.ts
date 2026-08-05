@@ -56,7 +56,7 @@ const SEAM = "#65594E";
  * эти три файла — других на сервере нет.
  */
 const FONT = {
-  display: "CormorantGaramond-SemiBold.ttf",
+  display: "Manrope-ExtraBold.ttf",
   body: "Manrope-Regular.ttf",
   medium: "Manrope-Medium.ttf",
 } as const;
@@ -185,9 +185,9 @@ function drawRuns(
 }
 
 /**
- * Пункты с ромбом «◇ » — маркер серии. В Manrope глифа U+25C7 нет,
- * поэтому ромб рисуется гарнитурой Cormorant отдельным раном, а текст —
- * с висячим отступом, как положено списку.
+ * Пункты с ромбом «◊ » — маркер серии, набранный той же гарнитурой, что и
+ * текст: ромба U+25C7 в Manrope нет, зато есть лозенг U+25CA — та же фигура.
+ * Текст идёт с висячим отступом, как положено списку.
  */
 function drawBullets(
   doc: PDFKit.PDFDocument,
@@ -205,7 +205,7 @@ function drawBullets(
   for (const b of bullets) {
     const room = Math.max(0, Math.min(y + h, PAGE_H) - cy);
     if (room <= 0) break;
-    doc.font("display").fontSize(size).fillColor(color, 1).text("◇", x, cy, {
+    doc.font("display").fontSize(size).fillColor(color, 1).text("◊", x, cy, {
       width: indent,
       height: room,
       lineBreak: false,

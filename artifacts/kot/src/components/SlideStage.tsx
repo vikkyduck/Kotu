@@ -311,7 +311,7 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
           <div className="stg-flow">
             {(c.bullets ?? []).map((b, i) => (
               <div key={i} className="stg-bullet" style={{ color: VELLUM, fontSize: pt(T.bullets) }}>
-                <span className="stg-dia">◇</span>
+                <span className="stg-dia">◊</span>
                 <span>{b}</span>
               </div>
             ))}
