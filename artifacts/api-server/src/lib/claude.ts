@@ -66,7 +66,17 @@ export async function ask(opts: AskOptions): Promise<string> {
     throw new Error(`Claude ответил ${res.status}: ${body.slice(0, 200)}`);
   }
 
-  const data = (await res.json()) as { content?: { type: string; text?: string }[] };
+  const data = (await res.json()) as {
+    content?: { type: string; text?: string }[];
+    stop_reason?: string;
+  };
+  // Оборванный на потолке ответ — не ответ: дальше он падал бы загадочным
+  // «Expected ',' or '}'» из разбора JSON. Честная ошибка вместо обломка.
+  if (data.stop_reason === "max_tokens") {
+    throw new Error(
+      "Ответ модели упёрся в потолок длины и оборвался — материал слишком объёмный для одного захода",
+    );
+  }
   return (data.content ?? [])
     .filter((b) => b.type === "text")
     .map((b) => b.text ?? "")
@@ -96,7 +106,12 @@ export async function askJson<T>(opts: AskOptions): Promise<T> {
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
     if (start >= 0 && end > start) {
-      return JSON.parse(cleaned.slice(start, end + 1)) as T;
+      try {
+        return JSON.parse(cleaned.slice(start, end + 1)) as T;
+      } catch {
+        // Сырой SyntaxError отсюда однажды доехал до экрана автора —
+        // наружу уходит только человеческая формулировка.
+      }
     }
     throw new Error("Claude вернул ответ, который не удалось разобрать как JSON");
   }
