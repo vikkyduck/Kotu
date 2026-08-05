@@ -16,7 +16,7 @@ import {
 import { ask, type ImageAttachment } from "../claude";
 import { geminiJson } from "../gemini";
 import { renderIllustration } from "../images";
-import { registerHandler } from "../jobs";
+import { registerHandler, enqueue } from "../jobs";
 import { DECKS_DIR } from "../paths";
 import { deckToLibrary } from "../work-doc";
 import { logger } from "../logger";
@@ -273,7 +273,7 @@ async function run(job: Job): Promise<void> {
   if (allTargets.length > slides.length) {
     logger.warn(
       { deckId: id, total: allTargets.length, cap: MAX_IMAGES },
-      "Образов больше потолка — лишние останутся в очереди",
+      "Образов больше потолка прогона — хвост дорисует следующая задача",
     );
   }
 
@@ -313,6 +313,19 @@ async function run(job: Job): Promise<void> {
         .set({ imageStatus: "error" })
         .where(eq(deckSlidesTable.id, slide.id));
     }
+  }
+
+  // За потолком прогона остались нетронутые слайды — продолжаем следующей
+  // задачей, иначе хвост большой колоды навсегда завис бы в «queued».
+  // Только при прогрессе (drawn > 0): без него цепочка на вечно падающих
+  // слайдах крутилась бы бесконечно и жгла деньги.
+  if (!payload.slideIds?.length && allTargets.length > slides.length && drawn > 0) {
+    await enqueue("deck.illustrate", id, { instruction: payload.instruction });
+    logger.info(
+      { deckId: id, leftover: allTargets.length - slides.length },
+      "Образы сверх потолка прогона — продолжаю следующей задачей",
+    );
+    return;
   }
 
   if (slides.length === 0 || drawn > 0 || payload.slideIds?.length) {

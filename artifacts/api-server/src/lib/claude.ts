@@ -32,6 +32,13 @@ export function claudeConfigured(): boolean {
   return API_KEY !== "";
 }
 
+/** Событие SSE-потока — берём только то, что нужно для сборки текста. */
+interface StreamEvent {
+  type: string;
+  delta?: { type?: string; text?: string; stop_reason?: string };
+  error?: { message?: string };
+}
+
 export async function ask(opts: AskOptions): Promise<string> {
   if (!claudeConfigured()) throw new Error("Claude не подключён: нет ANTHROPIC_API_KEY");
 
@@ -52,36 +59,64 @@ export async function ask(opts: AskOptions): Promise<string> {
       "x-api-key": API_KEY,
       "anthropic-version": VERSION,
     },
+    // Поток, а не разовый ответ: длинная раскадровка (до 50 слайдов)
+    // генерируется дольше десяти минут, и нестриминговый запрос такой
+    // длины обрывается по таймаутам — у API и у прокси по дороге.
     body: JSON.stringify({
       model: opts.model ?? process.env["MODEL_DECK"] ?? "claude-opus-5",
       max_tokens: opts.maxTokens ?? 8000,
+      stream: true,
       system: opts.system,
       messages: [{ role: "user", content }],
     }),
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 600_000),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 1_500_000),
   });
 
-  if (!res.ok) {
+  if (!res.ok || !res.body) {
     const body = await res.text().catch(() => "");
     throw new Error(`Claude ответил ${res.status}: ${body.slice(0, 200)}`);
   }
 
-  const data = (await res.json()) as {
-    content?: { type: string; text?: string }[];
-    stop_reason?: string;
-  };
+  // Разбор SSE руками: событие — блок строк до пустой строки, полезная
+  // нагрузка в строках «data: {...}». Куски приходят как попало, поэтому
+  // копим буфер и режем только по границам событий.
+  let text = "";
+  let stopReason = "";
+  let buf = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+    buf += decoder.decode(chunk, { stream: true });
+    let cut: number;
+    while ((cut = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, cut);
+      buf = buf.slice(cut + 2);
+      for (const line of frame.split("\n")) {
+        if (!line.startsWith("data:")) continue;
+        let ev: StreamEvent;
+        try {
+          ev = JSON.parse(line.slice(5).trim()) as StreamEvent;
+        } catch {
+          continue; // служебный мусор потока текстом не является
+        }
+        if (ev.type === "content_block_delta" && ev.delta?.type === "text_delta") {
+          text += ev.delta.text ?? "";
+        } else if (ev.type === "message_delta" && ev.delta?.stop_reason) {
+          stopReason = ev.delta.stop_reason;
+        } else if (ev.type === "error") {
+          throw new Error(`Claude прервал поток: ${ev.error?.message ?? "без объяснения"}`);
+        }
+      }
+    }
+  }
+
   // Оборванный на потолке ответ — не ответ: дальше он падал бы загадочным
   // «Expected ',' or '}'» из разбора JSON. Честная ошибка вместо обломка.
-  if (data.stop_reason === "max_tokens") {
+  if (stopReason === "max_tokens") {
     throw new Error(
       "Ответ модели упёрся в потолок длины и оборвался — материал слишком объёмный для одного захода",
     );
   }
-  return (data.content ?? [])
-    .filter((b) => b.type === "text")
-    .map((b) => b.text ?? "")
-    .join("")
-    .trim();
+  return text.trim();
 }
 
 /**
