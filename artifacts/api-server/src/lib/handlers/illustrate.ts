@@ -61,7 +61,11 @@ function parseJsonReply<T>(raw: string): T {
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
     if (start >= 0 && end > start) {
-      return JSON.parse(cleaned.slice(start, end + 1)) as T;
+      try {
+        return JSON.parse(cleaned.slice(start, end + 1)) as T;
+      } catch {
+        // Наружу — только человеческая формулировка, не сырой SyntaxError.
+      }
     }
     throw new Error("Приёмка вернула ответ, который не удалось разобрать как JSON");
   }
