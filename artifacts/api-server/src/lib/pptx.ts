@@ -77,7 +77,7 @@ function lighten(color: string, amount: number): string {
 function makeStyle(pack: StylePack | null): Style {
   const palette = pack?.palette ?? {};
   return {
-    display: pack?.typography?.display ?? "Cormorant Garamond",
+    display: pack?.typography?.display ?? "Manrope",
     body: pack?.typography?.body ?? "Manrope",
     color: (name) => hex(palette[name] ?? BRAND_FALLBACK[name]),
   };
@@ -129,7 +129,7 @@ function addCover(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
     y: 2.0,
     w: textW,
     h: 2.7,
-    fontFace: st.display,
+    fontFace: st.display, bold: true,
     fontSize: T.coverTitle,
     color: VELLUM,
     valign: "top",
@@ -173,7 +173,7 @@ function addDivider(out: PptxGenJS.Slide, c: SlideContent, img: string | null, s
   }
   runs.push({
     text: c.title ?? "",
-    options: { fontFace: st.display, fontSize: T.dividerTitle, color: VELLUM, lineSpacingMultiple: 1.05 },
+    options: { fontFace: st.display, bold: true, fontSize: T.dividerTitle, color: VELLUM, lineSpacingMultiple: 1.05 },
   });
   // Один текстовый блок на всю высоту: имя части само встаёт по центру вертикали.
   out.addText(runs, {
@@ -201,7 +201,7 @@ function addTheory(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st
     y: 0.75,
     w: textW,
     h: 1.35,
-    fontFace: st.display,
+    fontFace: st.display, bold: true,
     fontSize: T.theoryTitle,
     color: VELLUM,
     valign: "top",
@@ -211,7 +211,7 @@ function addTheory(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st
   if (c.bullets?.length) {
     // Ромб вместо стандартного буллета — маркер серии, а не интерфейсная точка.
     const runs: PptxGenJS.TextProps[] = c.bullets.map((b) => ({
-      text: `◇  ${b}`,
+      text: `◊  ${b}`,
       options: { breakLine: true, paraSpaceAfter: 10 },
     }));
     out.addText(runs, {
@@ -273,7 +273,7 @@ function addQuote(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
     {
       text: c.quote ?? c.title ?? "",
       options: {
-        fontFace: st.display,
+        fontFace: st.display, bold: true,
         fontSize: T.quote,
         color: st.color("etchingInk"),
         lineSpacingMultiple: 1.15,
@@ -307,7 +307,7 @@ function addClinical(out: PptxGenJS.Slide, c: SlideContent, img: string | null, 
     y: 0.8,
     w: textW,
     h: 1.1,
-    fontFace: st.display,
+    fontFace: st.display, bold: true,
     fontSize: T.clinicalTitle,
     color: ink,
     valign: "top",
@@ -362,7 +362,7 @@ function addComparison(out: PptxGenJS.Slide, c: SlideContent, img: string | null
     y: top,
     w: PAGE_W - MARGIN * 2,
     h: 0.8,
-    fontFace: st.display,
+    fontFace: st.display, bold: true,
     fontSize: T.comparisonTitle,
     color: VELLUM,
     valign: "top",
@@ -377,7 +377,7 @@ function addComparison(out: PptxGenJS.Slide, c: SlideContent, img: string | null
     const runs: PptxGenJS.TextProps[] = [
       {
         text: card.title,
-        options: { fontFace: st.display, fontSize: T.cardTitle, color: VELLUM, breakLine: true, paraSpaceAfter: 8 },
+        options: { fontFace: st.display, bold: true, fontSize: T.cardTitle, color: VELLUM, breakLine: true, paraSpaceAfter: 8 },
       },
       {
         text: card.body,
@@ -411,7 +411,7 @@ function addFinal(out: PptxGenJS.Slide, c: SlideContent, st: Style, idx: number)
   const runs: PptxGenJS.TextProps[] = [
     {
       text: c.title ?? c.quote ?? c.subtitle ?? "",
-      options: { fontFace: st.display, fontSize: T.finalTitle, color: VELLUM, lineSpacingMultiple: 1.1 },
+      options: { fontFace: st.display, bold: true, fontSize: T.finalTitle, color: VELLUM, lineSpacingMultiple: 1.1 },
     },
   ];
   if (c.subtitle && c.title) {
@@ -441,7 +441,7 @@ function addDiagram(out: PptxGenJS.Slide, c: SlideContent, spec: DiagramSpec, st
     y: 0.75,
     w: PAGE_W - MARGIN * 2,
     h: 1.1,
-    fontFace: st.display,
+    fontFace: st.display, bold: true,
     fontSize: T.diagramTitle,
     color: VELLUM,
     valign: "top",
@@ -466,7 +466,7 @@ function addDiagram(out: PptxGenJS.Slide, c: SlideContent, spec: DiagramSpec, st
     spec.items.forEach((it, i) => {
       out.addShape("rect", { x, y, w: boxW, h: boxH, fill, line: border });
       const runs: PptxGenJS.TextProps[] = [
-        { text: it.label, options: { fontFace: st.display, fontSize: T.nodeLabel, color: VELLUM } },
+        { text: it.label, options: { fontFace: st.display, bold: true, fontSize: T.nodeLabel, color: VELLUM } },
       ];
       if (it.sub) {
         runs[0]!.options!.breakLine = true;
@@ -504,7 +504,7 @@ function addDiagram(out: PptxGenJS.Slide, c: SlideContent, spec: DiagramSpec, st
     const runs: PptxGenJS.TextProps[] = [
       {
         text: it.label,
-        options: { fontFace: st.display, fontSize: T.nodeLabel, color: VELLUM, breakLine: true, paraSpaceAfter: 8 },
+        options: { fontFace: st.display, bold: true, fontSize: T.nodeLabel, color: VELLUM, breakLine: true, paraSpaceAfter: 8 },
       },
     ];
     if (it.sub) {
