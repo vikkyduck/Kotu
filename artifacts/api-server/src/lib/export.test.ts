@@ -116,7 +116,10 @@ describe("выгрузка презентации", () => {
     const pdf = await buildDeckPdf(deck, slides, new Map(), pack);
 
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
-    expect(pdf.length).toBeGreaterThan(20_000);
+    // Порог значит «внутри есть настоящий документ со встроенными шрифтами»,
+    // а не пустая заготовка. Планка опущена с 20К, когда из раздатки убрали
+    // засечный Cormorant: подмножество одной гарнитуры весит меньше двух.
+    expect(pdf.length).toBeGreaterThan(15_000);
     // Восемь слайдов — восемь листов.
     expect(pdf.toString("latin1").match(/\/Type\s*\/Page[^s]/g)?.length).toBe(8);
 

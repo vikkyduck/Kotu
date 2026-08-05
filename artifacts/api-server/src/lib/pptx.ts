@@ -44,11 +44,11 @@ const BRAND_FALLBACK = {
 type BrandColor = keyof typeof BRAND_FALLBACK;
 
 /**
- * Светлый пергамент для текста на тёмных фонах. В палитре пакета его нет:
- * это не цвет серии, а типографская необходимость — чистая agedPaper
- * на архивном чёрном выглядит грязно.
+ * Цвет букв на слайде. Один на всю колоду и чисто белый: тёплые бежевые
+ * и сепия читались на тёмном как приглушённые, а умбра и музейный индиго
+ * не дотягивали до нормы контраста (4.3 и 3.4 при норме 4.5).
  */
-const VELLUM = "E5D8C1";
+const TEXT = "FFFFFF";
 /** Цвет шва между колонками сравнения — тонкая линия старой сшивки. */
 const SEAM = "65594E";
 
@@ -61,17 +61,6 @@ interface Style {
 /** pptxgenjs ждёт hex без решётки — в базе цвета лежат как #RRGGBB. */
 function hex(value: string): string {
   return value.replace(/^#/, "").toUpperCase();
-}
-
-/**
- * Подмешать белого: чистая умбра #7B432F тонет на архивном чёрном,
- * поэтому акцентные надписи на тёмных фонах поднимаем к бумаге.
- */
-function lighten(color: string, amount: number): string {
-  const n = parseInt(color, 16);
-  const mix = (c: number): number => Math.round(c + (255 - c) * amount);
-  const rgb = (mix((n >> 16) & 0xff) << 16) | (mix((n >> 8) & 0xff) << 8) | mix(n & 0xff);
-  return rgb.toString(16).padStart(6, "0").toUpperCase();
 }
 
 function makeStyle(pack: StylePack | null): Style {
@@ -92,7 +81,7 @@ function addFolio(out: PptxGenJS.Slide, st: Style, idx: number): void {
     h: 0.35,
     fontFace: st.body,
     fontSize: T.folio,
-    color: st.color("museumIndigo"),
+    color: TEXT,
     charSpacing: 2,
   });
 }
@@ -121,7 +110,7 @@ function addCover(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
       fontFace: st.body,
       fontSize: T.coverEyebrow,
       charSpacing: 2.5,
-      color: lighten(st.color("burntUmber"), 0.3),
+      color: TEXT,
     });
   }
   out.addText(c.title ?? "", {
@@ -131,7 +120,7 @@ function addCover(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
     h: 2.7,
     fontFace: st.display, bold: true,
     fontSize: T.coverTitle,
-    color: VELLUM,
+    color: TEXT,
     valign: "top",
     lineSpacingMultiple: 1.05,
   });
@@ -143,7 +132,7 @@ function addCover(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
       h: 0.9,
       fontFace: st.body,
       fontSize: T.coverSubtitle,
-      color: st.color("deepSepia"),
+      color: TEXT,
       valign: "top",
     });
   }
@@ -151,7 +140,7 @@ function addCover(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
 }
 
 function addDivider(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st: Style): void {
-  out.background = { color: st.color("deepIndigo") };
+  out.background = { color: st.color("archiveBlack") };
 
   // Образ — узкий край архивной пластины; 60–70% листа остаются воздухом.
   const imgW = PAGE_W * SLIDE_SPEC.imageShare.divider;
@@ -165,7 +154,7 @@ function addDivider(out: PptxGenJS.Slide, c: SlideContent, img: string | null, s
         fontFace: st.body,
         fontSize: T.dividerEyebrow,
         charSpacing: 2.5,
-        color: lighten(st.color("burntUmber"), 0.3),
+        color: TEXT,
         breakLine: true,
         paraSpaceAfter: 14,
       },
@@ -173,7 +162,7 @@ function addDivider(out: PptxGenJS.Slide, c: SlideContent, img: string | null, s
   }
   runs.push({
     text: c.title ?? "",
-    options: { fontFace: st.display, bold: true, fontSize: T.dividerTitle, color: VELLUM, lineSpacingMultiple: 1.05 },
+    options: { fontFace: st.display, bold: true, fontSize: T.dividerTitle, color: TEXT, lineSpacingMultiple: 1.05 },
   });
   // Один текстовый блок на всю высоту: имя части само встаёт по центру вертикали.
   out.addText(runs, {
@@ -203,13 +192,13 @@ function addTheory(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st
     h: 1.35,
     fontFace: st.display, bold: true,
     fontSize: T.theoryTitle,
-    color: VELLUM,
+    color: TEXT,
     valign: "top",
     lineSpacingMultiple: 1.05,
   });
 
   if (c.bullets?.length) {
-    // Ромб вместо стандартного буллета — маркер серии, а не интерфейсная точка.
+    // Лозенг вместо стандартного буллета — маркер серии, а не интерфейсная точка.
     const runs: PptxGenJS.TextProps[] = c.bullets.map((b) => ({
       text: `◊  ${b}`,
       options: { breakLine: true, paraSpaceAfter: 10 },
@@ -221,14 +210,13 @@ function addTheory(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st
       h: 3.7,
       fontFace: st.body,
       fontSize: T.bullets,
-      color: VELLUM,
+      color: TEXT,
       valign: "top",
       lineSpacingMultiple: 1.1,
     });
   }
 
   if (c.question) {
-    // Рабочий вопрос выделяется умброй, а не курсивом (приём брендбука).
     out.addText(c.question, {
       x: textX,
       y: 6.15,
@@ -236,7 +224,7 @@ function addTheory(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st
       h: 1.0,
       fontFace: st.body,
       fontSize: T.question,
-      color: st.color("burntUmber"),
+      color: TEXT,
       valign: "top",
     });
   }
@@ -251,16 +239,14 @@ function addTheory(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st
       fontFace: st.body,
       fontSize: T.plate,
       charSpacing: 2,
-      color: VELLUM,
-      transparency: 25,
+      color: TEXT,
       align: "center",
     });
   }
 }
 
 function addQuote(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st: Style, side: "left" | "right"): void {
-  // Бумажная пластина: светлый фон, текст тушью.
-  out.background = { color: st.color("agedPaper") };
+  out.background = { color: st.color("archiveBlack") };
 
   const imgW = PAGE_W * SLIDE_SPEC.imageShare.quote;
   if (img) addPlateImage(out, img, side === "left" ? 0 : PAGE_W - imgW, imgW);
@@ -275,7 +261,7 @@ function addQuote(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
       options: {
         fontFace: st.display, bold: true,
         fontSize: T.quote,
-        color: st.color("etchingInk"),
+        color: TEXT,
         lineSpacingMultiple: 1.15,
         breakLine: true,
         paraSpaceAfter: 16,
@@ -285,15 +271,15 @@ function addQuote(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st:
   if (c.attribution) {
     runs.push({
       text: c.attribution,
-      options: { fontFace: st.body, fontSize: T.attribution, color: st.color("etchingInk"), transparency: 40 },
+      options: { fontFace: st.body, fontSize: T.attribution, color: TEXT },
     });
   }
   out.addText(runs, { x: textX, y: 0.9, w: textW, h: PAGE_H - 1.8, valign: "middle" });
 }
 
 function addClinical(out: PptxGenJS.Slide, c: SlideContent, img: string | null, st: Style, side: "left" | "right"): void {
-  out.background = { color: st.color("agedPaper") };
-  const ink = st.color("etchingInk");
+  out.background = { color: st.color("archiveBlack") };
+  const ink = TEXT;
 
   const imgW = PAGE_W * SLIDE_SPEC.imageShare.clinical;
   if (img) addPlateImage(out, img, side === "left" ? 0 : PAGE_W - imgW, imgW);
@@ -333,7 +319,7 @@ function addClinical(out: PptxGenJS.Slide, c: SlideContent, img: string | null, 
   }
 
   if (c.question) {
-    // Вопрос к материалу — умброй и вне «карточки», как велит брендбук.
+    // Вопрос к материалу — вне «карточки», как велит брендбук.
     out.addText(c.question, {
       x: textX,
       y: 6.1,
@@ -341,7 +327,7 @@ function addClinical(out: PptxGenJS.Slide, c: SlideContent, img: string | null, 
       h: 1.0,
       fontFace: st.body,
       fontSize: T.question,
-      color: st.color("burntUmber"),
+      color: TEXT,
       valign: "top",
     });
   }
@@ -364,7 +350,7 @@ function addComparison(out: PptxGenJS.Slide, c: SlideContent, img: string | null
     h: 0.8,
     fontFace: st.display, bold: true,
     fontSize: T.comparisonTitle,
-    color: VELLUM,
+    color: TEXT,
     valign: "top",
   });
 
@@ -377,11 +363,11 @@ function addComparison(out: PptxGenJS.Slide, c: SlideContent, img: string | null
     const runs: PptxGenJS.TextProps[] = [
       {
         text: card.title,
-        options: { fontFace: st.display, bold: true, fontSize: T.cardTitle, color: VELLUM, breakLine: true, paraSpaceAfter: 8 },
+        options: { fontFace: st.display, bold: true, fontSize: T.cardTitle, color: TEXT, breakLine: true, paraSpaceAfter: 8 },
       },
       {
         text: card.body,
-        options: { fontFace: st.body, fontSize: T.cardBody, color: st.color("deepSepia"), lineSpacingMultiple: 1.15 },
+        options: { fontFace: st.body, fontSize: T.cardBody, color: TEXT, lineSpacingMultiple: 1.15 },
       },
     ];
     out.addText(runs, {
@@ -411,7 +397,7 @@ function addFinal(out: PptxGenJS.Slide, c: SlideContent, st: Style, idx: number)
   const runs: PptxGenJS.TextProps[] = [
     {
       text: c.title ?? c.quote ?? c.subtitle ?? "",
-      options: { fontFace: st.display, bold: true, fontSize: T.finalTitle, color: VELLUM, lineSpacingMultiple: 1.1 },
+      options: { fontFace: st.display, bold: true, fontSize: T.finalTitle, color: TEXT, lineSpacingMultiple: 1.1 },
     },
   ];
   if (c.subtitle && c.title) {
@@ -419,7 +405,7 @@ function addFinal(out: PptxGenJS.Slide, c: SlideContent, st: Style, idx: number)
     runs[0]!.options!.paraSpaceAfter = 18;
     runs.push({
       text: c.subtitle,
-      options: { fontFace: st.body, fontSize: T.finalSubtitle, color: st.color("deepSepia") },
+      options: { fontFace: st.body, fontSize: T.finalSubtitle, color: TEXT },
     });
   }
   out.addText(runs, { x: MARGIN, y: 0, w: 9.8, h: PAGE_H, valign: "middle" });
@@ -443,7 +429,7 @@ function addDiagram(out: PptxGenJS.Slide, c: SlideContent, spec: DiagramSpec, st
     h: 1.1,
     fontFace: st.display, bold: true,
     fontSize: T.diagramTitle,
-    color: VELLUM,
+    color: TEXT,
     valign: "top",
     lineSpacingMultiple: 1.05,
   });
@@ -466,14 +452,14 @@ function addDiagram(out: PptxGenJS.Slide, c: SlideContent, spec: DiagramSpec, st
     spec.items.forEach((it, i) => {
       out.addShape("rect", { x, y, w: boxW, h: boxH, fill, line: border });
       const runs: PptxGenJS.TextProps[] = [
-        { text: it.label, options: { fontFace: st.display, bold: true, fontSize: T.nodeLabel, color: VELLUM } },
+        { text: it.label, options: { fontFace: st.display, bold: true, fontSize: T.nodeLabel, color: TEXT } },
       ];
       if (it.sub) {
         runs[0]!.options!.breakLine = true;
         runs[0]!.options!.paraSpaceAfter = 4;
         runs.push({
           text: it.sub,
-          options: { fontFace: st.body, fontSize: T.nodeSub, color: st.color("deepSepia") },
+          options: { fontFace: st.body, fontSize: T.nodeSub, color: TEXT },
         });
       }
       out.addText(runs, { x: x + 0.25, y, w: boxW - 0.5, h: boxH, valign: "middle", align: "center" });
@@ -504,13 +490,13 @@ function addDiagram(out: PptxGenJS.Slide, c: SlideContent, spec: DiagramSpec, st
     const runs: PptxGenJS.TextProps[] = [
       {
         text: it.label,
-        options: { fontFace: st.display, bold: true, fontSize: T.nodeLabel, color: VELLUM, breakLine: true, paraSpaceAfter: 8 },
+        options: { fontFace: st.display, bold: true, fontSize: T.nodeLabel, color: TEXT, breakLine: true, paraSpaceAfter: 8 },
       },
     ];
     if (it.sub) {
       runs.push({
         text: it.sub,
-        options: { fontFace: st.body, fontSize: T.nodeSub, color: st.color("deepSepia"), lineSpacingMultiple: 1.2 },
+        options: { fontFace: st.body, fontSize: T.nodeSub, color: TEXT, lineSpacingMultiple: 1.2 },
       });
     }
     out.addText(runs, {
