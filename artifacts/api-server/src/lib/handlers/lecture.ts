@@ -266,7 +266,6 @@ async function runWrite(job: Job): Promise<void> {
       hook: planned?.hook ?? "",
       words: wordsPerSection,
       nextHeading: sections[section.ord + 1]?.heading ?? null,
-      hasMaterial: material !== "",
     });
 
     const response = await openai.chat.completions.create({
