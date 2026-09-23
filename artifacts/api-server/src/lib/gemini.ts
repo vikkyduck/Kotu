@@ -24,7 +24,7 @@ interface GeminiResponse {
   candidates?: { content?: { parts?: GeminiPart[] } }[];
 }
 
-export function geminiConfigured(): boolean {
+function geminiConfigured(): boolean {
   return API_KEY !== "";
 }
 
