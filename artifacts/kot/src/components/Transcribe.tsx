@@ -55,7 +55,13 @@ export function Transcribe() {
 
   // Запись опрашивается, пока сервер над ней работает, — прогресс на экране
   // движется сам. Останавливается опрос в хуке, как только работа закончена.
-  const { data: active, loading: activeLoading, save } = useTranscription(activeTranscriptionId);
+  const {
+    data: active,
+    loading: activeLoading,
+    save,
+    retry: retryOnServer,
+  } = useTranscription(activeTranscriptionId);
+  const [retrying, setRetrying] = useState(false);
 
   // React to opening an existing transcription or starting a new one.
   useEffect(() => {
@@ -132,7 +138,16 @@ export function Transcribe() {
     }
   };
 
-  const retry = () => {
+  // Сначала повтор из аудио, что уже лежит на сервере: провал чаще про сбой
+  // по дороге, чем про сам файл. Не вышло (аудио не сохранилось, записи нет,
+  // нет сети) — тогда, как раньше, форма новой загрузки.
+  const retry = async () => {
+    if (activeTranscriptionId != null) {
+      setRetrying(true);
+      const ok = await retryOnServer();
+      setRetrying(false);
+      if (ok) return;
+    }
     justUploadedId.current = null;
     newTranscription();
   };
@@ -289,7 +304,12 @@ export function Transcribe() {
             {active?.error || 'Я не смогла распознать эту запись.'}
           </p>
           <div className="btnrow">
-            <button className="btn primary" style={{ flex: 1 }} onClick={retry}>
+            <button
+              className="btn primary"
+              style={{ flex: 1 }}
+              disabled={retrying}
+              onClick={() => void retry()}
+            >
               Попробовать снова <Icon name="arrow" />
             </button>
             <button
