@@ -11,6 +11,7 @@ import {
   clearAttempts,
   allowForgotRequest,
   forgotLimiterSizes,
+  MAX_EMAIL_LENGTH,
 } from "./auth";
 
 const MIN = 60 * 1000;
@@ -118,7 +119,7 @@ describe("забыли пароль", () => {
   });
 
   test("почта в счётчике — хэш фиксированной длины, а не присланная строка", () => {
-    const huge = "a".repeat(10_000) + "@long.test";
+    const huge = "a".repeat(240) + "@long.test";
     const before = forgotLimiterSizes().byEmail;
     expect(allowForgotRequest("198.51.100.6", huge)).toBe(true);
     expect(forgotLimiterSizes().byEmail).toBe(before + 1);
@@ -126,6 +127,19 @@ describe("забыли пароль", () => {
     expect(allowForgotRequest("198.51.100.7", huge)).toBe(true);
     expect(allowForgotRequest("198.51.100.8", huge)).toBe(true);
     expect(allowForgotRequest("198.51.100.9", huge)).toBe(false);
+    expect(forgotLimiterSizes().byEmail).toBe(before + 1);
+  });
+
+  test("почта длиннее 254 символов не попадает в счётчик почты, но расходует лимит адреса", () => {
+    const ip = "198.51.100.10";
+    const huge = "a".repeat(10_000) + "@long.test";
+    const before = forgotLimiterSizes().byEmail;
+    for (let i = 0; i < 5; i++) expect(allowForgotRequest(ip, `${i}${huge}`)).toBe(true);
+    expect(forgotLimiterSizes().byEmail).toBe(before);
+    expect(allowForgotRequest(ip, huge)).toBe(false);
+    // Граница: ровно 254 символа — ещё настоящая почта и считается.
+    const edge = "b".repeat(MAX_EMAIL_LENGTH - "@edge.test".length) + "@edge.test";
+    expect(allowForgotRequest("198.51.100.11", edge)).toBe(true);
     expect(forgotLimiterSizes().byEmail).toBe(before + 1);
   });
 
