@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { CatLine } from '@/lib/cat';
+import { OFFLINE, failText, json, send } from '@/lib/http';
 
 interface LoginProps {
   onSuccess: () => void;
@@ -20,18 +21,12 @@ export function Login({ onSuccess }: LoginProps) {
     }
     setBusy(true);
     setError('');
-    try {
-      await fetch('/api/auth/forgot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
-      setSent(true);
-    } catch {
-      setError('Нет связи с сервером');
-    } finally {
-      setBusy(false);
-    }
+    // На отказ (429 «попробуйте через час», сбой сервера) — его причина, а не
+    // «письмо отправлено»: иначе она ждала бы письмо, которого не будет.
+    const r = await send('/api/auth/forgot', json('POST', { email }), 'Не удалось отправить ссылку');
+    setBusy(false);
+    if (r.ok) setSent(true);
+    else setError(r.message);
   };
 
   const submit = async (e: FormEvent) => {
@@ -39,19 +34,15 @@ export function Login({ onSuccess }: LoginProps) {
     setBusy(true);
     setError('');
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
+      const res = await fetch('/api/auth/login', json('POST', { email, password }));
       if (res.ok) {
         onSuccess();
         return;
       }
-      const data = await res.json().catch(() => ({}));
-      setError(data.message ?? 'Не удалось войти');
+      // 5xx — сервер перезапускается, дело не в почте и пароле.
+      setError(await failText(res, res.status >= 500 ? 'Сервер недоступен, попробуйте через минуту' : 'Не удалось войти'));
     } catch {
-      setError('Нет связи с сервером. Попробуйте ещё раз.');
+      setError(OFFLINE);
     } finally {
       setBusy(false);
     }

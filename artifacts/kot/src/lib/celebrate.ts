@@ -146,10 +146,6 @@ export const Celebrate = (() => {
   }
 
   return {
-    burst(x: number, y: number) {
-      ring(x, y, { r1: 96, dur: 0.62 });
-      emit(x, y, 30, { smin: 90, smax: 240, up: 34 });
-    },
     success(x: number, y: number) {
       ring(x, y, { r0: 32, r1: 170, dur: 0.95, w: 3 });
       ring(x, y, { r0: 32, r1: 250, dur: 1.25, w: 1.4, a: 0.28 });

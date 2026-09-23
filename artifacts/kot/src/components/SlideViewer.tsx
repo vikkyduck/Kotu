@@ -294,8 +294,9 @@ export function SlideViewer({
     );
   };
 
-  // Портал в body: внутри .wrap (z-index 1) окно оказалось бы под шапкой —
+  // Портал вне .wrap: внутри неё (z-index 1) окно оказалось бы под шапкой —
   // fixed не спасает, стопка считается внутри своего контекста наложения.
+  // #modal-root лежит в приложении и прячется с ним, когда поверх вход.
   return createPortal(
     <div className="vw" role="dialog" aria-modal="true" aria-label="Слайд крупно">
       <div className="vw-top">
@@ -499,6 +500,6 @@ export function SlideViewer({
         </button>
       </div>
     </div>,
-    document.body,
+    document.getElementById('modal-root') ?? document.body,
   );
 }

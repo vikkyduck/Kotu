@@ -171,6 +171,7 @@ export function clientKey(ip: string | undefined): string {
 // trust proxy в app.ts — без него за nginx у всех был бы 127.0.0.1 и один
 // общий счётчик на весь интернет.
 const LOGIN_MAX_ATTEMPTS = 10;
+// Меняя окно, поправьте текст отказа TOO_MANY_ATTEMPTS_MESSAGE в routes/auth.ts.
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const loginFailures = createRateLimiter({ limit: LOGIN_MAX_ATTEMPTS, windowMs: LOGIN_WINDOW_MS });
 
