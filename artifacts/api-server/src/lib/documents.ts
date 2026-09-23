@@ -116,11 +116,11 @@ export async function extractText(
   if (ext === "epub" || mime === "application/epub+zip") {
     const zip = await JSZip.loadAsync(await readFile(path));
     const parts: string[] = [];
-    // Внутри epub — обычные xhtml-файлы; порядок по имени достаточно близок
-    // к порядку глав, чтобы текст не перемешался.
+    // Внутри epub — обычные xhtml-файлы. Порядок глав берём по имени с
+    // числовым сравнением: ch2 раньше ch10 и без ведущих нулей.
     const names = Object.keys(zip.files)
       .filter((n) => /\.x?html?$/i.test(n))
-      .sort();
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
     for (const name of names) {
       const raw = await zip.files[name].async("string");
       parts.push(stripHtml(raw));
@@ -182,4 +182,20 @@ export function chunkText(text: string): Chunk[] {
   if (tail.length > OVERLAP_CHARS / 2) chunks.push({ ord: ord++, text: tail, heading });
 
   return chunks;
+}
+
+/**
+ * Обратно к сплошному тексту: у фрагмента срезается нахлёст — хвост
+ * предыдущего, который chunkText перенёс в его начало. Иначе каждая граница
+ * фрагментов звучит дважды. После заголовка нахлёста нет — фрагмент как есть.
+ */
+export function joinChunks(chunks: { text: string }[]): string {
+  return chunks
+    .map((c, i) => {
+      const overlap = i > 0 ? chunks[i - 1].text.slice(-OVERLAP_CHARS).trimStart() : "";
+      return overlap !== "" && c.text.startsWith(overlap)
+        ? c.text.slice(overlap.length).trimStart()
+        : c.text;
+    })
+    .join("\n\n");
 }
