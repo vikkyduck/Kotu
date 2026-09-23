@@ -1,12 +1,11 @@
 import { Router, type IRouter } from "express";
-import { eq, and, asc, desc, sql } from "drizzle-orm";
+import { eq, and, asc, desc } from "drizzle-orm";
 import {
   db,
   lecturesTable,
   lectureSectionsTable,
   lectureSourcesTable,
   documentsTable,
-  jobsTable,
   type LectureBrief,
   type LectureFocus,
   type PlannedSection,
@@ -15,7 +14,7 @@ import { enqueue } from "../../lib/jobs";
 import { ownFolderId } from "../../lib/folders";
 import { lectureToLibrary, dropLectureCopies } from "../../lib/work-doc";
 import { buildLectureDocx, buildLectureMarkdown } from "../../lib/lecture-export";
-import { requireArchive } from "../../lib/archive";
+import { deleteJobsArchivingInput, requireArchive } from "../../lib/archive";
 
 const router: IRouter = Router();
 
@@ -299,10 +298,9 @@ router.delete("/lectures/:id", async (req, res): Promise<void> => {
   await requireArchive();
   // Задачи снимаем первыми: иначе они остаются в очереди, падают на
   // «лекция не найдена», уходят в повтор и держат единственный воркер —
-  // соседние работы ждут на пустом месте.
-  await db
-    .delete(jobsTable)
-    .where(and(sql`${jobsTable.kind} LIKE 'lecture.%'`, eq(jobsTable.entityId, lecture.id)));
+  // соседние работы ждут на пустом месте. Их payload — в архив тем же
+  // оператором: там может быть то, что владелица вводила руками.
+  await db.execute(deleteJobsArchivingInput("lecture.%", "lectures", lecture.id));
 
   // Текст лекции в поиске — часть самой лекции, а не отдельный документ:
   // уходит вместе с ней, иначе в библиотеке остался бы призрак.
