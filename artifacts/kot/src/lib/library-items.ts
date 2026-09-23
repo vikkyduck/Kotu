@@ -81,7 +81,14 @@ export interface Item {
   meta: string;
   tone: '' | 'busy' | 'bad';
   createdAt: string;
+  /**
+   * Ручка материала: туда уходит перекладывание в папку. Нет — карточку не
+   * перекладывают: незаконченная работа ещё не материал, а у расшифровки без
+   * библиотечной копии нет строки, которая лежала бы в папке.
+   */
+  api?: string;
   open?: () => void;
+  rename?: () => void;
   /** Удаление: у расшифровки его нет — она удаляется вместе с записью. */
   del?: () => void;
   /** «Сделать из этого»: материал переходит в следующий инструмент. */
@@ -140,6 +147,9 @@ export interface ItemActions {
   newDeck: (seed?: DeckSeed) => void;
   newLecture: (seed?: LectureSeed) => void;
   remove: (url: string, done: string) => void;
+  rename: (url: string, title: string) => void;
+  retry: (url: string) => void;
+  openFile: (url: string) => void;
 }
 
 /** Свежее сверху: работа идёт от последнего, а не от первой загруженной книги. */
@@ -150,7 +160,7 @@ const newestFirst = (a: Item, b: Item) => (a.createdAt < b.createdAt ? 1 : -1);
  * в работе», — так у работы виден путь: сделал → лежит в библиотеке.
  */
 export function buildItems(data: LibraryData, act: ItemActions): Item[] {
-  const { docs, lectures, decks } = data;
+  const { docs, lectures, decks, transcriptions } = data;
 
   const fromDocs = docs
     // Текстовая копия лекции и презентации — не отдельный материал, а их
@@ -158,6 +168,12 @@ export function buildItems(data: LibraryData, act: ItemActions): Item[] {
     .filter((d) => d.kind !== 'deck' && d.kind !== 'lecture')
     .map<Item>((d) => {
       const kind = docKind(d.kind);
+      const api = `/api/documents/${d.id}`;
+      // У копии расшифровки своё имя нейтральное (оно уходит в модели), а
+      // автору показываем и переименовываем настоящее — имя самой записи.
+      const record =
+        d.transcriptionId !== null ? transcriptions.find((t) => t.id === d.transcriptionId) : undefined;
+      const title = record?.title ?? d.title;
       const meta =
         d.status === 'ready'
           ? // У расшифровки счёт фрагментов ничего не говорит автору — только
@@ -173,15 +189,26 @@ export function buildItems(data: LibraryData, act: ItemActions): Item[] {
         key: `doc:${d.id}`,
         kind,
         id: d.id,
-        title: d.title,
+        title,
         folderId: d.folderId,
         meta,
         tone: d.status === 'error' ? 'bad' : d.status === 'ready' ? '' : 'busy',
         createdAt: d.createdAt,
+        api,
         open:
-          d.kind === 'transcript' && d.transcriptionId !== null
-            ? () => act.openTranscription(d.transcriptionId!)
-            : undefined,
+          kind === 'transcript'
+            ? d.transcriptionId !== null
+              ? () => act.openTranscription(d.transcriptionId!)
+              : undefined
+            : d.status === 'error'
+              ? () => act.retry(`${api}/retry`)
+              : () => act.openFile(`${api}/file`),
+        rename:
+          kind !== 'transcript'
+            ? () => act.rename(api, title)
+            : d.transcriptionId !== null
+              ? () => act.rename(`/api/transcriptions/${d.transcriptionId}`, title)
+              : undefined,
         // Разобранный материал годится и для слайдов, и как опора лекции.
         makeDeck:
           d.status === 'ready'
@@ -190,12 +217,29 @@ export function buildItems(data: LibraryData, act: ItemActions): Item[] {
         makeLecture:
           d.status === 'ready' ? () => act.newLecture({ documentIds: [d.id] }) : undefined,
         // Расшифровку удаляют вместе с записью — на её экране, там же, где аудио.
-        del:
-          d.kind === 'transcript'
-            ? undefined
-            : () => act.remove(`/api/documents/${d.id}`, 'Документ удалён'),
+        del: kind === 'transcript' ? undefined : () => act.remove(api, 'Документ удалён'),
       };
     });
+
+  // Готовая запись без библиотечной копии: текст короче порога или копия ещё
+  // не записана. Без этой карточки она не видна нигде — ни в работе, ни здесь.
+  const fromRecords = transcriptions
+    .filter((t) => t.status === 'done' && !docs.some((d) => d.transcriptionId === t.id))
+    .map<Item>((t) => ({
+      key: `tr:${t.id}`,
+      kind: 'transcript',
+      id: t.id,
+      title: t.title,
+      folderId: null,
+      meta: KIND_LABEL.transcript,
+      tone: '',
+      createdAt: t.createdAt,
+      open: () => act.openTranscription(t.id),
+      rename: () => act.rename(`/api/transcriptions/${t.id}`, t.title),
+    }));
+
+  /** В поиске текст работы, только когда у её копии уже есть фрагменты. */
+  const searchable = (match: (d: Doc) => boolean) => docs.some((d) => match(d) && d.chunkCount > 0);
 
   /** Опереться на свою работу можно через её текст в поиске. */
   const copyOf = (match: (d: Doc) => boolean): (() => void) | undefined => {
@@ -211,10 +255,12 @@ export function buildItems(data: LibraryData, act: ItemActions): Item[] {
       id: l.id,
       title: l.title,
       folderId: l.folderId,
-      meta: docs.some((d) => d.lectureId === l.id) ? 'лекция · текст в поиске' : 'лекция · готова',
+      meta: searchable((d) => d.lectureId === l.id) ? 'лекция · текст в поиске' : 'лекция · готова',
       tone: '',
       createdAt: l.createdAt,
+      api: `/api/lectures/${l.id}`,
       open: () => act.openLecture(l.id),
+      rename: () => act.rename(`/api/lectures/${l.id}`, l.title),
       del: () => act.remove(`/api/lectures/${l.id}`, 'Лекция удалена'),
       makeDeck: () => act.newDeck({ sourceKind: 'lecture', sourceId: l.id }),
       makeLecture: copyOf((d) => d.lectureId === l.id),
@@ -228,17 +274,19 @@ export function buildItems(data: LibraryData, act: ItemActions): Item[] {
       id: k.id,
       title: k.title,
       folderId: k.folderId,
-      meta: docs.some((d) => d.deckId === k.id)
+      meta: searchable((d) => d.deckId === k.id)
         ? 'презентация · текст в поиске'
         : 'презентация · готова',
       tone: '',
       createdAt: k.createdAt,
+      api: `/api/decks/${k.id}`,
       open: () => act.openDeck(k.id),
+      rename: () => act.rename(`/api/decks/${k.id}`, k.title),
       del: () => act.remove(`/api/decks/${k.id}`, 'Презентация удалена'),
       makeLecture: copyOf((d) => d.deckId === k.id),
     }));
 
-  return [...fromDocs, ...fromLectures, ...fromDecks].sort(newestFirst);
+  return [...fromDocs, ...fromRecords, ...fromLectures, ...fromDecks].sort(newestFirst);
 }
 
 /** Сейчас в работе: то, что делается или ждёт решения автора. */
@@ -279,6 +327,8 @@ export function buildWorking(data: LibraryData, act: ItemActions): Item[] {
       tone: l.status === 'error' ? 'bad' : 'busy',
       createdAt: l.createdAt,
       open: () => act.openLecture(l.id),
+      // План не понравился или лекция упала — убрать её можно прямо отсюда.
+      del: () => act.remove(`/api/lectures/${l.id}`, 'Лекция удалена'),
     }));
 
   const fromDecks = decks
@@ -298,6 +348,7 @@ export function buildWorking(data: LibraryData, act: ItemActions): Item[] {
       tone: k.status === 'error' ? 'bad' : 'busy',
       createdAt: k.createdAt,
       open: () => act.openDeck(k.id),
+      del: () => act.remove(`/api/decks/${k.id}`, 'Презентация удалена'),
     }));
 
   return [...fromTranscriptions, ...fromLectures, ...fromDecks].sort(newestFirst);
@@ -309,6 +360,6 @@ export function isBusy(data: LibraryData): boolean {
     data.docs.some((d) => d.status === 'parsing' || d.status === 'uploaded') ||
     data.lectures.some((l) => l.status === 'planning' || l.status === 'writing') ||
     data.decks.some((k) => k.status === 'storyboarding' || k.status === 'drawing') ||
-    data.transcriptions.some((t) => t.status === 'processing' || t.status === 'queued')
+    data.transcriptions.some((t) => t.status === 'processing')
   );
 }

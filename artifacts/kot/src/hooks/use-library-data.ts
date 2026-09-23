@@ -14,6 +14,12 @@ export function useLibraryData(active: boolean): {
   folders: Folder[];
   /** null, пока первый ответ не пришёл: экран показывает «открываю библиотеку». */
   loaded: boolean;
+  /**
+   * Последняя загрузка не удалась. Экран смотрит на это, только пока ничего
+   * не загружено: вместо вечного «открываю» — «ещё раз». Потом фоновые сбои
+   * не видны — список уже на экране.
+   */
+  failed: boolean;
   reload: () => Promise<void>;
 } {
   const [docs, setDocs] = useState<Doc[] | null>(null);
@@ -21,6 +27,7 @@ export function useLibraryData(active: boolean): {
   const [lectures, setLectures] = useState<LectureRow[]>([]);
   const [decks, setDecks] = useState<DeckRow[]>([]);
   const [transcriptions, setTranscriptions] = useState<TranscriptionRow[]>([]);
+  const [failed, setFailed] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -36,8 +43,10 @@ export function useLibraryData(active: boolean): {
       if (l) setLectures(l);
       if (k) setDecks(k);
       if (t) setTranscriptions(t);
+      setFailed(!d);
     } catch {
       /* сеть моргнула — покажем то, что уже есть */
+      setFailed(true);
     }
   }, []);
 
@@ -55,5 +64,5 @@ export function useLibraryData(active: boolean): {
     return () => clearInterval(t);
   }, [active, busy, reload]);
 
-  return { data, folders, loaded: docs !== null, reload };
+  return { data, folders, loaded: docs !== null, failed, reload };
 }
