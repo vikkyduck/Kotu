@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '@/hooks/use-app';
 import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
 import { Icon } from '@/lib/icons';
@@ -81,9 +81,12 @@ const DURATIONS = [
 export function Lecture() {
   // Какую лекцию открыть, решает библиотека: инструмент — это действие,
   // а не ещё один список сделанного.
-  const { screen, go, toast, activeLectureId, openLecture, lectureSeed, newDeck } = useApp();
+  const { screen, go, leaveMissing, toast, activeLectureId, openLecture, lectureSeed, newDeck } = useApp();
   const [docs, setDocs] = useState<Doc[]>([]);
   const openId = activeLectureId;
+  // Ответ мог прийти, когда она уже ушла с этой лекции: чужой экран не трогаем.
+  const openRef = useRef(openId);
+  openRef.current = openId;
   const [lecture, setLecture] = useState<LectureFull | null>(null);
 
   // Бриф — тоже черновик: он ценнее всего, что есть на этом экране.
@@ -119,14 +122,14 @@ export function Lecture() {
       const res = await fetch(`/api/lectures/${id}`);
       if (res.ok) {
         setLecture(await res.json());
-      } else if (res.status === 404) {
+      } else if (res.status === 404 && id === openRef.current) {
         // Лекцию удалили (другая вкладка, старая ссылка, «назад») — не
         // показывать же под её адресом форму новой.
         toast('Лекция не найдена');
-        go('s-home');
+        leaveMissing();
       }
     } catch { /* тихо: поллинг повторит */ }
-  }, [toast, go]);
+  }, [toast, leaveMissing]);
 
   useEffect(() => {
     if (screen !== 's-lecture') return;

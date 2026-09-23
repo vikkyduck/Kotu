@@ -18,6 +18,8 @@ interface FixSheetState {
 interface AppContextType {
   screen: ScreenId;
   go: (id: ScreenId) => void;
+  /** Открытого по адресу больше нет: его запись в истории становится библиотекой. */
+  leaveMissing: () => void;
   toast: (msg: string) => void;
   toastMsg: string | null;
   sheet: FixSheetState;
@@ -187,6 +189,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     goTo({ ...HOME, screen: id });
   }, [goTo]);
 
+  // Не go('s-home'): новая запись поверх удалённой сделала бы из «назад»
+  // ловушку — каждый шаг назад снова попадал бы на неё и уводил вперёд.
+  const leaveMissing = useCallback(() => {
+    window.history.replaceState({ ...HOME, fromHome: false }, '', '#/');
+    navRef.current = HOME;
+    setNav(HOME);
+    window.scrollTo({ top: 0 });
+  }, []);
+
   const openTranscription = useCallback((id: number) => {
     goTo({ ...HOME, screen: 's-transcribe', transcriptionId: id });
   }, [goTo]);
@@ -236,7 +247,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AppContext.Provider value={{ screen, go, toast, toastMsg, sheet, openSheet, closeSheet, theme, toggleTheme, activeTranscriptionId, openTranscription, newTranscription, activeLectureId, openLecture, newLecture, lectureSeed, activeDeckId, openDeck, newDeck, deckSeed }}>
+    <AppContext.Provider value={{ screen, go, leaveMissing, toast, toastMsg, sheet, openSheet, closeSheet, theme, toggleTheme, activeTranscriptionId, openTranscription, newTranscription, activeLectureId, openLecture, newLecture, lectureSeed, activeDeckId, openDeck, newDeck, deckSeed }}>
       {children}
     </AppContext.Provider>
   );

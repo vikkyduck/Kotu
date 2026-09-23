@@ -23,7 +23,7 @@ function formatSize(bytes: number): string {
 }
 
 export function Transcribe() {
-  const { screen, go, toast, activeTranscriptionId, openTranscription, newTranscription } = useApp();
+  const { screen, go, leaveMissing, toast, activeTranscriptionId, openTranscription, newTranscription } = useApp();
   const [deleting, setDeleting] = useState(false);
 
   const deleteActive = async (id: number) => {
@@ -105,9 +105,9 @@ export function Transcribe() {
   useEffect(() => {
     if (screen === 's-transcribe' && activeTranscriptionId != null && activeFailed === 'missing') {
       toast('Запись не найдена');
-      go('s-home');
+      leaveMissing();
     }
-  }, [screen, activeTranscriptionId, activeFailed, toast, go]);
+  }, [screen, activeTranscriptionId, activeFailed, toast, leaveMissing]);
 
   const acceptFile = (f: File) => {
     if (f.size > MAX_UPLOAD_BYTES) {
