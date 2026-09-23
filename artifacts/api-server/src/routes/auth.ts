@@ -186,6 +186,12 @@ router.post("/auth/reset", async (req, res) => {
     .where(eq(passwordResetsTable.tokenHash, row.tokenHash));
   await db.delete(sessionsTable).where(eq(sessionsTable.userId, row.userId));
 
+  // «Сохранить и войти»: входит сразу. Счётчик неверных входов обнуляется —
+  // часто пароль сбрасывают как раз после них, и без этого новый пароль
+  // упёрся бы в «подождите 15 минут».
+  clearAttempts(req.ip);
+  const session = await createSession(row.userId);
+  setSessionCookie(res, session.token, session.expiresAt);
   res.json({ ok: true });
 });
 
@@ -214,7 +220,9 @@ router.post("/auth/password", requireAuth, async (req, res) => {
   const ok = await verifyPassword(current, user.passwordHash);
   if (!ok) {
     registerFailedAttempt(ip);
-    res.status(401).json({ message: "Текущий пароль неверен" });
+    // Не 401: он здесь значит «сессия кончилась» (requireAuth), и фронт по
+    // нему открывает вход.
+    res.status(400).json({ message: "Текущий пароль неверен" });
     return;
   }
 
