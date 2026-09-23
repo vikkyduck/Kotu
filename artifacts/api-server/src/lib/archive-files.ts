@@ -18,8 +18,11 @@ import type { Query } from "./archive-sql";
  * через временный файл и rename (writeFileAtomic): writeFile по тому же пути
  * писал бы в тот же inode и испортил бы архивную копию — и снимок деплоя.
  *
- * Внутри архива код ничего не удаляет. Даже брошенный временный файл
- * (обрыв посреди копирования) остаётся лежать — с префиксом TMP_PREFIX.
+ * Внутри архива код ничего не удаляет и не перезаписывает: объект
+ * публикуется через link (EEXIST — «уже есть»), а не rename поверх. Убирается
+ * только временное имя после публикации — второе имя того же содержимого.
+ * Брошенный временный файл (обрыв посреди копирования) остаётся лежать — с
+ * префиксом TMP_PREFIX.
  */
 
 /** Префикс временных файлов атомарной записи; сверка их не трогает. */
@@ -173,13 +176,36 @@ export function createFileArchive(opts: FileArchiveOptions) {
   const storedPathFor = (sha: string) => path.join(archiveDir, sha.slice(0, 2), sha);
 
   /**
+   * Опубликовать временный файл под именем объекта. link, а не rename:
+   * rename молча заменил бы уже лежащий объект, а архив свои объекты не
+   * перезаписывает никогда — даже тем же содержимым (на прежнем inode
+   * могут висеть снимки деплоя и бэкап). EEXIST — объект уже есть (его
+   * положил параллельный вызов с тем же sha): это успех, не ошибка.
+   * Временное имя после этого убираем: оно лишь второе имя того же
+   * содержимого, которое теперь лежит под именем объекта (или уже лежало).
+   * true — объект появился именно сейчас.
+   */
+  async function publish(tmp: string, target: string): Promise<boolean> {
+    let created = true;
+    try {
+      await link(tmp, target);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      created = false;
+    }
+    await rm(tmp, { force: true });
+    return created;
+  }
+
+  /**
    * Кладёт в архив именно то содержимое, что захэшировано через fh.
    * Сначала жёсткая ссылка во временное имя и сверка inode: путь могли
    * подменить rename'ом, пока шёл хэш, и тогда ссылка указала бы на чужое
    * содержимое под нашим именем. Не вышло со ссылкой (другой диск, запрет
    * ядра) — копия из того же открытого файла.
+   * true — объект появился на этом вызове; false — его уже положил другой.
    */
-  async function store(filePath: string, fh: FileHandle, st: Stats, sha: string): Promise<void> {
+  async function store(filePath: string, fh: FileHandle, st: Stats, sha: string): Promise<boolean> {
     const dir = path.dirname(storedPathFor(sha));
     await mkdir(dir, { recursive: true });
     const target = storedPathFor(sha);
@@ -189,8 +215,7 @@ export function createFileArchive(opts: FileArchiveOptions) {
       await hardLink(filePath, linkTmp);
       const linked = await lstat(linkTmp);
       if (linked.ino === st.ino && linked.dev === st.dev) {
-        await rename(linkTmp, target);
-        return;
+        return await publish(linkTmp, target);
       }
       // Путь уже указывает на другой файл. Ссылку не удаляем (в архиве
       // ничего не удаляется) — она остаётся временным файлом, а наше
@@ -210,7 +235,7 @@ export function createFileArchive(opts: FileArchiveOptions) {
     } finally {
       await out.close();
     }
-    await rename(copyTmp, target);
+    return publish(copyTmp, target);
   }
 
   /**
@@ -234,8 +259,7 @@ export function createFileArchive(opts: FileArchiveOptions) {
       const storedPath = storedPathFor(sha);
       let stored = false;
       if (!(await lstatOrNull(storedPath))) {
-        await store(filePath, fh, st, sha);
-        stored = true;
+        stored = await store(filePath, fh, st, sha);
       }
       await query(
         `INSERT INTO archive.files (sha256, size, stored_path) VALUES ($1, $2, $3)
@@ -283,12 +307,30 @@ export function createFileArchive(opts: FileArchiveOptions) {
     meta: Omit<FileMeta, "kind"> & { kind?: string },
   ): Promise<ArchivedFile | null> {
     await requireReady();
+    return removeArchived(filePath, meta, null);
+  }
+
+  /**
+   * rm после архивации. already — итог архивации, сделанной только что
+   * (archiveTreeAndRemove архивирует всё заранее): если inode тот же, второй
+   * раз не архивируем и второго события в file_events не пишем.
+   */
+  async function removeArchived(
+    filePath: string,
+    meta: Omit<FileMeta, "kind"> & { kind?: string },
+    already: ArchivedFile | null,
+  ): Promise<ArchivedFile | null> {
+    let archived = already;
     for (let attempt = 0; attempt < 3; attempt++) {
-      const archived = await archiveFile(filePath, { ...meta, kind: meta.kind ?? "remove" });
+      archived ??= await archiveFile(filePath, { ...meta, kind: meta.kind ?? "remove" });
       if (!archived) return null;
       const now = await lstatOrNull(filePath);
       if (!now) return archived;
-      if (now.ino !== archived.ino || now.dev !== archived.dev) continue;
+      if (now.ino !== archived.ino || now.dev !== archived.dev) {
+        // Путь подменили после архивации — новое содержимое тоже в архив.
+        archived = null;
+        continue;
+      }
       if (!dataDirs.some((d) => isInside(d, filePath))) {
         // Путь из базы вне каталогов данных: заархивировали, но чужое не удаляем.
         log.warn({ filePath }, "Файл вне каталогов данных — в архиве, но на месте");
@@ -335,8 +377,13 @@ export function createFileArchive(opts: FileArchiveOptions) {
   ): Promise<number> {
     await requireReady();
     const files = await listFiles(dir);
-    for (const f of files) await archiveFile(f, { ...meta, kind: "remove" });
-    for (const f of files) await archiveAndRemove(f, { ...meta, kind: "remove" });
+    const done: (ArchivedFile | null)[] = [];
+    for (const f of files) done.push(await archiveFile(f, { ...meta, kind: "remove" }));
+    for (const [i, f] of files.entries()) {
+      // Файл исчез между проходами — архивировать и удалять нечего.
+      if (!done[i]) continue;
+      await removeArchived(f, { ...meta, kind: "remove" }, done[i]!);
+    }
     const dirs: string[] = [];
     const collect = async (d: string) => {
       const entries = await readdir(d, { withFileTypes: true }).catch(() => []);
