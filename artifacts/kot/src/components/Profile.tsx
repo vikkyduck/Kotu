@@ -30,14 +30,17 @@ export function Profile() {
     })();
   }, [screen]);
 
+  // Форма закрывается пустой — отменённые пароли не ждут следующего открытия.
+  const closeForm = () => {
+    setShowForm(false);
+    setCurrent('');
+    setNext('');
+    setRepeat('');
+    setError('');
+  };
+
   useEffect(() => {
-    if (screen !== 's-profile') {
-      setShowForm(false);
-      setCurrent('');
-      setNext('');
-      setRepeat('');
-      setError('');
-    }
+    if (screen !== 's-profile') closeForm();
   }, [screen]);
 
   const changePassword = async (e: FormEvent) => {
@@ -48,10 +51,6 @@ export function Profile() {
       setError('Новые пароли не совпадают');
       return;
     }
-    if (next.length < 10) {
-      setError('Новый пароль должен быть не короче 10 символов');
-      return;
-    }
 
     setBusy(true);
     const r = await send('/api/auth/password', json('POST', { current, next }), 'Не удалось сменить пароль');
@@ -60,15 +59,16 @@ export function Profile() {
       setError(r.message);
       return;
     }
-    setShowForm(false);
-    setCurrent('');
-    setNext('');
-    setRepeat('');
+    closeForm();
     toast('Пароль изменён. На других устройствах нужно войти заново.');
   };
 
   const logout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    const r = await send('/api/auth/logout', { method: 'POST' }, 'Не удалось выйти');
+    if (!r.ok) {
+      toast(r.message);
+      return;
+    }
     window.location.reload();
   };
 
@@ -139,17 +139,10 @@ export function Profile() {
             className="btn ghost"
             type="button"
             style={{ width: '100%', marginTop: 'var(--sp-1)' }}
-            onClick={() => {
-              setShowForm(false);
-              setError('');
-            }}
+            onClick={closeForm}
           >
             Отмена
           </button>
-
-          <p className="login-note">
-            После смены пароля вход на других устройствах перестанет действовать.
-          </p>
         </form>
       )}
 

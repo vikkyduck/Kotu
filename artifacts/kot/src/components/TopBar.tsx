@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@/lib/icons';
 import { CatMark } from '@/lib/cat';
-import { useApp } from '@/hooks/use-app';
+import { useApp, type ScreenId } from '@/hooks/use-app';
 
-const TITLES: Record<string, string> = {
+const TITLES: Record<ScreenId, string> = {
   's-home': '',
   's-transcribe': 'Расшифровка',
   's-lecture': 'Лекция',
@@ -35,7 +35,7 @@ export function TopBar() {
     };
   }, [menuOpen]);
 
-  const goFromMenu = (id: 's-how' | 's-profile') => {
+  const goFromMenu = (id: Extract<ScreenId, 's-how' | 's-profile'>) => {
     setMenuOpen(false);
     go(id);
   };

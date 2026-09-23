@@ -1,16 +1,18 @@
 import { useState, useEffect, type FormEvent } from 'react';
-import { json, send } from '@/lib/http';
+import { OFFLINE, json, send } from '@/lib/http';
 
 /** Сервер не ответил толком (перезапуск, обрыв сети) — спросим снова. */
 const RETRY_MS = 2000;
 
 interface ResetPasswordProps {
   token: string;
-  onDone: () => void;
+  /** signedIn — пароль задан и сервер уже впустил; false — ссылка не сработала. */
+  onDone: (signedIn: boolean) => void;
 }
 
 export function ResetPassword({ token, onDone }: ResetPasswordProps) {
-  const [state, setState] = useState<'checking' | 'valid' | 'invalid' | 'done'>('checking');
+  const [state, setState] = useState<'checking' | 'valid' | 'invalid'>('checking');
+  const [offline, setOffline] = useState(false);
   const [password, setPassword] = useState('');
   const [repeat, setRepeat] = useState('');
   const [error, setError] = useState('');
@@ -32,7 +34,9 @@ export function ResetPassword({ token, onDone }: ResetPasswordProps) {
       } catch {
         /* спросим ещё раз */
       }
-      if (alive) timer = setTimeout(() => void check(), RETRY_MS);
+      if (!alive) return;
+      setOffline(true);
+      timer = setTimeout(() => void check(), RETRY_MS);
     };
     void check();
     return () => {
@@ -49,19 +53,15 @@ export function ResetPassword({ token, onDone }: ResetPasswordProps) {
       setError('Пароли не совпадают');
       return;
     }
-    if (password.length < 10) {
-      setError('Пароль должен быть не короче 10 символов');
-      return;
-    }
 
     setBusy(true);
     const r = await send('/api/auth/reset', json('POST', { token, password }), 'Не удалось задать пароль');
     setBusy(false);
-    if (r.ok) setState('done');
+    if (r.ok) onDone(true);
     else setError(r.message);
   };
 
-  if (state === 'checking') return null;
+  if (state === 'checking') return offline ? <div className="login-wrap"><p className="lead">{OFFLINE}</p></div> : null;
 
   if (state === 'invalid') {
     return (
@@ -70,22 +70,10 @@ export function ResetPassword({ token, onDone }: ResetPasswordProps) {
         <p className="lead">
           Скорее всего, она устарела или её уже использовали.
         </p>
-        <button className="btn primary big" onClick={onDone}>
-          Вернуться ко входу
+        <button className="btn primary big" onClick={() => onDone(false)}>
+          Дальше
         </button>
         <p className="login-note">Запросите новую ссылку — она действует один час.</p>
-      </div>
-    );
-  }
-
-  if (state === 'done') {
-    return (
-      <div className="login-wrap">
-        <h1 className="hello">Пароль изменён</h1>
-        <p className="lead">Теперь войдите с новым паролем.</p>
-        <button className="btn primary big" onClick={onDone}>
-          Войти
-        </button>
       </div>
     );
   }

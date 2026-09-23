@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
  * 's-home' — библиотека: она же главная. Отдельного экрана библиотеки нет
  * с тех пор, как инструменты стали действиями над ней, а не соседями по меню.
  */
-type ScreenId = 's-home' | 's-transcribe' | 's-lecture' | 's-slides' | 's-how' | 's-profile';
+export type ScreenId = 's-home' | 's-transcribe' | 's-lecture' | 's-slides' | 's-how' | 's-profile';
 type Theme = 'light' | 'dark';
 
 interface FixSheetState {
@@ -18,6 +18,14 @@ interface FixSheetState {
 interface AppContextType {
   screen: ScreenId;
   go: (id: ScreenId) => void;
+  /** Папка библиотеки, открытая на главной; null — корень. */
+  openFolderId: number | null;
+  openFolder: (id: number) => void;
+  /**
+   * Экран с несохранённой правкой ставит сюда проверку «есть что терять»;
+   * уход (переход, жест «назад») тогда сначала спрашивает. null — снять.
+   */
+  setLeaveGuard: (guard: (() => boolean) | null) => void;
   /** Открытого по адресу больше нет: его запись в истории становится библиотекой. */
   leaveMissing: () => void;
   toast: (msg: string) => void;
@@ -66,9 +74,12 @@ interface Nav {
   transcriptionId: number | null;
   lectureId: number | null;
   deckId: number | null;
+  folderId: number | null;
 }
 
-const HOME: Nav = { screen: 's-home', transcriptionId: null, lectureId: null, deckId: null };
+const HOME: Nav = { screen: 's-home', transcriptionId: null, lectureId: null, deckId: null, folderId: null };
+
+export const LEAVE_UNSAVED = 'Правки не сохранены. Уйти без сохранения?';
 
 /**
  * Адрес страницы. Нужен ради трёх вещей: кнопка «назад» в браузере (на
@@ -81,7 +92,7 @@ function hashOf(n: Nav): string {
   if (n.screen === 's-slides') return n.deckId ? `#/deck/${n.deckId}` : '#/deck';
   if (n.screen === 's-profile') return '#/profile';
   if (n.screen === 's-how') return '#/how';
-  return '#/';
+  return n.folderId ? `#/folder/${n.folderId}` : '#/';
 }
 
 function navOf(hash: string): Nav {
@@ -93,6 +104,7 @@ function navOf(hash: string): Nav {
   if (what === 'deck') return { ...HOME, screen: 's-slides', deckId: num };
   if (what === 'profile') return { ...HOME, screen: 's-profile' };
   if (what === 'how') return { ...HOME, screen: 's-how' };
+  if (what === 'folder' && num) return { ...HOME, folderId: num };
   return HOME;
 }
 
@@ -142,12 +154,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const navRef = useRef(nav);
   navRef.current = nav;
 
+  // Один слот: открыт всегда один экран, и правку держит он.
+  const leaveGuard = useRef<(() => boolean) | null>(null);
+  const setLeaveGuard = useCallback((guard: (() => boolean) | null) => {
+    leaveGuard.current = guard;
+  }, []);
+  const canLeave = useCallback(() => !leaveGuard.current?.() || window.confirm(LEAVE_UNSAVED), []);
+  // Шаг назад из go: сторож уже спросил, onPop второй раз не переспрашивает.
+  const asked = useRef(false);
+
+  const closeSheet = useCallback(() => {
+    setSheet(s => ({ ...s, isOpen: false }));
+  }, []);
+
   /**
    * Переход: состояние и адрес меняются вместе, иначе «назад» врёт.
    * fromHome в записи истории — пришли на неё из библиотеки: тогда возврат
    * в библиотеку — это шаг назад, а не новая запись (см. go).
    */
-  const goTo = useCallback((next: Nav) => {
+  const move = useCallback((next: Nav) => {
     const cur = navRef.current;
     const hash = hashOf(next);
     if (hash !== window.location.hash) {
@@ -161,14 +186,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     navRef.current = next;
     setNav(next);
+    closeSheet();
     window.scrollTo({ top: 0 });
-  }, []);
+  }, [closeSheet]);
+
+  const goTo = useCallback((next: Nav) => {
+    if (canLeave()) move(next);
+  }, [canLeave, move]);
 
   // Кнопка «назад» браузера и жест «назад» на телефоне: возвращают туда, где
   // человек был, а не выкидывают из приложения.
   useEffect(() => {
     const onPop = (e: PopStateEvent) => {
-      setNav((e.state as Nav | null) ?? navOf(window.location.hash));
+      // Записи истории, сделанные до появления полей Nav, дополняем пустыми.
+      const back: Nav = { ...HOME, ...((e.state as Nav | null) ?? navOf(window.location.hash)) };
+      // Браузер уже ушёл; раз остаёмся — возвращаем запись экрана с правкой.
+      const allowed = asked.current || canLeave();
+      asked.current = false;
+      if (!allowed) {
+        const cur = navRef.current;
+        window.history.pushState({ ...cur, fromHome: back.screen === 's-home' }, '', hashOf(cur));
+        return;
+      }
+      navRef.current = back;
+      setNav(back);
+      // Лист имени принадлежит экрану, с которого ушли.
+      closeSheet();
       window.scrollTo({ top: 0 });
     };
     window.addEventListener('popstate', onPop);
@@ -177,16 +220,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const entry = { ...navOf(window.location.hash), fromHome: Boolean(historyState()?.fromHome) };
     window.history.replaceState(entry, '', window.location.hash || '#/');
     return () => window.removeEventListener('popstate', onPop);
-  }, []);
+  }, [canLeave, closeSheet]);
 
   const go = useCallback((id: ScreenId) => {
+    if (!canLeave()) return;
     // В библиотеку, из которой сюда и пришли, — шагом назад: иначе жест
     // «назад» на телефоне снова открыл бы экран, с которого только что ушли.
-    if (id === 's-home' && navRef.current.screen !== 's-home' && historyState()?.fromHome) {
+    const cur = navRef.current;
+    if (id === 's-home' && (cur.screen !== 's-home' || cur.folderId !== null) && historyState()?.fromHome) {
+      asked.current = true;
       window.history.back();
       return;
     }
-    goTo({ ...HOME, screen: id });
+    move({ ...HOME, screen: id });
+  }, [canLeave, move]);
+
+  const openFolder = useCallback((id: number) => {
+    goTo({ ...HOME, folderId: id });
   }, [goTo]);
 
   // Не go('s-home'): новая запись поверх удалённой сделала бы из «назад»
@@ -242,12 +292,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSheet({ isOpen: true, title, callback: cb, initial });
   }, []);
 
-  const closeSheet = useCallback(() => {
-    setSheet(s => ({ ...s, isOpen: false }));
-  }, []);
-
   return (
-    <AppContext.Provider value={{ screen, go, leaveMissing, toast, toastMsg, sheet, openSheet, closeSheet, theme, toggleTheme, activeTranscriptionId, openTranscription, newTranscription, activeLectureId, openLecture, newLecture, lectureSeed, activeDeckId, openDeck, newDeck, deckSeed }}>
+    <AppContext.Provider value={{ screen, go, openFolderId: nav.folderId, openFolder, setLeaveGuard, leaveMissing, toast, toastMsg, sheet, openSheet, closeSheet, theme, toggleTheme, activeTranscriptionId, openTranscription, newTranscription, activeLectureId, openLecture, newLecture, lectureSeed, activeDeckId, openDeck, newDeck, deckSeed }}>
       {children}
     </AppContext.Provider>
   );
