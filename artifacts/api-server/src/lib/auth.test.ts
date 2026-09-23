@@ -10,6 +10,7 @@ import {
   registerFailedAttempt,
   clearAttempts,
   allowForgotRequest,
+  forgotLimiterSizes,
 } from "./auth";
 
 const MIN = 60 * 1000;
@@ -114,6 +115,18 @@ describe("забыли пароль", () => {
     for (let i = 0; i < 5; i++) allowForgotRequest(ip, `x${i}@ip3.test`);
     for (let i = 0; i < 10; i++) expect(allowForgotRequest(ip, "kept@ip3.test")).toBe(false);
     expect(allowForgotRequest("198.51.100.4", "kept@ip3.test")).toBe(true);
+  });
+
+  test("почта в счётчике — хэш фиксированной длины, а не присланная строка", () => {
+    const huge = "a".repeat(10_000) + "@long.test";
+    const before = forgotLimiterSizes().byEmail;
+    expect(allowForgotRequest("198.51.100.6", huge)).toBe(true);
+    expect(forgotLimiterSizes().byEmail).toBe(before + 1);
+    // Одна и та же почта даёт один ключ: лимит 3 в час продолжает работать.
+    expect(allowForgotRequest("198.51.100.7", huge)).toBe(true);
+    expect(allowForgotRequest("198.51.100.8", huge)).toBe(true);
+    expect(allowForgotRequest("198.51.100.9", huge)).toBe(false);
+    expect(forgotLimiterSizes().byEmail).toBe(before + 1);
   });
 
   test("пустая почта расходует только лимит адреса", () => {
