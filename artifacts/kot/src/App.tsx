@@ -11,6 +11,7 @@ import { Slides } from '@/components/Slides';
 import { How } from '@/components/How';
 import { FixSheet } from '@/components/FixSheet';
 import { Toast } from '@/components/Toast';
+import { OFFLINE } from '@/lib/http';
 
 function AppContent() {
   return (
@@ -45,6 +46,8 @@ function AuthGate() {
   // 'expired' — сессия кончилась посреди работы: вход поверх, приложение под
   // ним не размонтируется, чтобы несохранённая правка дождалась повторного входа.
   const [state, setState] = useState<'checking' | 'in' | 'out' | 'expired'>('checking');
+  // Проверка сессии не удалась хоть раз: вместо белого экрана — «нет связи».
+  const [offline, setOffline] = useState(false);
   // Ссылка из письма приходит как /?reset=<токен> — своего роутера в
   // приложении нет, поэтому читаем адрес напрямую.
   const [resetToken, setResetToken] = useState<string | null>(() =>
@@ -64,7 +67,9 @@ function AuthGate() {
       } catch {
         /* сети нет — спросим ещё раз */
       }
-      if (alive) timer = setTimeout(() => void check(), RETRY_MS);
+      if (!alive) return;
+      setOffline(true);
+      timer = setTimeout(() => void check(), RETRY_MS);
     };
     void check();
     return () => {
@@ -76,8 +81,8 @@ function AuthGate() {
   // Сессия кончилась посреди работы (30 дней прошло, пароль сменили на
   // другом устройстве) — любой запрос к API получит 401, и вместо «не удалось»
   // на каждой кнопке показываем вход. Экран и недописанный текст сохранятся:
-  // приложение только прячется (см. 'expired'). Под /api/auth/ 401
-  // значит другое — «неверный пароль», — его разбирают сами формы.
+  // приложение только прячется (см. 'expired'). У самого входа 401 значит
+  // другое — «неверный пароль», — его разбирает форма.
   useEffect(() => {
     const original = window.fetch;
     window.fetch = async (input, init) => {
@@ -88,7 +93,7 @@ function AuthGate() {
         if (
           url.origin === window.location.origin &&
           url.pathname.startsWith('/api/') &&
-          !url.pathname.startsWith('/api/auth/')
+          url.pathname !== '/api/auth/login'
         ) {
           setState((s) => (s === 'in' || s === 'expired' ? 'expired' : 'out'));
         }
@@ -115,17 +120,19 @@ function AuthGate() {
     return (
       <ResetPassword
         token={resetToken}
-        onDone={() => {
-          // Убираем токен из адресной строки, чтобы он не остался в истории.
-          window.history.replaceState(null, '', window.location.pathname);
+        onDone={(signedIn) => {
+          // Убираем токен из адресной строки, чтобы он не остался в истории;
+          // запись навигации (use-app) остаётся прежней.
+          window.history.replaceState(window.history.state, '', window.location.pathname + window.location.hash);
           setResetToken(null);
-          setState('out');
+          // Нерабочая ссылка сессию не трогает: живая пускает дальше без входа.
+          if (signedIn) setState('in');
         }}
       />
     );
   }
 
-  if (state === 'checking') return null;
+  if (state === 'checking') return offline ? <div className="login-wrap"><p className="lead">{OFFLINE}</p></div> : null;
   if (state === 'out') return <Login onSuccess={() => setState('in')} />;
   return (
     <>
