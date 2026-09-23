@@ -8,7 +8,8 @@
 #   /opt/kotu/public — статика фронта (nginx, сайт psy3107 → https://psy3107.ru)
 #   /opt/kotu/server — бандл API (systemd-сервис kotu, 127.0.0.1:5010)
 # Секреты живут в /opt/kotu/.env на сервере и НЕ трогаются деплоем.
-# Схема БД: pnpm --filter @workspace/db run push через ssh-туннель (см. README-заметку ниже).
+# Схема БД деплоем не меняется — только вручную, см. комментарий в конце и
+# DEPLOY.md («Миграция схемы»).
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -260,7 +261,14 @@ fi
 echo "   опись данных после выкатки: ничего не пропало"
 echo "✅ Готово: ${PUBLIC_URL:-https://psy3107.ru}/"
 
-# Миграция схемы БД (когда меняется lib/db/src/schema):
-#   ssh -f -N -L 15432:localhost:5432 root@5.129.198.180
-#   DATABASE_URL=postgres://kotu:<пароль из /opt/kotu/.env>@localhost:15432/kotu \
-#     pnpm --filter @workspace/db run push
+# Миграция схемы БД (когда меняется lib/db/src/schema) — вручную, по DEPLOY.md:
+#   0. Дамп ДО push: ./deploy.sh (снимок в /opt/backups/predeploy) или на сервере
+#      sudo -u postgres pg_dump -Fc kotu > /opt/backups/predeploy/push-$(date +%Y%m%d-%H%M%S).dump
+#      push может сделать DROP COLUMN или пересоздать таблицу — мимо архива строк.
+#   1. ssh -f -N -L 15432:localhost:5432 root@5.129.198.180
+#      DATABASE_URL=postgres://kotu:<пароль из /opt/kotu/.env>@localhost:15432/kotu \
+#        pnpm --filter @workspace/db run push
+#      Предлагает truncate — отказаться (TRUNCATE таблиц данных запрещён триггером).
+#   2. СРАЗУ: ssh root@5.129.198.180 systemctl restart kotu — ensureArchive вернёт
+#      триггеры пересозданным таблицам. До рестарта их правки не архивируются
+#      (сам сервер заметит пропажу лишь при сверке, раз в 6 ч).
