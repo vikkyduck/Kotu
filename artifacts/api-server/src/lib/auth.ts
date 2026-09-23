@@ -6,6 +6,7 @@ import { db, usersTable, sessionsTable, type User } from "@workspace/db";
 
 const scryptAsync = promisify(scrypt);
 
+// Формат хеша повторён в set-user.sh — менять вместе (смена ломает и старые хеши).
 const KEY_LEN = 64;
 const SESSION_DAYS = 30;
 
