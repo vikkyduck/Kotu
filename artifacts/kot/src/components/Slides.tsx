@@ -28,7 +28,7 @@ function tilePreview(c: SlideContent): string | undefined {
 export function Slides() {
   // Какую колоду открыть, решает библиотека: инструмент — это действие,
   // а список сделанного лежит там же, где книги и лекции.
-  const { screen, go, toast, activeDeckId, openDeck } = useApp();
+  const { screen, go, leaveMissing, toast, activeDeckId, openDeck } = useApp();
   const openId = activeDeckId;
   const [deck, setDeck] = useState<DeckFull | null>(null);
   /** Открытую колоду не удалось загрузить — текст причины для экрана. */
@@ -65,7 +65,7 @@ export function Slides() {
     if (res.status === 404) {
       // Колоду удалили в другой вкладке — не опрашивать же её вечно.
       toast('Презентация не найдена');
-      go('s-home');
+      leaveMissing();
       return;
     }
     if (!res.ok) {
@@ -76,7 +76,7 @@ export function Slides() {
     if (id !== openRef.current) return;
     setDeck(data);
     setFailed(null);
-  }, [toast, go]);
+  }, [toast, leaveMissing]);
 
   // Форма новой презентации — то, что видно, когда ничего не открыто.
   const creating = openId === null;
