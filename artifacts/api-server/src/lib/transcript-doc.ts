@@ -19,12 +19,20 @@ function neutralTitle(t: Transcription): string {
 }
 
 /**
- * Кладёт готовую расшифровку в библиотеку — ТОЛЬКО в маскированном виде.
+ * Без скрытия имён (лекции, воркшопы) название записи — обычное название,
+ * по нему копию и ищут в библиотеке. Со скрытием — нейтральное (см. выше).
+ */
+function libraryTitle(t: Transcription): string {
+  return t.hideNames ? neutralTitle(t) : t.title;
+}
+
+/**
+ * Кладёт готовую расшифровку в библиотеку.
  *
- * Правило двух зон: библиотека — зона Б, её фрагменты уезжают за границу
- * (эмбеддинги, главы лекций). Расшифровка сеанса — зона А. Поэтому в файл
- * библиотеки и в индекс попадает текст с плейсхолдерами вместо имён; сама
- * расшифровка с настоящими именами остаётся на своём экране и никуда не едет.
+ * Фрагменты библиотеки уходят в модели (главы лекций). Поэтому, если при
+ * расшифровке попросили скрыть имена, в файл и в индекс попадает текст с
+ * плейсхолдерами вместо имён; без скрытия (лекции, воркшопы — решение
+ * владелицы 23.09.2026) — текст как есть.
  *
  * Идемпотентно: повторный вызов обновляет существующий документ и
  * переиндексирует его (правки автора в расшифровке доезжают до библиотеки).
@@ -41,6 +49,13 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
     return;
   }
 
+  // Имена скрывали при расшифровке — скрываем и в библиотечной копии: по ней
+  // собираются лекции, а это отправка в модель. Не скрывали (лекции, воркшопы)
+  // — копия как есть, сервис имён не нужен.
+  if (!t.hideNames) {
+    await writeTranscriptCopy(t, plain);
+    return;
+  }
   const { masked: rawMasked } = await maskText(plain).catch((err: unknown) => {
     // Без настоящего NER наружу нельзя: отказываемся, стартовая сверка
     // повторит, когда сервис вернётся.
@@ -55,6 +70,11 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
   // повторная маскировка оборачивает их второй парой скобок — схлопываем.
   const masked = rawMasked.replace(/\[{3,}((?:PER|LOC)\d+)\]{3,}/g, "[[$1]]");
 
+  await writeTranscriptCopy(t, masked);
+}
+
+/** Файл копии, строка документа и переиндексация — общее для обеих веток. */
+async function writeTranscriptCopy(t: Transcription, text: string): Promise<void> {
   // Расшифровку могли удалить, пока считалась маскировка, — не воскрешаем.
   const [alive] = await db
     .select({ id: transcriptionsTable.id })
@@ -65,7 +85,7 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
 
   const filePath = path.join(LIBRARY_DIR, `transcript-${t.id}.txt`);
   // Прежняя копия уходит в архив, новая пишется атомарно (lib/archive-files.ts).
-  await writeDataFile(filePath, masked, {
+  await writeDataFile(filePath, text, {
     entityType: "transcription",
     entityId: t.id,
     mime: "text/plain",
@@ -77,7 +97,7 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
     .insert(documentsTable)
     .values({
       ownerId: t.ownerId,
-      title: neutralTitle(t),
+      title: libraryTitle(t),
       kind: "transcript",
       transcriptionId: t.id,
       sourcePath: filePath,
@@ -99,7 +119,7 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
     docId = existing.id;
     await db
       .update(documentsTable)
-      .set({ title: neutralTitle(t), status: "parsing", statusMessage: "В очереди…", error: null })
+      .set({ title: libraryTitle(t), status: "parsing", statusMessage: "В очереди…", error: null })
       .where(eq(documentsTable.id, docId));
   }
 

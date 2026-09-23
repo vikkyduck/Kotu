@@ -1,12 +1,11 @@
 import { test, describe, expect, vi, afterEach, beforeEach } from "vitest";
 
 /**
- * Оформление расшифровки: наружу — только текст с метками.
+ * Оформление расшифровки и галочка «Скрыть имена и города».
  *
- * Модель оформления зарубежная, поэтому имена прячутся ВСЕГДА, какой бы ни
- * была галочка «скрывать имена» в форме: она решает только, как имена
- * хранятся и показываются. А если сервис распознавания имён лежит, запрос к
- * модели не уходит вовсе.
+ * Включена — имена прячутся ДО модели оформления, а если сервис распознавания
+ * имён лежит, запрос к модели не уходит вовсе. Выключена (лекции, воркшопы —
+ * решение владелицы 23.09.2026) — текст уходит как есть, сервис имён не нужен.
  *
  * Клиент OpenAI подменён: сеть не нужна, а каждый вызов виден тесту.
  */
@@ -43,51 +42,65 @@ function sentToModel(): string {
 beforeEach(() => create.mockReset());
 afterEach(() => vi.unstubAllGlobals());
 
-describe("имена не уходят в модель", () => {
-  test("hideNames=false: в модель — метка, в результате — имя без скобок", async () => {
-    nerFindsAnna();
-    modelAnswers(
-      JSON.stringify({ segments: [{ who: "", text: "[[PER1]] пришла и сразу заговорила о матери." }] }),
-    );
+describe("без скрытия имён — текст как есть", () => {
+  test("в модель — исходный текст, сервис имён не вызывается", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    modelAnswers(JSON.stringify({ segments: [{ who: "", text: "Анна пришла и сразу заговорила о матери." }] }));
 
     const segs = await structureTranscript(RAW, { hideNames: false, markSpeakers: false });
 
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledTimes(1);
     const sent = sentToModel();
-    expect(sent.includes("Анна"), `имя ушло в модель: ${sent}`).toBe(false);
-    expect(sent).toContain("[[PER1]] пришла");
-    expect(sent).toContain("Переноси эти метки в ответ ДОСЛОВНО");
+    expect(sent).toContain(RAW);
+    expect(sent).not.toContain("Переноси эти метки");
     expect(segs).toEqual([{ who: "", text: "Анна пришла и сразу заговорила о матери." }]);
   });
 
-  test("hideNames=true: в модель — метка, в результате — имя в скобках", async () => {
-    nerFindsAnna();
-    modelAnswers(
-      JSON.stringify({ segments: [{ who: "", text: "[[PER1]] пришла и сразу заговорила о матери." }] }),
-    );
+  test("сервис имён лежит — расшифровка всё равно оформляется", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new TypeError("fetch failed");
+    });
+    modelAnswers(JSON.stringify({ segments: [{ who: "", text: "Анна пришла." }] }));
 
-    const segs = await structureTranscript(RAW, { hideNames: true, markSpeakers: false });
+    const segs = await structureTranscript(RAW, { hideNames: false, markSpeakers: true });
 
-    expect(sentToModel().includes("Анна")).toBe(false);
-    expect(segs).toEqual([{ who: "", text: "[[Анна]] пришла и сразу заговорила о матери." }]);
+    expect(segs).toEqual([{ who: "", text: "Анна пришла." }]);
   });
 
-  test("модель ответила не JSON, hideNames=false — исходный текст как есть", async () => {
-    nerFindsAnna();
+  test("модель ответила не JSON — исходный текст как есть", async () => {
     modelAnswers("не json");
 
     const segs = await structureTranscript(`  ${RAW}  `, { hideNames: false, markSpeakers: false });
 
-    expect(sentToModel().includes("Анна")).toBe(false);
     expect(segs).toEqual([{ who: "", text: RAW }]);
   });
+});
 
-  test("модель ответила не JSON, hideNames=true — имена в скобках", async () => {
+describe("со скрытием имён — имена не уходят в модель", () => {
+  test("в модель — метка, в результате — имя в скобках", async () => {
+    nerFindsAnna();
+    modelAnswers(
+      JSON.stringify({ segments: [{ who: "", text: "[[PER1]] пришла и сразу заговорила о матери." }] }),
+    );
+
+    const segs = await structureTranscript(RAW, { hideNames: true, markSpeakers: false });
+
+    const sent = sentToModel();
+    expect(sent.includes("Анна"), `имя ушло в модель: ${sent}`).toBe(false);
+    expect(sent).toContain("[[PER1]] пришла");
+    expect(sent).toContain("Переноси эти метки в ответ ДОСЛОВНО");
+    expect(segs).toEqual([{ who: "", text: "[[Анна]] пришла и сразу заговорила о матери." }]);
+  });
+
+  test("модель ответила не JSON — имена в скобках", async () => {
     nerFindsAnna();
     modelAnswers("не json");
 
     const segs = await structureTranscript(RAW, { hideNames: true, markSpeakers: false });
 
+    expect(sentToModel().includes("Анна")).toBe(false);
     expect(segs).toEqual([{ who: "", text: "[[Анна]] пришла и сразу заговорила о матери." }]);
   });
 });
@@ -107,15 +120,13 @@ describe("сервис распознавания имён лежит", () => {
         throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
       },
     ],
-  ])("%s — оформление отклоняется, запрос к модели не отправлен", async (_name, impl) => {
+  ])("%s — со скрытием имён оформление отклоняется, запрос к модели не отправлен", async (_name, impl) => {
     vi.stubGlobal("fetch", impl);
     modelAnswers(JSON.stringify({ segments: [{ who: "", text: "не должно понадобиться" }] }));
 
-    for (const hideNames of [false, true]) {
-      await expect(
-        structureTranscript(RAW, { hideNames, markSpeakers: true }),
-      ).rejects.toBeInstanceOf(NerUnavailableError);
-    }
+    await expect(
+      structureTranscript(RAW, { hideNames: true, markSpeakers: true }),
+    ).rejects.toBeInstanceOf(NerUnavailableError);
     expect(create).not.toHaveBeenCalled();
   });
 

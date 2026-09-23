@@ -41,7 +41,9 @@ export function Transcribe() {
 
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [opts, setOpts] = useState({ names: 'on', spk: 'on' });
+  // Скрытие имён по умолчанию выключено: на платформе лекции и воркшопы, а не
+  // сеансы (решение владелицы 23.09.2026) — включает сама, когда нужно.
+  const [opts, setOpts] = useState({ names: 'off', spk: 'on' });
 
   // While the upload request itself is in flight (before we have a row to poll).
   const [uploading, setUploading] = useState(false);
