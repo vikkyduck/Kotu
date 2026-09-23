@@ -1,5 +1,5 @@
 import { test, describe, expect, vi, afterEach } from "vitest";
-import { maskText, unmaskText, NerUnavailableError } from "./privacy";
+import { hideLabels, maskText, unmaskText, NerUnavailableError } from "./privacy";
 
 /**
  * Главное обещание платформы: настоящие имена пациентов не покидают сервер
@@ -168,4 +168,10 @@ describe("смещения из Python сверяются с текстом", ()
 
     await expect(maskText(text)).rejects.toBeInstanceOf(NerUnavailableError);
   });
+});
+
+test("hideLabels: метки копии в выдаче — «имя скрыто», «место скрыто»", () => {
+  expect(hideLabels("[[PER1]] из [[LOC12]] говорит с [[PER2]]")).toBe(
+    "имя скрыто из место скрыто говорит с имя скрыто",
+  );
 });

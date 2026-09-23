@@ -19,6 +19,7 @@ import { parseId } from "../../lib/parse-id";
 import { resolveInsideDir } from "../../lib/uploads";
 import { archiveAndRemove, archiveUpload, requireArchive } from "../../lib/archive";
 import { logger } from "../../lib/logger";
+import { hideLabels } from "../../lib/privacy";
 import { QUEUED_MESSAGE, enqueue, lastJob } from "../../lib/jobs";
 import { NO_CHUNKS, NO_TEXT, type IngestPayload } from "../../lib/handlers/ingest";
 
@@ -60,16 +61,6 @@ const { sourcePath: _sourcePath, ...PUBLIC_DOC } = getTableColumns(documentsTabl
 function cleanTitle(raw: unknown): string | null {
   const title = typeof raw === "string" ? raw.trim().slice(0, 200) : "";
   return title === "" ? null : title;
-}
-
-/**
- * Метки скрытых имён ([[PER1]], [[LOC2]]) в тексте копии расшифровки — для
- * модели, а человеку в выдаче поиска они ничего не говорят. Показываем так
- * же, как на экране записи. Сам текст копии не трогаем: номера меток помогают
- * модели не путать разных людей.
- */
-function hideLabels(text: string): string {
-  return text.replace(/\[\[PER\d+\]\]/g, "имя скрыто").replace(/\[\[LOC\d+\]\]/g, "место скрыто");
 }
 
 router.get("/documents", async (req, res): Promise<void> => {

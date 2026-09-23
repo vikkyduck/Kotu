@@ -14,6 +14,7 @@ import {
   type PlannedSection,
 } from "@workspace/db";
 import { parseId } from "../../lib/parse-id";
+import { hideLabels } from "../../lib/privacy";
 import { QUEUED_MESSAGE, enqueue } from "../../lib/jobs";
 import { attachmentHeader } from "../../lib/filename";
 import { ownFolderId } from "../../lib/folders";
@@ -41,14 +42,6 @@ async function loadLecture(rawId: string, ownerId: number): Promise<Lecture | nu
     .where(and(eq(lecturesTable.id, id), eq(lecturesTable.ownerId, ownerId)))
     .limit(1);
   return lecture ?? null;
-}
-
-/**
- * Метки скрытых имён ([[PER1]], [[LOC1]]) из копий расшифровок — для модели,
- * а не для глаз: в цитатах источников показываем, что за ними скрыто.
- */
-function hideLabels(text: string): string {
-  return text.replace(/\[\[PER\d+\]\]/g, "имя скрыто").replace(/\[\[LOC\d+\]\]/g, "место скрыто");
 }
 
 /** Лекция вместе с главами и источниками — фронту нужен цельный объект. */
