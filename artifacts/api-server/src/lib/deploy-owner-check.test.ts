@@ -2,7 +2,7 @@ import { test, describe, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureArchiveWith } from "./archive-sql";
+import { ARCHIVED_TABLES, ensureArchiveWith } from "./archive-sql";
 import { createTestDb, type TestDb } from "./archive-test-db";
 
 /**
@@ -47,7 +47,10 @@ describe("deploy.sh: проверка владельцев перед залив
     expect(lines).toContain("функция archive.capture_row (владелец postgres)");
     // Таблица archive.rows уже в списке — её последовательность отдельно не выводится.
     expect(lines.filter((l) => l.includes("_seq"))).toEqual([]);
-    expect(lines.filter((l) => l.startsWith("public."))).toHaveLength(10);
+    // Список таблиц в deploy.sh — копия ARCHIVED_TABLES: разойдутся — тест упадёт.
+    expect(lines.filter((l) => l.startsWith("public.")).sort()).toEqual(
+      ARCHIVED_TABLES.map((t) => `public.${t.table} (владелец postgres)`).sort(),
+    );
   });
 
   test("всё передано приложению — чисто", async () => {
