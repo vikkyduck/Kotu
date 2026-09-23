@@ -2,44 +2,34 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '@/hooks/use-app';
 import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
 import { Icon } from '@/lib/icons';
-import { send, json, downloadFile } from '@/lib/http';
+import { OFFLINE, failText, send, json, downloadFile } from '@/lib/http';
 import { KIND_LABEL, docKind, type ItemKind } from '@/lib/library-items';
+import type {
+  Bibliography,
+  DocumentStatus,
+  LectureFocus,
+  LecturePlanNotes,
+  LectureStatus,
+  PlannedSection,
+  SectionStatus,
+} from '@workspace/db/schema';
 
 interface Doc {
   id: number;
   title: string;
   kind: string;
-  status: string;
+  status: DocumentStatus;
 }
 
 /** Подпись у материала — только у своих работ: они должны быть отличимы от книги. */
 const OWN_WORK: ItemKind[] = ['transcript', 'lecture', 'deck'];
-
-interface PlanItem {
-  heading: string;
-  abstract: string;
-  concepts?: string[];
-  hook?: string;
-}
-
-/** Спутники плана: что за скобками и где нужно решение автора. */
-interface PlanNotes {
-  outOfScope: string[];
-  decisions: string[];
-}
-
-/** Литература двумя уровнями — истоки и современность. */
-interface Bibliography {
-  primary: string[];
-  modern: string[];
-}
 
 interface Section {
   id: number;
   ord: number;
   heading: string;
   text: string;
-  status: string;
+  status: SectionStatus;
   editedByHuman: boolean;
 }
 
@@ -55,11 +45,11 @@ interface Source {
 interface LectureFull {
   id: number;
   title: string;
-  plan: PlanItem[] | null;
-  planNotes: PlanNotes | null;
+  plan: PlannedSection[] | null;
+  planNotes: LecturePlanNotes | null;
   bibliography: Bibliography | null;
   planApproved: boolean;
-  status: 'planning' | 'plan_ready' | 'writing' | 'ready' | 'error';
+  status: LectureStatus;
   statusMessage: string;
   error: string | null;
   sections: Section[];
@@ -67,68 +57,107 @@ interface LectureFull {
 }
 
 const AUDIENCES = ['студенты', 'коллеги', 'смешанная'];
-const FOCUS = [
-  { value: 'theoretical', label: 'теоретический' },
-  { value: 'clinical', label: 'клинический' },
-  { value: 'historical', label: 'исторический' },
-] as const;
+/** Подписи акцентов: Record требует подпись у каждого акцента схемы. */
+const FOCUS_LABEL: Record<LectureFocus, string> = {
+  theoretical: 'теоретический',
+  clinical: 'клинический',
+  historical: 'исторический',
+};
+const FOCI = Object.keys(FOCUS_LABEL) as LectureFocus[];
 
+// Больше двух часов лекция не выйдет: восемь глав по 1800 слов — потолок
+// handlers/lecture.ts.
 const DURATIONS = [
   { label: '1 час', value: 60 },
-  { label: '2–3 часа', value: 150 },
+  { label: '2 часа', value: 120 },
 ];
 
 export function Lecture() {
   // Какую лекцию открыть, решает библиотека: инструмент — это действие,
   // а не ещё один список сделанного.
   const { screen, go, leaveMissing, toast, activeLectureId, openLecture, lectureSeed, newDeck } = useApp();
-  const [docs, setDocs] = useState<Doc[]>([]);
+  /** null — список ещё не пришёл: «пусто» до ответа было бы неправдой. */
+  const [docs, setDocs] = useState<Doc[] | null>(null);
+  const [docsFailed, setDocsFailed] = useState(false);
   const openId = activeLectureId;
-  // Ответ мог прийти, когда она уже ушла с этой лекции: чужой экран не трогаем.
   const openRef = useRef(openId);
   openRef.current = openId;
   const [lecture, setLecture] = useState<LectureFull | null>(null);
+  /** Открытую лекцию не удалось загрузить — текст причины для экрана. */
+  const [failed, setFailed] = useState<string | null>(null);
 
   // Бриф — тоже черновик: он ценнее всего, что есть на этом экране.
   const [topic, setTopic, clearTopic] = useDraft('lecture-topic', screen === 's-lecture');
   const [audience, setAudience] = useState('студенты');
-  const [duration, setDuration] = useState(150);
+  const [duration, setDuration] = useState(120);
   const [picked, setPicked] = useState<number[]>([]);
   /** Откуда материал: из выбранных документов или собственное исследование ИИ. */
   /** Источники независимы: можно оба, один или ни одного. */
   const [useLibrary, setUseLibrary] = useState(false);
   const [useResearch, setUseResearch] = useState(false);
   /** Акцентов может быть несколько — или ни одного. */
-  const [focus, setFocus] = useState<('clinical' | 'theoretical' | 'historical')[]>([]);
+  const [focus, setFocus] = useState<LectureFocus[]>([]);
   const [busy, setBusy] = useState(false);
+  /**
+   * Правка главы: id главы, черновик и текст, с которого начали. Уход с
+   * экрана правку не закрывает — вернулась, и черновик на месте.
+   */
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
+  const [draftFrom, setDraftFrom] = useState('');
   /** Правка блока плана: индекс и черновики заголовка с тезисом. */
   const [planEdit, setPlanEdit] = useState<number | null>(null);
   const [planHead, setPlanHead] = useState('');
   const [planAbstract, setPlanAbstract] = useState('');
+  /** Чья правка плана открыта: вернулась к той же лекции — правка цела. */
+  const planOf = useRef<number | null>(null);
 
-  useUnsavedWarning(screen === 's-lecture' && openId === null && topic.trim() !== '');
+  // Правка блока без изменений — не повод спрашивать; лекция не загружена —
+  // сравнить не с чем, считаем правку живой.
+  const planBlock = planEdit !== null ? lecture?.plan?.[planEdit] : undefined;
+  const unsaved =
+    (editing !== null && draft !== draftFrom) ||
+    (planEdit !== null && (!planBlock || planHead !== planBlock.heading || planAbstract !== planBlock.abstract));
+  useUnsavedWarning(unsaved || (screen === 's-lecture' && openId === null && topic.trim() !== ''));
 
   const loadDocs = useCallback(async () => {
-    const d = await fetch('/api/documents')
-      .then((r) => (r.ok ? r.json() : []))
-      .catch(() => []);
-    setDocs((d as Doc[]).filter((x) => x.status === 'ready'));
+    try {
+      const res = await fetch('/api/documents');
+      if (!res.ok) throw new Error();
+      const all = (await res.json()) as Doc[];
+      setDocs(all.filter((x) => x.status === 'ready'));
+      setDocsFailed(false);
+    } catch {
+      // Прежний список (если был) остаётся: сбой — не повод объявить библиотеку пустой.
+      setDocsFailed(true);
+    }
   }, []);
 
   const loadOne = useCallback(async (id: number) => {
+    let res: Response;
     try {
-      const res = await fetch(`/api/lectures/${id}`);
-      if (res.ok) {
-        setLecture(await res.json());
-      } else if (res.status === 404 && id === openRef.current) {
-        // Лекцию удалили (другая вкладка, старая ссылка, «назад») — не
-        // показывать же под её адресом форму новой.
-        toast('Лекция не найдена');
-        leaveMissing();
-      }
-    } catch { /* тихо: поллинг повторит */ }
+      res = await fetch(`/api/lectures/${id}`);
+    } catch {
+      if (id === openRef.current) setFailed(OFFLINE);
+      return;
+    }
+    // Ответ мог прийти, когда она уже ушла с этой лекции: чужой экран не трогаем.
+    if (id !== openRef.current) return;
+    if (res.status === 404) {
+      // Лекцию удалили (другая вкладка, старая ссылка, «назад») — не
+      // показывать же под её адресом форму новой.
+      toast('Лекция не найдена');
+      leaveMissing();
+      return;
+    }
+    if (!res.ok) {
+      setFailed(await failText(res, 'Не удалось открыть лекцию'));
+      return;
+    }
+    const data = (await res.json()) as LectureFull;
+    if (id !== openRef.current) return;
+    setLecture(data);
+    setFailed(null);
   }, [toast, leaveMissing]);
 
   useEffect(() => {
@@ -145,14 +174,13 @@ export function Lecture() {
   }, [screen, openId, lectureSeed]);
 
   useEffect(() => {
-    if (screen !== 's-lecture') setEditing(null);
-  }, [screen]);
-
-  useEffect(() => {
-    // Индекс правки плана относится к прежней лекции — в новой он чужой.
-    setPlanEdit(null);
     setLecture(null);
-    if (openId !== null) void loadOne(openId);
+    setFailed(null);
+    if (openId === null) return;
+    // Индекс правки плана относится к своей лекции — в другой он чужой.
+    if (openId !== planOf.current) setPlanEdit(null);
+    planOf.current = openId;
+    void loadOne(openId);
   }, [openId, loadOne]);
 
   // Пока идёт работа — подтягиваем состояние, чтобы прогресс двигался сам.
@@ -197,15 +225,29 @@ export function Lecture() {
     openLecture(created.id);
   };
 
+  /**
+   * Запрос-действие над открытой лекцией: отказ сервера или обрыв сети —
+   * тост с причиной и false; успех — лекция перечитана и true.
+   */
+  const act = async (url: string, init: RequestInit, fail: string, done?: string): Promise<boolean> => {
+    if (!lecture) return false;
+    const r = await send(url, init, fail);
+    if (!r.ok) {
+      toast(r.message);
+      return false;
+    }
+    if (done) toast(done);
+    await loadOne(lecture.id);
+    return true;
+  };
+
   const approve = async () => {
     if (!lecture) return;
     setBusy(true);
-    const r = await send(`/api/lectures/${lecture.id}/plan/approve`, { method: 'POST' }, 'Не удалось запустить');
-    if (r.ok) {
-      toast('Пишу главы. Можно закрыть страницу.');
-      await loadOne(lecture.id);
-    } else {
-      toast(r.message);
+    // Правка блока, открытая на экране, — часть плана, который она утверждает.
+    if (planEdit === null || (await savePlanEdit())) {
+      await act(`/api/lectures/${lecture.id}/plan/approve`, { method: 'POST' }, 'Не удалось запустить',
+        'Пишу главы. Можно закрыть страницу.');
     }
     setBusy(false);
   };
@@ -215,13 +257,7 @@ export function Lecture() {
   const retry = async () => {
     if (!lecture) return;
     setBusy(true);
-    const r = await send(`/api/lectures/${lecture.id}/retry`, { method: 'POST' }, 'Не удалось перезапустить');
-    if (r.ok) {
-      toast('Пробую ещё раз');
-      await loadOne(lecture.id);
-    } else {
-      toast(r.message);
-    }
+    await act(`/api/lectures/${lecture.id}/retry`, { method: 'POST' }, 'Не удалось перезапустить', 'Пробую ещё раз');
     setBusy(false);
   };
 
@@ -241,61 +277,75 @@ export function Lecture() {
     if (err) toast(err);
   };
 
-  const patchPlan = async (plan: PlanItem[]) => {
-    if (!lecture) return false;
-    const r = await send(`/api/lectures/${lecture.id}/plan`, json('PATCH', { plan }), 'Не удалось изменить план');
-    if (!r.ok) {
-      toast(r.message);
-      return false;
-    }
-    await loadOne(lecture.id);
-    return true;
-  };
+  // Сервер заменяет план целиком, а lecture.plan обновится только после
+  // перечитывания: пока запрос идёт, действия с планом закрыты (busy) —
+  // иначе второй клик отправил бы план с уже убранным блоком.
+  const patchPlan = (plan: PlannedSection[]) =>
+    act(`/api/lectures/${lecture?.id}/plan`, json('PATCH', { plan }), 'Не удалось изменить план');
 
   const dropChapter = async (index: number) => {
     if (!lecture?.plan) return;
     // Индексы сдвинутся — открытая правка другого блока попала бы не туда.
     setPlanEdit(null);
+    setBusy(true);
     await patchPlan(lecture.plan.filter((_, i) => i !== index));
+    setBusy(false);
   };
 
   /** Сохранить правку блока: заголовок и тезис; концепции и крючок остаются. */
-  const savePlanEdit = async () => {
-    if (!lecture?.plan || planEdit === null) return;
+  const savePlanEdit = async (): Promise<boolean> => {
+    if (!lecture?.plan || planEdit === null) return true;
     if (planHead.trim() === '') {
       toast('У блока должно быть название');
-      return;
+      return false;
     }
     const plan = lecture.plan.map((b, i) =>
       i === planEdit ? { ...b, heading: planHead.trim(), abstract: planAbstract.trim() } : b,
     );
-    if (await patchPlan(plan)) {
-      setPlanEdit(null);
-      toast('План обновлён');
-    }
+    if (!(await patchPlan(plan))) return false;
+    setPlanEdit(null);
+    return true;
+  };
+
+  const saveOnePlanBlock = async () => {
+    setBusy(true);
+    if (await savePlanEdit()) toast('План обновлён');
+    setBusy(false);
   };
 
   const saveSection = async (section: Section) => {
     if (!lecture) return;
-    const r = await send(
-      `/api/lectures/${lecture.id}/sections/${section.id}`,
-      json('PATCH', { text: draft }),
-      'Не удалось сохранить',
-    );
-    if (!r.ok) {
-      toast(r.message);
-      return;
+    if (await act(`/api/lectures/${lecture.id}/sections/${section.id}`, json('PATCH', { text: draft }),
+      'Не удалось сохранить', 'Правка сохранена')) {
+      setEditing(null);
     }
-    setEditing(null);
-    toast('Правка сохранена');
-    await loadOne(lecture.id);
   };
 
   if (screen !== 's-lecture') return null;
 
-  // Лекция по адресу ещё грузится — форму новой под её адресом не показываем.
+  // Лекция по адресу ещё не пришла (или не пришла вовсе) — форму новой под
+  // её адресом не показываем: кнопка под ней завела бы дубль.
   if (openId !== null && lecture?.id !== openId) {
-    return <section className="screen active" id="s-lecture" />;
+    return (
+      <section className="screen active" id="s-lecture">
+        <button className="btn ghost back-link" onClick={() => go('s-home')}>
+          <Icon name="back" /> В библиотеку
+        </button>
+        {failed ? (
+          <div className="errblock">
+            <h3 className="errttl">Не удалось открыть</h3>
+            <p className="errwhy">{failed}</p>
+            <div className="btnrow">
+              <button className="btn primary" style={{ flex: 1 }} onClick={() => void loadOne(openId)}>
+                Ещё раз
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="doc-meta">Загружаю…</p>
+        )}
+      </section>
+    );
   }
 
   // ── Открытая лекция ─────────────────────────────────────────────────────
@@ -310,9 +360,9 @@ export function Lecture() {
 
         <h2 className="h2">{lecture.title}</h2>
 
-        {/* План, который писать не будут, и готовую лекцию можно удалить прямо
-            здесь; у ошибки кнопка удаления — в её блоке. */}
-        {(lecture.status === 'plan_ready' || lecture.status === 'ready') && (
+        {/* Удалить можно на любом этапе — как презентацию; у ошибки кнопка
+            удаления — в её блоке. */}
+        {lecture.status !== 'error' && (
           <div className="deck-tools">
             <button className="chg deck-drop" onClick={() => void remove()}>
               удалить лекцию
@@ -328,7 +378,7 @@ export function Lecture() {
               <button className="btn primary" style={{ flex: 1 }} disabled={busy} onClick={() => void retry()}>
                 {busy ? 'Запускаю…' : 'Попробовать ещё раз'}
               </button>
-              <button className="btn danger" onClick={() => void remove()}>
+              <button className="btn danger" disabled={busy} onClick={() => void remove()}>
                 <Icon name="trash" /> Удалить
               </button>
             </div>
@@ -368,10 +418,10 @@ export function Lecture() {
                         onChange={(e) => setPlanAbstract(e.target.value)}
                       />
                       <div className="lec-actions">
-                        <button className="btn primary" onClick={() => void savePlanEdit()}>
+                        <button className="btn primary" disabled={busy} onClick={() => void saveOnePlanBlock()}>
                           Сохранить
                         </button>
-                        <button className="btn ghost" onClick={() => setPlanEdit(null)}>
+                        <button className="btn ghost" disabled={busy} onClick={() => setPlanEdit(null)}>
                           Отмена
                         </button>
                       </div>
@@ -391,6 +441,7 @@ export function Lecture() {
                     <button
                       className="btn ghost doc-move"
                       title="Править блок"
+                      disabled={busy}
                       onClick={() => {
                         setPlanEdit(i);
                         setPlanHead(p.heading);
@@ -402,6 +453,7 @@ export function Lecture() {
                     <button
                       className="btn ghost doc-del"
                       title="Убрать главу"
+                      disabled={busy}
                       onClick={() => void dropChapter(i)}
                     >
                       <Icon name="trash" />
@@ -475,8 +527,13 @@ export function Lecture() {
                     {s.editedByHuman && <span className="lec-edited">правлено вами</span>}
                   </h3>
 
-                  {s.status === 'writing' && <p className="doc-meta busy">пишется…</p>}
-                  {s.status === 'pending' && <p className="doc-meta">в очереди</p>}
+                  {/* После ошибки глава не «пишется»: работа стоит до повтора. */}
+                  {lecture.status === 'writing' && s.status === 'writing' && (
+                    <p className="doc-meta busy">пишется…</p>
+                  )}
+                  {lecture.status === 'writing' && s.status === 'pending' && (
+                    <p className="doc-meta">в очереди</p>
+                  )}
 
                   {editing === s.id ? (
                     <>
@@ -506,6 +563,7 @@ export function Lecture() {
                             onClick={() => {
                               setEditing(s.id);
                               setDraft(s.text);
+                              setDraftFrom(s.text);
                             }}
                           >
                             <Icon name="edit" /> Править
@@ -529,7 +587,7 @@ export function Lecture() {
                             ) : (
                               <b>{src.title}</b>
                             )}
-                            <span>{src.quote.slice(0, 220)}…</span>
+                            <span>{src.quote.length > 220 ? `${src.quote.slice(0, 220)}…` : src.quote}</span>
                           </li>
                         ))}
                       </ol>
@@ -615,85 +673,106 @@ export function Lecture() {
         <div className="fieldlbl">Для кого?</div>
         <div className="pills">
           {AUDIENCES.map((a) => (
-            <span
+            <button
+              type="button"
               key={a}
               className={`pill-opt ${audience === a ? 'on' : ''}`}
+              aria-pressed={audience === a}
               onClick={() => setAudience(a)}
             >
               {a}
-            </span>
+            </button>
           ))}
         </div>
 
         <div className="fieldlbl">Примерно на сколько часов?</div>
         <div className="pills">
           {DURATIONS.map((d) => (
-            <span
+            <button
+              type="button"
               key={d.value}
               className={`pill-opt ${duration === d.value ? 'on' : ''}`}
+              aria-pressed={duration === d.value}
               onClick={() => setDuration(d.value)}
             >
               {d.label}
-            </span>
+            </button>
           ))}
         </div>
 
         <div className="fieldlbl">Что важнее в этой лекции? Можно несколько — или ничего</div>
         <div className="pills">
-          {FOCUS.map((f) => (
-            <span
-              key={f.value}
-              className={`pill-opt ${focus.includes(f.value) ? 'on' : ''}`}
-              onClick={() =>
-                setFocus((p) =>
-                  p.includes(f.value) ? p.filter((x) => x !== f.value) : [...p, f.value],
-                )
-              }
+          {FOCI.map((f) => (
+            <button
+              type="button"
+              key={f}
+              className={`pill-opt ${focus.includes(f) ? 'on' : ''}`}
+              aria-pressed={focus.includes(f)}
+              onClick={() => setFocus((p) => (p.includes(f) ? p.filter((x) => x !== f) : [...p, f]))}
             >
-              {f.label}
-            </span>
+              {FOCUS_LABEL[f]}
+            </button>
           ))}
         </div>
 
         <div className="fieldlbl">Откуда взять материал? Можно оба источника — или ни одного</div>
         <div className="pills">
-          <span
+          <button
+            type="button"
             className={`pill-opt ${useLibrary ? 'on' : ''}`}
-            onClick={() => setUseLibrary((v) => !v)}
+            aria-pressed={useLibrary}
+            onClick={() => {
+              // Книга могла разобраться, пока форма открыта, — список освежаем.
+              if (!useLibrary) void loadDocs();
+              setUseLibrary(!useLibrary);
+            }}
           >
             Из моей библиотеки
-          </span>
-          <span
+          </button>
+          <button
+            type="button"
             className={`pill-opt ${useResearch ? 'on' : ''}`}
+            aria-pressed={useResearch}
             onClick={() => setUseResearch((v) => !v)}
           >
             Исследование ИИ
-          </span>
+          </button>
         </div>
 
         {useLibrary && (
           <>
             <div className="fieldlbl">На что опереться из библиотеки?</div>
-            {docs.length === 0 ? (
+            {docs === null ? (
+              docsFailed && (
+                <p className="doc-meta">
+                  Список не загрузился —{' '}
+                  <button type="button" className="chg" onClick={() => void loadDocs()}>
+                    ещё раз
+                  </button>
+                </p>
+              )
+            ) : docs.length === 0 ? (
               <p className="doc-meta">
-                Библиотека пуста —{' '}
-                <span className="inline-link" onClick={() => go('s-home')}>
-                  загрузите книги
-                </span>
+                В библиотеке пока нет разобранных документов —{' '}
+                <button type="button" className="chg" onClick={() => go('s-home')}>
+                  загрузить книгу
+                </button>
               </p>
             ) : (
               <div className="pills">
                 {docs.map((d) => (
-                  <span
+                  <button
+                    type="button"
                     key={d.id}
                     className={`pill-opt ${picked.includes(d.id) ? 'on' : ''}`}
+                    aria-pressed={picked.includes(d.id)}
                     onClick={() =>
                       setPicked((p) => (p.includes(d.id) ? p.filter((x) => x !== d.id) : [...p, d.id]))
                     }
                   >
                     {d.title}
                     {OWN_WORK.includes(docKind(d.kind)) ? ` · ${KIND_LABEL[docKind(d.kind)]}` : ''}
-                  </span>
+                  </button>
                 ))}
               </div>
             )}
