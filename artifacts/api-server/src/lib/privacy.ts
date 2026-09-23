@@ -150,19 +150,14 @@ export async function maskText(text: string): Promise<MaskedText> {
 }
 
 /**
- * Возвращает настоящие значения на место меток.
- * По умолчанию оборачивает их скобками: [[PER1]] → [[Анна Петровна]] — так
- * фронт узнаёт имя и показывает «имя скрыто». С brackets: false — просто
- * «Анна Петровна», как в расшифровке, где имена скрывать не просили.
+ * Возвращает настоящие значения на место меток, в скобках:
+ * [[PER1]] → [[Анна Петровна]] — так фронт узнаёт имя и показывает
+ * «имя скрыто». Без скрытия имён текст сюда не попадает вовсе.
  */
-export function unmaskText(
-  text: string,
-  map: Record<string, string>,
-  { brackets = true }: { brackets?: boolean } = {},
-): string {
+export function unmaskText(text: string, map: Record<string, string>): string {
   let result = text;
   for (const [label, value] of Object.entries(map)) {
-    result = result.split(label).join(brackets ? `[[${value}]]` : value);
+    result = result.split(label).join(`[[${value}]]`);
   }
   // Если модель всё же выдумала метку, которой не было, — убираем её,
   // чтобы в тексте не осталось технического мусора.
