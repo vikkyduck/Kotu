@@ -1,4 +1,5 @@
 import type { SlideContent } from "@workspace/db";
+import { MAX_CARDS } from "@workspace/db/slides";
 
 /**
  * Приводит содержимое слайда к строгой форме. Источника у content два —
@@ -48,7 +49,9 @@ export function sanitizeSlideContent(raw: unknown): SlideContent {
         return { title: cardTitle ?? "", body: body ?? "" };
       })
       .filter((c): c is { title: string; body: string } => c !== undefined)
-      .slice(0, 4);
+      // Сверх двух колонок лист не рисует и форма не правит — в базе они
+      // лежали бы невидимыми и пропадали при первом сохранении из формы.
+      .slice(0, MAX_CARDS);
     if (cards.length > 0) out.cards = cards;
   }
 
