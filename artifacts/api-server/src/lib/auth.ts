@@ -150,6 +150,9 @@ export function clearAttempts(ip: string): void {
 // адресу — против засыпания формы с одной машины, по почте — чтобы ящик не
 // заваливали письмами сброса с разных адресов.
 const FORGOT_WINDOW_MS = 60 * 60 * 1000;
+
+/** Длиннее почтовых адресов не бывает (RFC 5321) — всё, что длиннее, заведомо не наш пользователь. */
+export const MAX_EMAIL_LENGTH = 254;
 const forgotByIp = createRateLimiter({ limit: 5, windowMs: FORGOT_WINDOW_MS });
 const forgotByEmail = createRateLimiter({ limit: 3, windowMs: FORGOT_WINDOW_MS });
 
@@ -176,7 +179,9 @@ export function forgotLimiterSizes(): { byIp: number; byEmail: number } {
 export function allowForgotRequest(ip: string, email: string): boolean {
   if (forgotByIp.blocked(ip)) return false;
   forgotByIp.hit(ip);
-  if (email === "") return true;
+  // Заведомо ненастоящую почту считаем пустой: письма по ней не будет,
+  // и занимать ею счётчик почты незачем — хватает лимита адреса.
+  if (email === "" || email.length > MAX_EMAIL_LENGTH) return true;
   const key = emailKey(email);
   if (forgotByEmail.blocked(key)) return false;
   forgotByEmail.hit(key);

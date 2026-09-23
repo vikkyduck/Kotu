@@ -14,6 +14,7 @@ import {
   registerFailedAttempt,
   clearAttempts,
   allowForgotRequest,
+  MAX_EMAIL_LENGTH,
 } from "../lib/auth";
 import { requireAuth } from "../middlewares/require-auth";
 
@@ -95,7 +96,10 @@ router.get("/me", requireAuth, (req, res) => {
  */
 router.post("/auth/forgot", async (req, res) => {
   const ip = req.ip ?? "unknown";
-  const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  const raw = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  // Тело может весить до 5 МБ; почту длиннее RFC-предела не ищем в базе и не
+  // пишем в журнал — отвечаем как на пустую, расходуя только лимит адреса.
+  const email = raw.length <= MAX_EMAIL_LENGTH ? raw : "";
 
   // Лимит проверяем до поиска в базе, и отказ одинаков для любой почты —
   // по нему нельзя понять, зарегистрирован ли адрес. Счётчик свой: попытки
