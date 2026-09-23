@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, asc, desc } from "drizzle-orm";
+import { eq, and, asc, desc, ne } from "drizzle-orm";
 import {
   db,
   lecturesTable,
@@ -15,6 +15,7 @@ import { ownFolderId } from "../../lib/folders";
 import { lectureToLibrary, dropLectureCopies } from "../../lib/work-doc";
 import { buildLectureDocx, buildLectureMarkdown } from "../../lib/lecture-export";
 import { deleteJobsArchivingInput, requireArchive } from "../../lib/archive";
+import { LECTURE_PLANNING, PLAN_BUSY_MESSAGE, planEditBlocked } from "../../lib/busy-edit";
 
 const router: IRouter = Router();
 
@@ -169,6 +170,11 @@ router.patch("/lectures/:id/plan", async (req, res): Promise<void> => {
     res.status(409).json({ message: "План уже утверждён — правьте сами главы" });
     return;
   }
+  // План, который сейчас пишет машина, не правим (lib/busy-edit.ts).
+  if (planEditBlocked(lecture.status)) {
+    res.status(409).json({ message: PLAN_BUSY_MESSAGE });
+    return;
+  }
 
   const incoming = Array.isArray(req.body?.plan) ? req.body.plan : null;
   if (!incoming) {
@@ -194,7 +200,17 @@ router.patch("/lectures/:id/plan", async (req, res): Promise<void> => {
     return;
   }
 
-  await db.update(lecturesTable).set({ plan }).where(eq(lecturesTable.id, id));
+  // Условие статуса — и в самом UPDATE: машина могла взяться за план между
+  // проверкой выше и этой записью (повтор задачи lecture.plan снова ставит planning).
+  const saved = await db
+    .update(lecturesTable)
+    .set({ plan })
+    .where(and(eq(lecturesTable.id, id), ne(lecturesTable.status, LECTURE_PLANNING)))
+    .returning({ id: lecturesTable.id });
+  if (saved.length === 0) {
+    res.status(409).json({ message: PLAN_BUSY_MESSAGE });
+    return;
+  }
   res.json({ ok: true, plan });
 });
 
