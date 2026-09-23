@@ -92,7 +92,12 @@ async function finish(job: Job, error?: string): Promise<void> {
   const retriesLeft = MAX_ATTEMPTS - job.attempts;
   if (retriesLeft > 0) {
     const delay = RETRY_DELAYS_SEC[Math.min(job.attempts - 1, RETRY_DELAYS_SEC.length - 1)];
-    logger.warn({ jobId: job.id, attempt: job.attempts, delay }, "Задача упала, повторю");
+    // Причина — в журнал: у задачи, которая с третьего раза прошла,
+    // last_error затирается, и без этой строки узнать, что было, нельзя.
+    logger.warn(
+      { jobId: job.id, kind: job.kind, attempt: job.attempts, delay, error },
+      "Задача упала, повторю",
+    );
     await db.execute(sql`
       UPDATE jobs SET
         status = 'queued',
@@ -104,7 +109,10 @@ async function finish(job: Job, error?: string): Promise<void> {
     return;
   }
 
-  logger.error({ jobId: job.id, attempts: job.attempts }, "Задача провалена окончательно");
+  logger.error(
+    { jobId: job.id, kind: job.kind, attempts: job.attempts, error },
+    "Задача провалена окончательно",
+  );
   await db.execute(sql`
     UPDATE jobs SET status = 'error', finished_at = now(), last_error = ${error}
     WHERE id = ${job.id}
