@@ -236,7 +236,7 @@ export function createArchiveSupervisor(opts: ArchiveSupervisorOptions) {
     }
     req.log?.warn({ archive: state }, "Изменение отклонено: архив не включён");
     const message = "Архив сейчас недоступен, поэтому изменения не сохраняются. Попробуйте позже";
-    res.status(503).json({ message, error: message });
+    res.status(503).json({ message });
   };
 
   return {

@@ -3,19 +3,11 @@ import { Router, type IRouter } from "express";
 import multer from "multer";
 import { eq, and, desc, ne } from "drizzle-orm";
 import { db, jobsTable, transcriptionsTable, type TranscriptSegment } from "@workspace/db";
-import {
-  GetTranscriptionParams,
-  GetTranscriptionResponse,
-  UpdateTranscriptionParams,
-  UpdateTranscriptionBody,
-  UpdateTranscriptionResponse,
-  DeleteTranscriptionParams,
-  ListTranscriptionsResponse,
-} from "@workspace/api-zod";
 import { enqueue } from "../../lib/jobs";
 import { UPLOAD_DIR } from "../../lib/paths";
 import { syncTranscriptionDoc, deleteTranscriptionDoc } from "../../lib/transcript-doc";
 import { decodeUploadName } from "../../lib/filename";
+import { parseId } from "../../lib/parse-id";
 import { resolveInsideDir } from "../../lib/uploads";
 import {
   archiveAndRemove,
@@ -59,6 +51,19 @@ const upload = multer({
   },
 });
 
+const NOT_FOUND = "Расшифровка не найдена";
+
+/** Реплики из тела правки: только {who, text} строками — мусор в jsonb не пускаем. */
+function parseSegments(raw: unknown): TranscriptSegment[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: TranscriptSegment[] = [];
+  for (const s of raw) {
+    if (typeof s?.who !== "string" || typeof s?.text !== "string") return null;
+    out.push({ who: s.who, text: s.text });
+  }
+  return out;
+}
+
 const router: IRouter = Router();
 
 router.get("/transcriptions", async (req, res): Promise<void> => {
@@ -67,55 +72,55 @@ router.get("/transcriptions", async (req, res): Promise<void> => {
     .from(transcriptionsTable)
     .where(eq(transcriptionsTable.ownerId, req.user!.id))
     .orderBy(desc(transcriptionsTable.createdAt));
-  res.json(ListTranscriptionsResponse.parse(rows));
+  res.json(rows);
 });
 
 router.get("/transcriptions/:id", async (req, res): Promise<void> => {
-  const params = GetTranscriptionParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
-    return;
-  }
-
-  const [row] = await db
-    .select()
-    .from(transcriptionsTable)
-    .where(
-      and(
-        eq(transcriptionsTable.id, params.data.id),
-        eq(transcriptionsTable.ownerId, req.user!.id),
-      ),
-    );
+  const id = parseId(req.params.id);
+  const [row] =
+    id === null
+      ? []
+      : await db
+          .select()
+          .from(transcriptionsTable)
+          .where(and(eq(transcriptionsTable.id, id), eq(transcriptionsTable.ownerId, req.user!.id)));
 
   if (!row) {
-    res.status(404).json({ error: "Расшифровка не найдена" });
+    res.status(404).json({ message: NOT_FOUND });
     return;
   }
 
-  res.json(GetTranscriptionResponse.parse(row));
+  res.json(row);
 });
 
 router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
-  const params = UpdateTranscriptionParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
+  const id = parseId(req.params.id);
+  if (id === null) {
+    res.status(404).json({ message: NOT_FOUND });
     return;
   }
 
-  const parsed = UpdateTranscriptionBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.message });
-    return;
-  }
-
+  const body = req.body ?? {};
   const updates: Partial<typeof transcriptionsTable.$inferInsert> = {};
-  if (parsed.data.title != null) updates.title = parsed.data.title;
-  if (parsed.data.segments != null) {
-    updates.segments = parsed.data.segments as TranscriptSegment[];
+  if ("title" in body) {
+    const title = typeof body.title === "string" ? body.title.trim().slice(0, 200) : "";
+    if (title === "") {
+      res.status(400).json({ message: "Дайте записи название" });
+      return;
+    }
+    updates.title = title;
+  }
+  if ("segments" in body) {
+    const segments = parseSegments(body.segments);
+    if (!segments) {
+      res.status(400).json({ message: "Правка не сохранилась — обновите страницу" });
+      return;
+    }
+    updates.segments = segments;
   }
 
   if (Object.keys(updates).length === 0) {
-    res.status(400).json({ error: "Нет данных для обновления" });
+    res.status(400).json({ message: "Нечего сохранять" });
     return;
   }
 
@@ -127,7 +132,7 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
     .set(updates)
     .where(
       and(
-        eq(transcriptionsTable.id, params.data.id),
+        eq(transcriptionsTable.id, id),
         eq(transcriptionsTable.ownerId, req.user!.id),
         updates.segments !== undefined
           ? ne(transcriptionsTable.status, TRANSCRIPTION_WRITING)
@@ -140,17 +145,12 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
     const [current] = await db
       .select({ status: transcriptionsTable.status })
       .from(transcriptionsTable)
-      .where(
-        and(
-          eq(transcriptionsTable.id, params.data.id),
-          eq(transcriptionsTable.ownerId, req.user!.id),
-        ),
-      );
+      .where(and(eq(transcriptionsTable.id, id), eq(transcriptionsTable.ownerId, req.user!.id)));
     if (current && segmentsEditBlocked(current.status, updates)) {
-      res.status(409).json({ error: SEGMENTS_BUSY_MESSAGE, message: SEGMENTS_BUSY_MESSAGE });
+      res.status(409).json({ message: SEGMENTS_BUSY_MESSAGE });
       return;
     }
-    res.status(404).json({ error: "Расшифровка не найдена" });
+    res.status(404).json({ message: NOT_FOUND });
     return;
   }
 
@@ -161,13 +161,13 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
     );
   }
 
-  res.json(UpdateTranscriptionResponse.parse(row));
+  res.json(row);
 });
 
 router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
-  const params = DeleteTranscriptionParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
+  const id = parseId(req.params.id);
+  if (id === null) {
+    res.status(404).json({ message: NOT_FOUND });
     return;
   }
 
@@ -178,12 +178,12 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
     .from(transcriptionsTable)
     .where(
       and(
-        eq(transcriptionsTable.id, params.data.id),
+        eq(transcriptionsTable.id, id),
         eq(transcriptionsTable.ownerId, req.user!.id),
       ),
     );
   if (!owned) {
-    res.status(404).json({ error: "Расшифровка не найдена" });
+    res.status(404).json({ message: NOT_FOUND });
     return;
   }
 
@@ -195,7 +195,7 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
   // Сначала библиотечная копия, потом сама запись. Упади уборка копии —
   // запись останется, и можно повторить; в обратном порядке копия зависала
   // бы сиротой до стартовой сверки.
-  await deleteTranscriptionDoc(params.data.id, req.user!.id);
+  await deleteTranscriptionDoc(id, req.user!.id);
 
   // Затем задачи расшифровки и их аудио: ждущая задача иначе взялась бы за
   // удалённую запись. Сначала файлы, потом строки задач — не заархивируется
@@ -204,13 +204,13 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
   const jobs = await db
     .select({ payload: jobsTable.payload })
     .from(jobsTable)
-    .where(and(eq(jobsTable.kind, "transcribe"), eq(jobsTable.entityId, params.data.id)));
+    .where(and(eq(jobsTable.kind, "transcribe"), eq(jobsTable.entityId, id)));
   for (const job of jobs) {
     const audio = resolveInsideDir(UPLOAD_DIR, job.payload["inputPath"]);
     if (audio) {
       await archiveAndRemove(audio, {
         entityType: "transcription",
-        entityId: params.data.id,
+        entityId: id,
         originalName:
           typeof job.payload["filename"] === "string" ? job.payload["filename"] : null,
       });
@@ -218,20 +218,20 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
   }
   // Строки задач снимаются вместе с их payload в архив (имя файла записи,
   // настройки расшифровки) — одним оператором.
-  await db.execute(deleteJobsArchivingInput("transcribe", "transcriptions", params.data.id));
+  await db.execute(deleteJobsArchivingInput("transcribe", "transcriptions", id));
 
   const [row] = await db
     .delete(transcriptionsTable)
     .where(
       and(
-        eq(transcriptionsTable.id, params.data.id),
+        eq(transcriptionsTable.id, id),
         eq(transcriptionsTable.ownerId, req.user!.id),
       ),
     )
     .returning();
 
   if (!row) {
-    res.status(404).json({ error: "Расшифровка не найдена" });
+    res.status(404).json({ message: NOT_FOUND });
     return;
   }
 
@@ -244,9 +244,9 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
  * «ошибка» часто не про файл, и заставлять заново грузить час записи незачем.
  */
 router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id <= 0) {
-    res.status(400).json({ error: "Неверный номер записи" });
+  const id = parseId(req.params.id);
+  if (id === null) {
+    res.status(404).json({ message: NOT_FOUND });
     return;
   }
 
@@ -255,11 +255,11 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
     .from(transcriptionsTable)
     .where(and(eq(transcriptionsTable.id, id), eq(transcriptionsTable.ownerId, req.user!.id)));
   if (!row) {
-    res.status(404).json({ error: "Расшифровка не найдена" });
+    res.status(404).json({ message: NOT_FOUND });
     return;
   }
   if (row.status !== "error") {
-    res.status(409).json({ error: "Повторять нечего — ошибки нет" });
+    res.status(409).json({ message: "Повторять нечего — ошибки нет" });
     return;
   }
 
@@ -275,7 +275,7 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
   // сбоя между концом задачи и onGiveUp) — вторая задача на тот же файл
   // означала бы двойную расшифровку. Ждём, пока текущая закончит.
   if (lastJob && (lastJob.status === "queued" || lastJob.status === "running")) {
-    res.status(409).json({ error: "Запись уже в работе" });
+    res.status(409).json({ message: "Запись уже в работе" });
     return;
   }
   const prev = (lastJob?.payload ?? {}) as Partial<TranscribePayload>;
@@ -286,7 +286,7 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
   if (!inputPath || !onDisk) {
     res
       .status(409)
-      .json({ error: "Запись не сохранилась на сервере — загрузите запись заново" });
+      .json({ message: "Запись не сохранилась на сервере — загрузите запись заново" });
     return;
   }
 
@@ -323,12 +323,12 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
   });
 
   if (!queued) {
-    res.status(409).json({ error: "Повторять нечего — ошибки нет" });
+    res.status(409).json({ message: "Повторять нечего — ошибки нет" });
     return;
   }
 
   req.log.info({ id }, "Queued transcription retry");
-  res.status(202).json(GetTranscriptionResponse.parse(queued));
+  res.status(202).json(queued);
 });
 
 router.post(
@@ -340,17 +340,17 @@ router.post(
         if (code === "LIMIT_FILE_SIZE") {
           res
             .status(413)
-            .json({ error: "Файл слишком большой. Максимальный размер — 1 ГБ." });
+            .json({ message: "Файл слишком большой. Максимальный размер — 1 ГБ." });
           return;
         }
         if (err instanceof Error && err.message === "UNSUPPORTED_FILE_TYPE") {
           res
             .status(415)
-            .json({ error: "Это не похоже на аудиозапись. Загрузите аудиофайл." });
+            .json({ message: "Это не похоже на аудиозапись. Загрузите аудиофайл." });
           return;
         }
         req.log.warn({ err }, "Upload failed");
-        res.status(400).json({ error: "Не удалось загрузить файл" });
+        res.status(400).json({ message: "Не удалось загрузить файл" });
         return;
       }
       next();
@@ -358,7 +358,7 @@ router.post(
   },
   async (req, res): Promise<void> => {
     if (!req.file) {
-      res.status(400).json({ error: "Не приложен аудиофайл" });
+      res.status(400).json({ message: "Не приложен аудиофайл" });
       return;
     }
 
@@ -398,7 +398,7 @@ router.post(
     // переживает перезапуск сервера и при сбое повторяется.
     await enqueue("transcribe", row.id, { inputPath, filename, hideNames, markSpeakers });
 
-    res.status(201).json(GetTranscriptionResponse.parse(row));
+    res.status(201).json(row);
   },
 );
 
