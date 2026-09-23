@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TranscriptSegment, TranscriptionStatus } from '@workspace/db/schema';
 import { OFFLINE, failText, json, send } from '@/lib/http';
 
@@ -50,20 +50,34 @@ export function useTranscription(id: number | null): {
   const [loading, setLoading] = useState(id !== null);
   const [failed, setFailed] = useState<'missing' | 'error' | null>(null);
 
+  // Какая запись открыта сейчас. Ответ по прежней, пришедший уже после
+  // перехода на другую, не должен встать на её место: правка ушла бы PATCH-ем
+  // в открытую запись с чужим текстом.
+  const current = useRef(id);
+  current.current = id;
+  // Сохранения — строго по одному: ответы двух быстрых правок иначе могут
+  // прийти наоборот, и на экране (а со следующей правкой и на сервере)
+  // останется копия без последней. На экран — только ответ на последнюю
+  // правку: промежуточный стёр бы с экрана уже отправленную следующую.
+  const saving = useRef<Promise<unknown>>(Promise.resolve());
+  const lastSave = useRef(0);
+
   const reload = useCallback(async () => {
     if (id === null) return;
     try {
       const res = await fetch(`/api/transcriptions/${id}`);
-      if (res.ok) {
-        setData(await res.json());
+      const row = res.ok ? ((await res.json()) as Transcription) : null;
+      if (id !== current.current) return;
+      if (row) {
+        setData(row);
         setFailed(null);
       } else {
         setFailed(res.status === 404 ? 'missing' : 'error');
       }
     } catch {
-      setFailed('error');
+      if (id === current.current) setFailed('error');
     } finally {
-      setLoading(false);
+      if (id === current.current) setLoading(false);
     }
   }, [id]);
 
@@ -89,10 +103,16 @@ export function useTranscription(id: number | null): {
   const save = useCallback(
     async (patch: { segments?: TranscriptSegment[]; title?: string }) => {
       if (id === null) return null;
-      const r = await send(`/api/transcriptions/${id}`, json('PATCH', patch), 'Не удалось сохранить');
-      if (!r.ok) return r.message;
-      setData(await r.res.json());
-      return null;
+      const n = ++lastSave.current;
+      const done = saving.current.then(async () => {
+        const r = await send(`/api/transcriptions/${id}`, json('PATCH', patch), 'Не удалось сохранить');
+        if (!r.ok) return r.message;
+        const row = (await r.res.json()) as Transcription;
+        if (id === current.current && n === lastSave.current) setData(row);
+        return null;
+      });
+      saving.current = done.catch(() => undefined);
+      return done;
     },
     [id],
   );
@@ -104,7 +124,8 @@ export function useTranscription(id: number | null): {
       if (res.ok) {
         // Ответ — уже запись в работе: подставляем сразу, чтобы экран ошибки
         // сменился прогрессом без ожидания, а опрос пошёл по новому статусу.
-        setData((await res.json()) as Transcription);
+        const row = (await res.json()) as Transcription;
+        if (id === current.current) setData(row);
         return null;
       }
       const message = await failText(res, 'Не удалось повторить');
@@ -114,7 +135,7 @@ export function useTranscription(id: number | null): {
         const fresh = await fetch(`/api/transcriptions/${id}`);
         const row = fresh.ok ? ((await fresh.json()) as Transcription) : null;
         if (row && row.status !== 'error') {
-          setData(row);
+          if (id === current.current) setData(row);
           return null;
         }
       }

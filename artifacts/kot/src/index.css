@@ -265,7 +265,8 @@ h1.hello{font-family:var(--display);font-size:34px;font-weight:800;letter-spacin
 .chg{color:var(--accent-strong);font-size:15px;cursor:pointer;background:none;border:none;
   font-family:inherit;transition:color var(--fast) ease}
 .chg:hover{color:var(--ink)}
-.inline-link{color:var(--accent-strong);cursor:pointer;text-decoration:underline;text-underline-offset:.2em}
+.inline-link{color:var(--accent-strong);cursor:pointer;text-decoration:underline;text-underline-offset:.2em;
+  background:none;border:0;padding:0;font:inherit}
 .back-link{padding:8px 0;margin-bottom:10px;font-size:17px}
 .dim{opacity:.6}
 
@@ -292,8 +293,6 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
 /* ── Настройки-заверения ─────────────────────────────────────────────── */
 .setrow{display:flex;align-items:flex-start;gap:12px;padding:14px 0;border-bottom:1px solid var(--hairline)}
 .setrow:last-child{border-bottom:none}
-.setrow .st{flex:1}
-.setrow .st p{margin:0;font-size:15px;line-height:1.5}
 .setrow .st .chg{padding:4px 0 0;display:inline-block}
 .setrow .opts{margin-top:8px;display:none;flex-direction:column;gap:7px}
 .setrow .opts.open{display:flex}
@@ -320,7 +319,7 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
 /* ── Шаги ────────────────────────────────────────────────────────────── */
 .stepper{display:flex;align-items:flex-start;margin:0 0 var(--sp-3)}
 .step{display:flex;flex-direction:column;align-items:center;gap:var(--sp-1);flex-shrink:0;width:68px}
-@media (max-width:420px){.step{width:56px}.step .slbl{font-size:11px}}
+@media (max-width:420px){.step{width:56px}}
 .step .sdot{position:relative;z-index:0;width:34px;height:34px;display:grid;place-items:center;
   font-size:13px;font-weight:500;font-variant-numeric:tabular-nums;color:var(--muted)}
 /* Ромб рисует псевдоэлемент: цифры и иконки остаются неповёрнутыми */
@@ -417,7 +416,6 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
 .ex .ei .ic-svg{width:19px;height:19px}
 .ex b{font-size:15px;font-weight:500;display:block;margin-bottom:2px}
 .ex p{margin:0;font-size:15px;color:var(--ink-2);line-height:1.55}
-.soon-note{text-align:center;font-size:13px;color:var(--muted);margin:16px 0 18px}
 
 /* ── Лист правок (sheet) ─────────────────────────────────────────────── */
 .overlay{position:fixed;inset:0;background:rgba(12,13,18,.6);z-index:60;display:none;
@@ -538,11 +536,9 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
   .lead{font-size:15px;margin-bottom:18px}
   .h2{font-size:26px}
   .step{width:62px}
-  .step .slbl{font-size:11px}
   .step .sdot{width:28px;height:28px}
   .sline{margin-top:14px}
   .btn.big{padding:15px;font-size:15px}
-  .done-head h3{font-size:21px}
   .sgrid{gap:11px}
   .dropzone{padding:16px;gap:11px}
   .lec-head{font-size:19px}

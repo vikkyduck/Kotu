@@ -15,6 +15,13 @@ export interface TranscribePayload {
   markSpeakers: boolean;
 }
 
+/**
+ * Запись удалили, пока шла расшифровка. Проверка — перед каждым куском (через
+ * обновление прогресса): дальше платить модели и держать однопоточную очередь
+ * незачем. Аудио уже в архиве — это сделал DELETE.
+ */
+class RecordGone extends Error {}
+
 async function run(job: Job): Promise<void> {
   const payload = job.payload as unknown as TranscribePayload;
   const id = job.entityId;
@@ -44,10 +51,16 @@ async function run(job: Job): Promise<void> {
   }
 
   // При повторе запись могла остаться в состоянии ошибки — возвращаем в работу.
-  await db
+  // Пустой ответ — запись удалили между проверкой выше и этим шагом.
+  const started = await db
     .update(transcriptionsTable)
     .set({ status: "processing", progress: 4, statusMessage: "Готовлю запись…", error: null })
-    .where(eq(transcriptionsTable.id, id));
+    .where(eq(transcriptionsTable.id, id))
+    .returning({ id: transcriptionsTable.id });
+  if (started.length === 0) {
+    logger.info({ id }, "Запись удалена до расшифровки — не начинаю");
+    return;
+  }
 
   try {
     const segments = await transcribeLongAudio(
@@ -55,10 +68,12 @@ async function run(job: Job): Promise<void> {
       payload.filename,
       { hideNames: payload.hideNames, markSpeakers: payload.markSpeakers },
       async ({ progress, message }) => {
-        await db
+        const alive = await db
           .update(transcriptionsTable)
           .set({ progress, statusMessage: message })
-          .where(eq(transcriptionsTable.id, id));
+          .where(eq(transcriptionsTable.id, id))
+          .returning({ id: transcriptionsTable.id });
+        if (alive.length === 0) throw new RecordGone();
       },
     );
 
@@ -85,6 +100,12 @@ async function run(job: Job): Promise<void> {
       );
     }
   } catch (err) {
+    // Удаление — не сбой: задача закрывается тихо, без повтора и без записи
+    // «пробую ещё раз» в строку, которой уже нет.
+    if (err instanceof RecordGone) {
+      logger.info({ id }, "Запись удалена во время расшифровки — остановился");
+      return;
+    }
     // Понятная человеку формулировка попадёт в last_error и дальше — в карточку
     // записи, если попытки закончатся.
     const message = err instanceof ChunkError ? err.userMessage : "Не удалось распознать запись";
@@ -103,7 +124,7 @@ async function run(job: Job): Promise<void> {
 async function onGiveUp(job: Job, message: string): Promise<void> {
   // Аудио НЕ удаляем: попытки сжигает не только плохой файл, но и деплой
   // посреди задачи, сбой транзита, недоступный NER. Запись остаётся на диске,
-  // чтобы «Попробовать снова» повторило её без повторной загрузки. Лежит,
+  // чтобы «Попробовать ещё раз» повторило её без повторной загрузки. Лежит,
   // пока владелица не повторит или не удалит запись (см. lib/uploads.ts).
   const updated = await db
     .update(transcriptionsTable)
