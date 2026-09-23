@@ -2,7 +2,7 @@ import nodemailer, { type Transporter } from "nodemailer";
 import { logger } from "./logger";
 
 /**
- * Отправка писем через Яндекс (домен withoutwater.ru: SPF и DKIM настроены,
+ * Отправка писем через Яндекс (домен vi-utkina.ru: SPF и DKIM настроены,
  * поэтому письма не уходят в спам). Единственное письмо, которое шлёт
  * платформа, — ссылка для сброса забытого пароля.
  */
