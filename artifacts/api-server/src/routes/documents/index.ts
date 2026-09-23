@@ -6,7 +6,6 @@ import {
   db,
   documentsTable,
   foldersTable,
-  jobsTable,
   lecturesTable,
   decksTable,
   type Document,
@@ -20,6 +19,8 @@ import { parseId } from "../../lib/parse-id";
 import { resolveInsideDir } from "../../lib/uploads";
 import { archiveAndRemove, archiveUpload, requireArchive } from "../../lib/archive";
 import { logger } from "../../lib/logger";
+import { QUEUED_MESSAGE, enqueue, lastJob } from "../../lib/jobs";
+import { NO_CHUNKS, NO_TEXT, type IngestPayload } from "../../lib/handlers/ingest";
 
 // Книги бывают толстыми, но не гигабайтными.
 const MAX_FILE_BYTES = 200 * 1024 * 1024;
@@ -92,22 +93,6 @@ async function ownDoc(rawId: unknown, ownerId: number): Promise<Document | null>
   return doc ?? null;
 }
 
-/** Последняя задача разбора документа: в её payload — путь к файлу и исходное имя. */
-async function lastIngest(docId: number) {
-  const [job] = await db
-    .select()
-    .from(jobsTable)
-    .where(and(eq(jobsTable.kind, "doc.ingest"), eq(jobsTable.entityId, docId)))
-    .orderBy(desc(jobsTable.id))
-    .limit(1);
-  return job ?? null;
-}
-
-interface IngestPayload {
-  sourcePath: string;
-  mime: string;
-  filename: string;
-}
 
 /** Сам загруженный файл — открыть во вкладке или скачать под исходным именем. */
 router.get("/documents/:id/file", async (req, res): Promise<void> => {
@@ -119,7 +104,7 @@ router.get("/documents/:id/file", async (req, res): Promise<void> => {
     res.status(404).type("text/plain; charset=utf-8").send("Файл не найден — загрузите книгу заново");
     return;
   }
-  const prev = (await lastIngest(doc.id))?.payload as Partial<IngestPayload> | undefined;
+  const prev = (await lastJob("doc.ingest", doc.id))?.payload as Partial<IngestPayload> | undefined;
   res.sendFile(file, { headers: documentFileHeaders(doc, prev?.filename), cacheControl: false });
 });
 
@@ -138,14 +123,20 @@ router.post("/documents/:id/retry", async (req, res): Promise<void> => {
     res.status(409).json({ message: "Повторять нечего — ошибки нет" });
     return;
   }
-  const lastJob = await lastIngest(doc.id);
+  // Скан без текста или текст, который не режется на фрагменты, — свойство
+  // самого файла: повтор его не вылечит.
+  if (doc.error === NO_TEXT || doc.error === NO_CHUNKS) {
+    res.status(409).json({ message: doc.error });
+    return;
+  }
+  const prevJob = await lastJob("doc.ingest", doc.id);
   // Документ в ошибке, а задача ещё в очереди или в работе — вторая задача
   // на тот же файл разбирала бы его дважды. Ждём, пока текущая закончит.
-  if (lastJob && (lastJob.status === "queued" || lastJob.status === "running")) {
+  if (prevJob && (prevJob.status === "queued" || prevJob.status === "running")) {
     res.status(409).json({ message: "Документ уже в работе" });
     return;
   }
-  const prev = (lastJob?.payload ?? {}) as Partial<IngestPayload>;
+  const prev = (prevJob?.payload ?? {}) as Partial<IngestPayload>;
   const sourcePath = resolveInsideDir(LIBRARY_DIR, prev.sourcePath ?? doc.sourcePath);
   const onDisk = sourcePath
     ? await stat(sourcePath).then((st) => st.isFile(), () => false)
@@ -165,15 +156,11 @@ router.post("/documents/:id/retry", async (req, res): Promise<void> => {
   const queued = await db.transaction(async (tx) => {
     const [updated] = await tx
       .update(documentsTable)
-      .set({ status: "parsing", statusMessage: "В очереди…", error: null })
+      .set({ status: "parsing", statusMessage: QUEUED_MESSAGE, error: null })
       .where(and(eq(documentsTable.id, doc.id), eq(documentsTable.status, "error")))
       .returning();
     if (!updated) return null;
-    await tx.insert(jobsTable).values({
-      kind: "doc.ingest",
-      entityId: doc.id,
-      payload: payload as unknown as Record<string, unknown>,
-    });
+    await enqueue("doc.ingest", doc.id, payload as unknown as Record<string, unknown>, tx);
     return updated;
   });
   if (!queued) {
@@ -396,14 +383,10 @@ router.post(
           sourcePath: file.path,
           mime: file.mimetype,
           status: "parsing",
-          statusMessage: "В очереди…",
+          statusMessage: QUEUED_MESSAGE,
         })
         .returning(PUBLIC_DOC);
-      await tx.insert(jobsTable).values({
-        kind: "doc.ingest",
-        entityId: row.id,
-        payload: payload as unknown as Record<string, unknown>,
-      });
+      await enqueue("doc.ingest", row.id, payload as unknown as Record<string, unknown>, tx);
       return row;
     });
 

@@ -14,6 +14,7 @@ import { UPLOAD_DIR } from "../../lib/paths";
 import { syncTranscriptionDoc, deleteTranscriptionDoc } from "../../lib/transcript-doc";
 import { decodeUploadName } from "../../lib/filename";
 import { parseId } from "../../lib/parse-id";
+import { QUEUED_MESSAGE, enqueue, lastJob } from "../../lib/jobs";
 import { resolveInsideDir } from "../../lib/uploads";
 import {
   archiveAndRemove,
@@ -277,20 +278,15 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
 
   // Путь к аудио и настройки — из последней задачи: у проваленных payload
   // не затирается как раз ради такого повтора (lib/jobs.ts).
-  const [lastJob] = await db
-    .select()
-    .from(jobsTable)
-    .where(and(eq(jobsTable.kind, "transcribe"), eq(jobsTable.entityId, id)))
-    .orderBy(desc(jobsTable.id))
-    .limit(1);
+  const prevJob = await lastJob("transcribe", id);
   // Запись в ошибке, а задача ещё в очереди или в работе (рассинхрон после
   // сбоя между концом задачи и onGiveUp) — вторая задача на тот же файл
   // означала бы двойную расшифровку. Ждём, пока текущая закончит.
-  if (lastJob && (lastJob.status === "queued" || lastJob.status === "running")) {
+  if (prevJob && (prevJob.status === "queued" || prevJob.status === "running")) {
     res.status(409).json({ message: "Запись уже в работе" });
     return;
   }
-  const prev = (lastJob?.payload ?? {}) as Partial<TranscribePayload>;
+  const prev = (prevJob?.payload ?? {}) as Partial<TranscribePayload>;
   const inputPath = resolveInsideDir(UPLOAD_DIR, prev.inputPath);
   const onDisk = inputPath
     ? await stat(inputPath).then((st) => st.isFile(), () => false)
@@ -313,12 +309,10 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
   // Смена статуса и новая задача — в одной транзакции: запись «в работе» без
   // задачи висела бы вечно. Условие status = 'error' в UPDATE закрывает
   // двойной клик — второй запрос не найдёт ошибки и не поставит вторую задачу.
-  // Поэтому вставка прямо в jobs, а не через enqueue(): тот пишет мимо транзакции.
-  // Так же — и загрузка ниже.
   const queued = await db.transaction(async (tx) => {
     const [updated] = await tx
       .update(transcriptionsTable)
-      .set({ status: "processing", progress: 0, statusMessage: "В очереди…", error: null })
+      .set({ status: "processing", progress: 0, statusMessage: QUEUED_MESSAGE, error: null })
       .where(
         and(
           eq(transcriptionsTable.id, id),
@@ -328,11 +322,7 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
       )
       .returning();
     if (!updated) return null;
-    await tx.insert(jobsTable).values({
-      kind: "transcribe",
-      entityId: id,
-      payload: payload as unknown as Record<string, unknown>,
-    });
+    await enqueue("transcribe", id, payload as unknown as Record<string, unknown>, tx);
     return updated;
   });
 
@@ -403,14 +393,10 @@ router.post(
           segments: [] as TranscriptSegment[],
           status: "processing",
           progress: 4,
-          statusMessage: "В очереди…",
+          statusMessage: QUEUED_MESSAGE,
         })
         .returning();
-      await tx.insert(jobsTable).values({
-        kind: "transcribe",
-        entityId: created.id,
-        payload: payload as unknown as Record<string, unknown>,
-      });
+      await enqueue("transcribe", created.id, payload as unknown as Record<string, unknown>, tx);
       return created;
     });
 
