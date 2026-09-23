@@ -12,10 +12,18 @@ import { createTestDb, type TestDb } from "./archive-test-db";
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const deploySh = readFileSync(path.resolve(here, "../../../../deploy.sh"), "utf8");
-const match = /<<'SQL'\n([\s\S]*?)\nSQL\n/.exec(deploySh);
-if (!match) throw new Error("В deploy.sh не нашёл проверку владельцев (<<'SQL' … SQL)");
-const OWNER_CHECK = match[1]!;
+
+/** Текст первого блока <<'SQL' … SQL из файла репозитория. */
+function sqlBlock(file: string): string {
+  const text = readFileSync(path.resolve(here, "../../../..", file), "utf8");
+  const match = /<<'SQL'\n([\s\S]*?)\nSQL\n/.exec(text);
+  if (!match) throw new Error(`В ${file} не нашёл блок <<'SQL' … SQL`);
+  return match[1]!;
+}
+
+const OWNER_CHECK = sqlBlock("deploy.sh");
+/** Передача владельцев после pg_restore — рецепт из runbook восстановления. */
+const RESTORE_OWNERS = sqlBlock("ops/ВОССТАНОВЛЕНИЕ.md");
 
 let db: TestDb;
 
@@ -53,16 +61,8 @@ describe("deploy.sh: проверка владельцев перед залив
     );
   });
 
-  test("всё передано приложению — чисто", async () => {
-    await db.pg.exec(`
-      DO $$ DECLARE r record; BEGIN
-        FOR r IN SELECT schemaname, tablename FROM pg_tables WHERE schemaname IN ('public', 'archive') LOOP
-          EXECUTE format('ALTER TABLE %I.%I OWNER TO kotu', r.schemaname, r.tablename);
-        END LOOP;
-      END $$;
-      ALTER FUNCTION archive.capture_row() OWNER TO kotu;
-      ALTER FUNCTION archive.forbid_change() OWNER TO kotu;
-    `);
+  test("всё передано приложению по ops/ВОССТАНОВЛЕНИЕ.md — чисто", async () => {
+    await db.pg.exec(RESTORE_OWNERS);
     expect(await check("kotu")).toEqual([]);
   });
 
