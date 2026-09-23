@@ -1,7 +1,7 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { eq, and, or, asc, desc, isNotNull, isNull } from "drizzle-orm";
+import { eq, and, or, asc, desc, isNotNull, isNull, ne } from "drizzle-orm";
 import {
   db,
   decksTable,
@@ -13,11 +13,12 @@ import {
   jobsTable,
   type Deck,
   type DeckSlide,
+  type DeckStatus,
+  type JobKind,
   type SlideLayout,
 } from "@workspace/db";
 import { inArray } from "drizzle-orm";
 import { SLIDE_LAYOUTS, layoutHasImage } from "@workspace/db/slides";
-import { enqueue } from "../../lib/jobs";
 import { ownFolderId } from "../../lib/folders";
 import { deckToLibrary, dropDeckCopies } from "../../lib/work-doc";
 import { DECKS_DIR } from "../../lib/paths";
@@ -80,6 +81,39 @@ const RETRY_FIRST = "Сначала нажмите «Попробовать ещ
 /** Копия в библиотеке отстала от правки — ответ всё равно ok, но след в журнале. */
 function logLibraryLag(req: Request, id: number) {
   return (err: unknown) => req.log.error({ err, id }, "Не смог обновить копию презентации в библиотеке");
+}
+
+const BUSY = "Подождите, я ещё работаю";
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Платная задача колоды (раскадровка, отрисовка, переделка слайда) и смена
+ * статуса — одной транзакцией с условием на прежний статус. Второй клик или
+ * вторая вкладка уже не найдут колоду в этом статусе и второй задачи не
+ * поставят; колода «в работе» без задачи тоже невозможна. false — колоду
+ * успели занять, ручке ответить 409 BUSY. Так же устроены повторы
+ * расшифровки, документа и лекции.
+ */
+async function queueDeckJob(
+  deckId: number,
+  from: DeckStatus[],
+  set: Partial<typeof decksTable.$inferInsert>,
+  kind: JobKind,
+  payload: Record<string, unknown>,
+  before?: (tx: Tx) => Promise<unknown>,
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(decksTable)
+      .set({ error: null, ...set })
+      .where(and(eq(decksTable.id, deckId), inArray(decksTable.status, from)))
+      .returning({ id: decksTable.id });
+    if (!row) return false;
+    if (before) await before(tx);
+    await tx.insert(jobsTable).values({ kind, entityId: deckId, payload });
+    return true;
+  });
 }
 
 /**
@@ -216,10 +250,13 @@ router.post("/decks", async (req, res): Promise<void> => {
       })
       .returning();
     if (rawText) await tx.execute(archiveInputSql("decks", row.id, { raw_text: rawText }));
+    // Задача — в той же транзакции: колода «раскладываю» без задачи висела бы вечно.
+    await tx
+      .insert(jobsTable)
+      .values({ kind: "deck.storyboard", entityId: row.id, payload: rawText ? { rawText } : {} });
     return row;
   });
 
-  await enqueue("deck.storyboard", deck.id, rawText ? { rawText } : {});
   res.status(201).json(deck);
 });
 
@@ -262,17 +299,21 @@ function optionalInstruction(body: unknown): string | undefined {
   return typeof raw === "string" && raw.trim() !== "" ? raw.trim().slice(0, 2000) : undefined;
 }
 
-/** Нарисовать образ одного слайда готовой колоды. Сначала задача, потом статус. */
-async function startDrawing(deckId: number, slideId: number, instruction: string | undefined): Promise<void> {
-  await enqueue(
-    "deck.illustrate",
+/** Нарисовать образ одного слайда готовой колоды. false — колода уже занята. */
+function startDrawing(
+  deckId: number,
+  slideId: number,
+  instruction: string | undefined,
+  before?: (tx: Tx) => Promise<unknown>,
+): Promise<boolean> {
+  return queueDeckJob(
     deckId,
+    ["ready"],
+    { status: "drawing", statusMessage: "В очереди…" },
+    "deck.illustrate",
     instruction ? { slideIds: [slideId], instruction } : { slideIds: [slideId] },
+    before,
   );
-  await db
-    .update(decksTable)
-    .set({ status: "drawing", statusMessage: "В очереди…", error: null })
-    .where(eq(decksTable.id, deckId));
 }
 
 /** Правка слайда автором — только пока конвейер не работает над колодой. */
@@ -280,7 +321,7 @@ router.patch("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
   const deck = await deckOr404(req, res);
   if (!deck) return;
   if (deck.status === "storyboarding" || deck.status === "drawing") {
-    res.status(409).json({ message: "Подождите, я ещё работаю" });
+    res.status(409).json({ message: BUSY });
     return;
   }
 
@@ -342,8 +383,9 @@ router.patch("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
   // Замечание к образу едет тем же запросом: отдельный redraw после такого
   // сохранения получил бы 409 — колода уже рисует.
   if (deck.status === "ready" && patch.imageStatus === "queued") {
-    await startDrawing(deck.id, slide.id, optionalInstruction(body));
-    res.status(202).json({ ok: true });
+    // Колоду успели занять — правка сохранена, образ дорисует следующий запуск.
+    const queued = await startDrawing(deck.id, slide.id, optionalInstruction(body));
+    res.status(queued ? 202 : 200).json({ ok: true });
     return;
   }
   res.json({ ok: true });
@@ -365,26 +407,31 @@ router.post("/decks/:id/approve", async (req, res): Promise<void> => {
 
   // Рисовать нечего — колода готова сразу, очередь не нужна.
   if (withBrief.length === 0) {
-    await db
+    const [done] = await db
       .update(decksTable)
       .set({ storyboardApproved: true, status: "ready", statusMessage: "", error: null })
-      .where(eq(decksTable.id, deck.id));
+      .where(and(eq(decksTable.id, deck.id), eq(decksTable.status, "storyboard_ready")))
+      .returning({ id: decksTable.id });
+    if (!done) {
+      res.status(409).json({ message: BUSY });
+      return;
+    }
     await deckToLibrary(deck.id).catch(logLibraryLag(req, deck.id));
     res.status(202).json({ ok: true });
     return;
   }
 
-  // Сначала задача, потом статус: упади enqueue после смены статуса —
-  // колода зависла бы в «рисую» без задачи в очереди.
-  await db
-    .update(decksTable)
-    .set({ storyboardApproved: true })
-    .where(eq(decksTable.id, deck.id));
-  await enqueue("deck.illustrate", deck.id, {});
-  await db
-    .update(decksTable)
-    .set({ status: "drawing", statusMessage: "В очереди…", error: null })
-    .where(eq(decksTable.id, deck.id));
+  const queued = await queueDeckJob(
+    deck.id,
+    ["storyboard_ready"],
+    { storyboardApproved: true, status: "drawing", statusMessage: "В очереди…" },
+    "deck.illustrate",
+    {},
+  );
+  if (!queued) {
+    res.status(409).json({ message: BUSY });
+    return;
+  }
   res.status(202).json({ ok: true });
 });
 
@@ -400,7 +447,7 @@ router.post("/decks/:id/slides/:sid/rewrite", async (req, res): Promise<void> =>
     return;
   }
   if (deck.status !== "ready" && deck.status !== "storyboard_ready") {
-    res.status(409).json({ message: "Подождите, я ещё работаю" });
+    res.status(409).json({ message: BUSY });
     return;
   }
 
@@ -414,15 +461,20 @@ router.post("/decks/:id/slides/:sid/rewrite", async (req, res): Promise<void> =>
     return;
   }
 
-  // Сначала задача, потом статус: упади enqueue после смены статуса —
-  // колода зависла бы в «работаю» без задачи в очереди.
-  await enqueue("deck.reslide", deck.id, { slideId: slide.id, instruction, back: deck.status });
   // Сообщение сразу по делу: оно же становится заголовком панели работы,
   // и «раскладываю по слайдам» на правке одного слайда пугало бы зря.
-  await db
-    .update(decksTable)
-    .set({ status: "storyboarding", statusMessage: "Переделываю слайд…", error: null })
-    .where(eq(decksTable.id, deck.id));
+  // Условие — ровно прочитанный статус: в него же задача вернёт колоду (back).
+  const queued = await queueDeckJob(
+    deck.id,
+    [deck.status],
+    { status: "storyboarding", statusMessage: "Переделываю слайд…" },
+    "deck.reslide",
+    { slideId: slide.id, instruction, back: deck.status },
+  );
+  if (!queued) {
+    res.status(409).json({ message: BUSY });
+    return;
+  }
   res.status(202).json({ ok: true });
 });
 
@@ -442,11 +494,13 @@ router.post("/decks/:id/slides/:sid/redraw", async (req, res): Promise<void> => 
     return;
   }
 
-  await db
-    .update(deckSlidesTable)
-    .set({ imageStatus: "queued" })
-    .where(eq(deckSlidesTable.id, slide.id));
-  await startDrawing(deck.id, slide.id, optionalInstruction(req.body));
+  const queued = await startDrawing(deck.id, slide.id, optionalInstruction(req.body), (tx) =>
+    tx.update(deckSlidesTable).set({ imageStatus: "queued" }).where(eq(deckSlidesTable.id, slide.id)),
+  );
+  if (!queued) {
+    res.status(409).json({ message: BUSY });
+    return;
+  }
   res.status(202).json({ ok: true });
 });
 
@@ -493,7 +547,7 @@ router.get("/decks/:id/export", async (req, res): Promise<void> => {
     return;
   }
   if (deck.status === "storyboarding" || deck.status === "drawing") {
-    res.status(409).json({ message: "Подождите, я ещё работаю" });
+    res.status(409).json({ message: BUSY });
     return;
   }
 
@@ -560,31 +614,67 @@ router.post("/decks/:id/retry", async (req, res): Promise<void> => {
       res.status(409).json({ message: "Текст не сохранился — создайте презентацию заново" });
       return;
     }
-    await enqueue("deck.storyboard", deck.id, rawText ? { rawText } : {});
-    await db
-      .update(decksTable)
-      .set({ status: "storyboarding", statusMessage: "В очереди…", error: null })
-      .where(eq(decksTable.id, deck.id));
-    res.status(202).json({ ok: true });
+    const queued = await queueDeckJob(
+      deck.id,
+      ["error"],
+      { status: "storyboarding", statusMessage: "В очереди…" },
+      "deck.storyboard",
+      rawText ? { rawText } : {},
+    );
+    res.status(queued ? 202 : 409).json(queued ? { ok: true } : { message: BUSY });
     return;
   }
 
-  await db
-    .update(deckSlidesTable)
-    .set({ imageStatus: "queued" })
-    .where(
-      and(
-        eq(deckSlidesTable.deckId, deck.id),
-        isNotNull(deckSlidesTable.imageBrief),
-        inArray(deckSlidesTable.imageStatus, ["error", "drawing", "queued"]),
-      ),
-    );
-  await enqueue("deck.illustrate", deck.id, {});
-  await db
-    .update(decksTable)
-    .set({ status: "drawing", statusMessage: "В очереди…", error: null })
-    .where(eq(decksTable.id, deck.id));
-  res.status(202).json({ ok: true });
+  const queued = await queueDeckJob(
+    deck.id,
+    ["error"],
+    { status: "drawing", statusMessage: "В очереди…" },
+    "deck.illustrate",
+    {},
+    (tx) =>
+      tx
+        .update(deckSlidesTable)
+        .set({ imageStatus: "queued" })
+        .where(
+          and(
+            eq(deckSlidesTable.deckId, deck.id),
+            isNotNull(deckSlidesTable.imageBrief),
+            inArray(deckSlidesTable.imageStatus, ["error", "drawing", "queued"]),
+          ),
+        ),
+  );
+  res.status(queued ? 202 : 409).json(queued ? { ok: true } : { message: BUSY });
+});
+
+/**
+ * Убрать слайд — только руками автора (модель слайды не удаляет) и только
+ * пока колода не в работе. Строка слайда и его образы уходят в архив
+ * триггером, файлы картинок остаются на диске. Последний слайд не убираем:
+ * пустая колода — это удаление презентации, для него своя кнопка.
+ */
+router.delete("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
+  const deck = await deckOr404(req, res);
+  if (!deck) return;
+  if (deck.status !== "storyboard_ready" && deck.status !== "ready") {
+    res.status(409).json({ message: deck.status === "error" ? RETRY_FIRST : BUSY });
+    return;
+  }
+  const slide = await slideOr404(deck, req, res);
+  if (!slide) return;
+
+  const others = await db
+    .select({ id: deckSlidesTable.id })
+    .from(deckSlidesTable)
+    .where(and(eq(deckSlidesTable.deckId, deck.id), ne(deckSlidesTable.id, slide.id)))
+    .limit(1);
+  if (others.length === 0) {
+    res.status(409).json({ message: "Это единственный слайд — удалите презентацию целиком" });
+    return;
+  }
+
+  await db.delete(deckSlidesTable).where(eq(deckSlidesTable.id, slide.id));
+  if (deck.status === "ready") await deckToLibrary(deck.id).catch(logLibraryLag(req, deck.id));
+  res.json({ ok: true });
 });
 
 router.delete("/decks/:id", async (req, res): Promise<void> => {
