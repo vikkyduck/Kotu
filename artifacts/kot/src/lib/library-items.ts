@@ -102,10 +102,17 @@ export const KIND_LABEL: Record<ItemKind, string> = {
   book: 'книга',
   article: 'статья',
   note: 'заметка',
-  transcript: 'расшифровка · имена скрыты',
+  transcript: 'расшифровка',
   lecture: 'лекция',
   deck: 'презентация',
 };
+
+const KINDS: readonly ItemKind[] = ['book', 'article', 'note', 'transcript', 'lecture', 'deck'];
+
+/** Вид материала из строки базы — одно правило для библиотеки, поиска и форм. */
+export function docKind(kind: string): ItemKind {
+  return (KINDS as readonly string[]).includes(kind) ? (kind as ItemKind) : 'book';
+}
 
 /** «3 материала» — с правильным окончанием, иначе интерфейс выглядит машинным. */
 export function countLabel(n: number): string {
@@ -150,13 +157,11 @@ export function buildItems(data: LibraryData, act: ItemActions): Item[] {
     // поисковый след: показывать второй карточкой значило бы двоить вещь.
     .filter((d) => d.kind !== 'deck' && d.kind !== 'lecture')
     .map<Item>((d) => {
-      const kind = (['book', 'article', 'note', 'transcript'].includes(d.kind)
-        ? d.kind
-        : 'book') as ItemKind;
+      const kind = docKind(d.kind);
       const meta =
         d.status === 'ready'
-          ? // У расшифровки счёт фрагментов ничего не говорит автору: важно
-            // одно — имена скрыты. У книги наоборот: объём и разбор по делу.
+          ? // У расшифровки счёт фрагментов ничего не говорит автору — только
+            // вид. У книги наоборот: объём и разбор по делу.
             kind === 'transcript'
             ? KIND_LABEL[kind]
             : `${KIND_LABEL[kind]}${d.pages ? ` · ${d.pages} с.` : ''} · ${d.chunkCount} фрагментов`

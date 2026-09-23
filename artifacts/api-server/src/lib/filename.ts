@@ -19,3 +19,14 @@ export function decodeUploadName(name: string): string {
   const restored = Buffer.from(name, "latin1").toString("utf8");
   return restored.includes(REPLACEMENT_CHAR) ? name : restored;
 }
+
+/**
+ * Заголовок Content-Disposition для выгрузки. Одно правило для лекций и
+ * презентаций: имя очищено от знаков, ломающих заголовок (апостроф, скобки),
+ * обрезано до 60 знаков, плюс ASCII-запасное имя для старых клиентов.
+ */
+export function attachmentHeader(title: string, ext: string, fallback: string): string {
+  const safe = title.replace(/[^\p{L}\p{N} .-]/gu, "").replace(/\s+/g, " ").trim().slice(0, 60).trim();
+  const name = `${safe || fallback}.${ext}`;
+  return `attachment; filename="download.${ext}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
