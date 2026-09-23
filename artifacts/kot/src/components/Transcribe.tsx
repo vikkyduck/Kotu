@@ -458,14 +458,21 @@ function ResultView({
     }, data.title);
   };
 
+  // Правка, которую сервер не принял (сессия истекла, нет сети). Не тостом:
+  // он гаснет за вход поверх приложения, а правка на экране выглядит целой.
+  const [unsaved, setUnsaved] = useState(false);
+
+  const saveSegments = (next: TranscriptSegment[]) => {
+    void save({ segments: next }).then((err) => setUnsaved(err !== null));
+  };
+
   const saveSegment = (index: number, text: string) => {
-    const current = segments[index]?.text ?? '';
-    if (text === current) return;
+    // Сверка и с экраном, и с сервером: несохранённая правка уйдёт со следующим
+    // уходом из строки, даже если текст в ней с тех пор не менялся.
+    if (text === (segments[index]?.text ?? '') && text === (data.segments[index]?.text ?? '')) return;
     const next = segments.map((s, i) => (i === index ? { ...s, text } : s));
     setSegments(next);
-    void save({ segments: next }).then((err) => {
-      if (err) toast(err);
-    });
+    saveSegments(next);
   };
 
   const downloadText = () => {
@@ -493,7 +500,19 @@ function ResultView({
         <div><h3>{data.title}</h3><p>Уже сохранена. Можно спокойно читать и править.</p></div>
         <button className="chg" onClick={rename}>переименовать</button>
       </div>
-      <p className="tnote"><Icon name="info" /> Если слово распознано неверно — просто исправьте его прямо в тексте, как в обычном документе. Всё сохраняется само.</p>
+      {unsaved ? (
+        <p className="tnote bad">
+          <Icon name="info" />
+          <span>
+            Правка не сохранилась —{' '}
+            <span className="inline-link" onClick={() => saveSegments(segments)}>
+              сохранить ещё раз
+            </span>
+          </span>
+        </p>
+      ) : (
+        <p className="tnote"><Icon name="info" /> Если слово распознано неверно — просто исправьте его прямо в тексте, как в обычном документе. Всё сохраняется само.</p>
+      )}
       {data.hideNames && (
         <p className="tnote"><Icon name="eye" /> Имена скрыты. Нажмите «имя скрыто», чтобы увидеть — это видно только вам.</p>
       )}
