@@ -7,10 +7,19 @@ import { ArchiveUnavailableError } from "./archive-files";
  * снаружи (lib/archive.ts — настоящие, тесты — поддельные), поэтому логику
  * повторов и тайм-аутов можно проверить без базы.
  *
- * "pending" — идёт (или ещё не начата) попытка включить архив;
+ * "pending" — идёт (или ещё не начата) попытка включить архив; в том числе
+ *             долгая: первое включение снимает все таблицы (INITIAL);
  * "ok"      — триггеры архива на месте и проверены;
- * "off"     — архив не включился: сервер только на чтение, очередь стоит,
- *             повтор раз в минуту.
+ * "off"     — попытка включить архив упала: сервер только на чтение, очередь
+ *             стоит, повтор через минуту после провала.
+ *
+ * Попытка всегда одна. Тайм-аут не бросает висящую попытку и не запускает
+ * рядом новую: каждая держала бы клиента пула и ждала бы advisory lock
+ * предыдущей, и за ~20 минут повторов пул (max=10) кончился бы — упали бы
+ * даже GET. Тайм-аут только отпускает тех, кто ждёт ответа (ready(),
+ * requireArchive → «архив не готов», 503), а состояние остаётся "pending",
+ * пока попытка не кончится сама. Чтобы она кончалась, её транзакции
+ * ограничены самой базой (lock_timeout, statement_timeout — archive-sql.ts).
  */
 export type ArchiveState = "pending" | "ok" | "off";
 
@@ -26,12 +35,13 @@ export interface ArchiveSupervisorOptions {
   /** Каких триггеров архива нет (findMissingTriggers); пусто — всё на месте. */
   missingTriggers: () => Promise<string[]>;
   log: Log;
-  /** Пауза между попытками, пока архив выключен. */
+  /** Пауза между провалом попытки и следующей. */
   retryMs?: number;
   /**
-   * Сколько ждать одну попытку или проверку. Зависший pool.connect или
-   * advisory lock иначе подвесил бы requireArchive (и с ним удаление) навсегда,
-   * а healthz так и показывал бы pending. По тайм-ауту — "off" и повтор.
+   * Сколько ждать ответа попытки или проверки тем, кто его ждёт (удаление,
+   * сверка файлов). Зависший pool.connect или advisory lock иначе подвесил бы
+   * удаление навсегда. По тайм-ауту ждущий получает «не готов», а сама
+   * попытка продолжается — см. комментарий к ArchiveState.
    */
   timeoutMs?: number;
 }
@@ -44,6 +54,17 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   return Promise.race([p, expired]).finally(() => clearTimeout(timer));
 }
 
+/** Дождаться p, но не дольше ms. Не бросает: ответ ждущему — в state. */
+function waitAtMost(p: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms);
+  });
+  return Promise.race([p.then(() => undefined, () => undefined), expired]).finally(() =>
+    clearTimeout(timer),
+  );
+}
+
 const READ_ONLY = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export function createArchiveSupervisor(opts: ArchiveSupervisorOptions) {
@@ -52,9 +73,15 @@ export function createArchiveSupervisor(opts: ArchiveSupervisorOptions) {
   const timeoutMs = opts.timeoutMs ?? 60_000;
 
   let state: ArchiveState = "pending";
-  /** Последняя попытка включить архив; её итог — ответ ready(). */
-  let last: Promise<ArchiveState> | null = null;
-  let inflight = false;
+  /** Была ли хоть одна попытка. */
+  let started = false;
+  /**
+   * Идущая попытка — сам исходный promise ensure(), а не обёртка с
+   * тайм-аутом: пока он не завершился, новой попытки нет.
+   */
+  let running: Promise<ArchiveState> | null = null;
+  /** Идущая проверка триггеров — тоже исходный promise, без параллельных. */
+  let checking: Promise<string[]> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let waiters: (() => void)[] = [];
   let readyPromise: Promise<void> | null = null;
@@ -67,15 +94,24 @@ export function createArchiveSupervisor(opts: ArchiveSupervisorOptions) {
     }, retryMs);
   }
 
-  /** Одна попытка включить архив. Не бросает: итог — в state и в логе. */
+  /**
+   * Одна попытка включить архив; идёт уже — та же самая. Не бросает: итог —
+   * в state и в логе. Повтор назначается только после провала, то есть
+   * когда попытка действительно кончилась.
+   */
   function attempt(): Promise<ArchiveState> {
-    if (inflight && last) return last;
-    inflight = true;
-    last = withTimeout(
-      Promise.resolve().then(() => opts.ensure()),
-      timeoutMs,
-      "Включение архива",
-    )
+    if (running) return running;
+    started = true;
+    // Долгая попытка — не провал (первый снимок большой таблицы), но в
+    // журнале её должно быть видно: healthz всё это время отвечает pending.
+    const slow = setTimeout(() => {
+      log.warn(
+        { waitedMs: timeoutMs },
+        "Архив включается дольше обычного — жду, новую попытку не начинаю; пока сервер только на чтение",
+      );
+    }, timeoutMs);
+    const p = Promise.resolve()
+      .then(() => opts.ensure())
       .then(
         (r) => {
           state = "ok";
@@ -99,14 +135,22 @@ export function createArchiveSupervisor(opts: ArchiveSupervisorOptions) {
         },
       )
       .finally(() => {
-        inflight = false;
+        clearTimeout(slow);
+        if (running === p) running = null;
       });
-    return last;
+    running = p;
+    return p;
   }
 
-  /** Первая попытка включить архив (или итог последней). Не бросает. */
+  /**
+   * Первая попытка включить архив; идёт попытка — её итог; иначе — текущее
+   * состояние. Не бросает и не ограничен тайм-аутом (index.ts ограничивает
+   * ожидание сам).
+   */
   function ensureArchive(): Promise<ArchiveState> {
-    return last ?? attempt();
+    if (running) return running;
+    if (!started) return attempt();
+    return Promise.resolve(state);
   }
 
   /**
@@ -121,15 +165,18 @@ export function createArchiveSupervisor(opts: ArchiveSupervisorOptions) {
         return;
       }
       waiters.push(resolve);
-      if (!last) void attempt();
+      if (!started) void attempt();
     });
     return readyPromise;
   }
 
-  /** Архив включён? Идёт попытка — ждём её итога, а не прошлого «off». */
+  /**
+   * Архив включён? Идёт попытка — ждём её итога (а не прошлого «off»), но не
+   * дольше timeoutMs: дольше — «не готов», попытка при этом продолжается.
+   */
   async function ready(): Promise<boolean> {
-    await (last ?? attempt());
-    if (inflight && last) await last;
+    const p = running ?? (started ? null : attempt());
+    if (p) await waitAtMost(p, timeoutMs);
     return state === "ok";
   }
 
@@ -139,27 +186,34 @@ export function createArchiveSupervisor(opts: ArchiveSupervisorOptions) {
    * процесс продолжал бы считать архив включённым. Нет триггеров (или не
    * удалось проверить) — сразу только чтение (pending) и заново
    * ensureArchive; не вышло — "off" и повтор раз в минуту.
+   *
+   * Проверка одна: прежняя ещё идёт (запрос повис) — новую не начинаем, а
+   * тайм-аут лишь перестаёт её ждать. Сам запрос ограничен statement_timeout
+   * в базе (archive.ts), так что кончится и он.
    */
   async function verify(): Promise<void> {
-    if (state !== "ok" || inflight) return;
+    if (state !== "ok" || running || checking) return;
+    const check = Promise.resolve().then(() => opts.missingTriggers());
+    checking = check;
+    void check
+      .catch(() => undefined)
+      .finally(() => {
+        if (checking === check) checking = null;
+      });
     let missing: string[];
     try {
-      missing = await withTimeout(
-        Promise.resolve().then(() => opts.missingTriggers()),
-        timeoutMs,
-        "Проверка триггеров архива",
-      );
+      missing = await withTimeout(check, timeoutMs, "Проверка триггеров архива");
     } catch (err) {
       log.error({ err }, "Не смог проверить триггеры архива — включаю архив заново");
       missing = ["проверка не удалась"];
     }
-    if (missing.length === 0 || state !== "ok" || inflight) return;
+    if (missing.length === 0 || state !== "ok" || running) return;
     log.error(
       { missing },
       "ТРИГГЕРЫ АРХИВА ПРОПАЛИ — сервер только на чтение, пока не поставлю их снова",
     );
     state = "pending";
-    await attempt();
+    await waitAtMost(attempt(), timeoutMs);
   }
 
   /**
