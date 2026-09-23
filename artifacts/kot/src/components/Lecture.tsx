@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/hooks/use-app';
 import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
 import { Icon } from '@/lib/icons';
+import { send, json, downloadFile } from '@/lib/http';
+import { KIND_LABEL, docKind, type ItemKind } from '@/lib/library-items';
 
 interface Doc {
   id: number;
@@ -10,12 +12,8 @@ interface Doc {
   status: string;
 }
 
-/** Подпись у материала: своя работа должна быть отличима от книги. */
-const DOC_KIND_RU: Record<string, string> = {
-  transcript: 'расшифровка',
-  lecture: 'лекция',
-  deck: 'презентация',
-};
+/** Подпись у материала — только у своих работ: они должны быть отличимы от книги. */
+const OWN_WORK: ItemKind[] = ['transcript', 'lecture', 'deck'];
 
 interface PlanItem {
   heading: string;
@@ -78,7 +76,6 @@ const FOCUS = [
 const DURATIONS = [
   { label: '1 час', value: 60 },
   { label: '2–3 часа', value: 150 },
-  { label: '5–6 часов', value: 330 },
 ];
 
 export function Lecture() {
@@ -111,14 +108,25 @@ export function Lecture() {
   useUnsavedWarning(screen === 's-lecture' && openId === null && topic.trim() !== '');
 
   const loadDocs = useCallback(async () => {
-    const d = await fetch('/api/documents').then((r) => (r.ok ? r.json() : []));
+    const d = await fetch('/api/documents')
+      .then((r) => (r.ok ? r.json() : []))
+      .catch(() => []);
     setDocs((d as Doc[]).filter((x) => x.status === 'ready'));
   }, []);
 
   const loadOne = useCallback(async (id: number) => {
-    const res = await fetch(`/api/lectures/${id}`);
-    if (res.ok) setLecture(await res.json());
-  }, []);
+    try {
+      const res = await fetch(`/api/lectures/${id}`);
+      if (res.ok) {
+        setLecture(await res.json());
+      } else if (res.status === 404) {
+        // Лекцию удалили (другая вкладка, старая ссылка, «назад») — не
+        // показывать же под её адресом форму новой.
+        toast('Лекция не найдена');
+        go('s-home');
+      }
+    } catch { /* тихо: поллинг повторит */ }
+  }, [toast, go]);
 
   useEffect(() => {
     if (screen !== 's-lecture') return;
@@ -126,11 +134,11 @@ export function Lecture() {
   }, [screen, loadDocs]);
 
   // Пришли из библиотеки («написать лекцию на основе этого») — материал
-  // в опоре уже отмечен.
+  // в опоре уже отмечен; пришли просто так — выбор прошлого захода не тянется.
   useEffect(() => {
-    if (screen !== 's-lecture' || openId !== null || !lectureSeed) return;
-    setUseLibrary(true);
-    setPicked(lectureSeed.documentIds);
+    if (screen !== 's-lecture' || openId !== null) return;
+    setUseLibrary(!!lectureSeed);
+    setPicked(lectureSeed?.documentIds ?? []);
   }, [screen, openId, lectureSeed]);
 
   useEffect(() => {
@@ -138,11 +146,10 @@ export function Lecture() {
   }, [screen]);
 
   useEffect(() => {
-    if (openId === null) {
-      setLecture(null);
-      return;
-    }
-    void loadOne(openId);
+    // Индекс правки плана относится к прежней лекции — в новой он чужой.
+    setPlanEdit(null);
+    setLecture(null);
+    if (openId !== null) void loadOne(openId);
   }, [openId, loadOne]);
 
   // Пока идёт работа — подтягиваем состояние, чтобы прогресс двигался сам.
@@ -163,68 +170,89 @@ export function Lecture() {
       return;
     }
     setBusy(true);
-    try {
-      const res = await fetch('/api/lectures', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          topic,
-          audience,
-          durationMin: duration,
-          focus,
-          useLibrary,
-          useResearch,
-          documentIds: useLibrary ? picked : [],
-        }),
-      });
-      if (res.ok) {
-        const created = await res.json();
-        clearTopic();
-        setPicked([]);
-        openLecture(created.id);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast(data.message ?? 'Не удалось начать лекцию');
-      }
-    } finally {
-      setBusy(false);
+    const r = await send(
+      '/api/lectures',
+      json('POST', {
+        topic,
+        audience,
+        durationMin: duration,
+        focus,
+        useLibrary,
+        useResearch,
+        documentIds: useLibrary ? picked : [],
+      }),
+      'Не удалось начать лекцию',
+    );
+    setBusy(false);
+    if (!r.ok) {
+      toast(r.message);
+      return;
     }
+    const created = await r.res.json();
+    clearTopic();
+    setPicked([]);
+    openLecture(created.id);
   };
 
   const approve = async () => {
     if (!lecture) return;
     setBusy(true);
-    try {
-      const res = await fetch(`/api/lectures/${lecture.id}/plan/approve`, { method: 'POST' });
-      if (res.ok) {
-        toast('Пишу главы. Можно закрыть страницу.');
-        await loadOne(lecture.id);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast(data.message ?? 'Не удалось запустить');
-      }
-    } finally {
-      setBusy(false);
+    const r = await send(`/api/lectures/${lecture.id}/plan/approve`, { method: 'POST' }, 'Не удалось запустить');
+    if (r.ok) {
+      toast('Пишу главы. Можно закрыть страницу.');
+      await loadOne(lecture.id);
+    } else {
+      toast(r.message);
     }
+    setBusy(false);
+  };
+
+  // Тупика после ошибки быть не должно: план составляется заново, а главы
+  // дописываются с того места, где письмо оборвалось.
+  const retry = async () => {
+    if (!lecture) return;
+    setBusy(true);
+    const r = await send(`/api/lectures/${lecture.id}/retry`, { method: 'POST' }, 'Не удалось перезапустить');
+    if (r.ok) {
+      toast('Пробую ещё раз');
+      await loadOne(lecture.id);
+    } else {
+      toast(r.message);
+    }
+    setBusy(false);
+  };
+
+  const remove = async () => {
+    if (!lecture || !window.confirm('Удалить лекцию?')) return;
+    const r = await send(`/api/lectures/${lecture.id}`, { method: 'DELETE' }, 'Не удалось удалить');
+    if (!r.ok) {
+      toast(r.message);
+      return;
+    }
+    toast('Лекция удалена');
+    go('s-home');
+  };
+
+  const download = async (url: string, fallbackName: string) => {
+    const err = await downloadFile(url, fallbackName);
+    if (err) toast(err);
   };
 
   const patchPlan = async (plan: PlanItem[]) => {
     if (!lecture) return false;
-    const res = await fetch(`/api/lectures/${lecture.id}/plan`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan }),
-    });
-    if (res.ok) {
-      await loadOne(lecture.id);
-      return true;
+    const r = await send(`/api/lectures/${lecture.id}/plan`, json('PATCH', { plan }), 'Не удалось изменить план');
+    if (!r.ok) {
+      toast(r.message);
+      return false;
     }
-    toast('Не удалось изменить план');
-    return false;
+    await loadOne(lecture.id);
+    return true;
   };
 
   const dropChapter = async (index: number) => {
     if (!lecture?.plan) return;
+    // Индексы сдвинутся — открытая правка другого блока попала бы не туда.
+    setPlanEdit(null);
     await patchPlan(lecture.plan.filter((_, i) => i !== index));
   };
 
@@ -246,21 +274,26 @@ export function Lecture() {
 
   const saveSection = async (section: Section) => {
     if (!lecture) return;
-    const res = await fetch(`/api/lectures/${lecture.id}/sections/${section.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: draft }),
-    });
-    if (res.ok) {
-      setEditing(null);
-      toast('Правка сохранена');
-      await loadOne(lecture.id);
-    } else {
-      toast('Не удалось сохранить');
+    const r = await send(
+      `/api/lectures/${lecture.id}/sections/${section.id}`,
+      json('PATCH', { text: draft }),
+      'Не удалось сохранить',
+    );
+    if (!r.ok) {
+      toast(r.message);
+      return;
     }
+    setEditing(null);
+    toast('Правка сохранена');
+    await loadOne(lecture.id);
   };
 
   if (screen !== 's-lecture') return null;
+
+  // Лекция по адресу ещё грузится — форму новой под её адресом не показываем.
+  if (openId !== null && lecture?.id !== openId) {
+    return <section className="screen active" id="s-lecture" />;
+  }
 
   // ── Открытая лекция ─────────────────────────────────────────────────────
   if (lecture) {
@@ -274,8 +307,29 @@ export function Lecture() {
 
         <h2 className="h2">{lecture.title}</h2>
 
+        {/* План, который писать не будут, и готовую лекцию можно удалить прямо
+            здесь; у ошибки кнопка удаления — в её блоке. */}
+        {(lecture.status === 'plan_ready' || lecture.status === 'ready') && (
+          <div className="deck-tools">
+            <button className="chg deck-drop" onClick={() => void remove()}>
+              удалить лекцию
+            </button>
+          </div>
+        )}
+
         {lecture.status === 'error' && (
-          <div className="panel"><p className="doc-meta bad">{lecture.error}</p></div>
+          <div className="errblock">
+            <h3 className="errttl">Не получилось</h3>
+            <p className="errwhy">{lecture.error ?? 'Что-то пошло не так.'}</p>
+            <div className="btnrow">
+              <button className="btn primary" style={{ flex: 1 }} disabled={busy} onClick={() => void retry()}>
+                {busy ? 'Запускаю…' : 'Попробовать ещё раз'}
+              </button>
+              <button className="btn danger" onClick={() => void remove()}>
+                <Icon name="trash" /> Удалить
+              </button>
+            </div>
+          </div>
         )}
 
         {working && (
@@ -291,9 +345,6 @@ export function Lecture() {
         {/* План на утверждение — точка, где автор остаётся автором */}
         {lecture.status === 'plan_ready' && lecture.plan && (
           <>
-            <p className="sub">
-              Посмотрите план. Лишние главы можно убрать — и только потом я напишу текст.
-            </p>
             <div className="doc-list">
               {lecture.plan.map((p, i) =>
                 planEdit === i ? (
@@ -392,7 +443,17 @@ export function Lecture() {
             <ol>
               {lecture.sections.map((s) => (
                 <li key={s.id}>
-                  <a href={`#part-${s.ord + 1}`}>{s.heading}</a>
+                  <a
+                    href={`#part-${s.ord + 1}`}
+                    onClick={(e) => {
+                      // Переход по якорю — запись в истории, и приложение
+                      // приняло бы её за адрес экрана и ушло в библиотеку.
+                      e.preventDefault();
+                      document.getElementById(`part-${s.ord + 1}`)?.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                  >
+                    {s.heading}
+                  </a>
                 </li>
               ))}
             </ol>
@@ -508,34 +569,21 @@ export function Lecture() {
               >
                 <Icon name="deck" /> Собрать презентацию
               </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  const first = lecture.sections[0];
-                  if (!first) return;
-                  setEditing(first.id);
-                  setDraft(first.text);
-                  document.getElementById('part-1')?.scrollIntoView({ behavior: 'smooth' });
-                }}
-              >
-                <Icon name="edit" /> Редактировать
-              </button>
             </div>
             <div className="btnrow" style={{ flexWrap: 'wrap', marginTop: 10 }}>
-              <a className="btn" href={`/api/lectures/${lecture.id}/export?format=docx`}>
+              <button
+                className="btn"
+                onClick={() => void download(`/api/lectures/${lecture.id}/export?format=docx`, 'лекция.docx')}
+              >
                 <Icon name="download" /> Скачать Word
-              </a>
-              <a className="btn" href={`/api/lectures/${lecture.id}/export`}>
+              </button>
+              <button
+                className="btn"
+                onClick={() => void download(`/api/lectures/${lecture.id}/export`, 'лекция.md')}
+              >
                 <Icon name="download" /> Скачать Markdown
-              </a>
+              </button>
             </div>
-            <p className="doc-meta" style={{ marginTop: 10 }}>
-              Для Google Документов: скачайте Word и перетащите файл на{' '}
-              <a className="inline-link" href="https://drive.google.com" target="_blank" rel="noreferrer">
-                drive.google.com
-              </a>{' '}
-              — он откроется как гуглдок.
-            </p>
           </div>
         )}
       </section>
@@ -620,18 +668,6 @@ export function Lecture() {
           </span>
         </div>
 
-        {!useLibrary && !useResearch && (
-          <p className="doc-meta" style={{ marginTop: 10 }}>
-            Без источников напишу по общим знаниям психоанализа — под главами будет
-            честная пометка, что имена и даты стоит сверить.
-          </p>
-        )}
-        {useResearch && (
-          <p className="doc-meta" style={{ marginTop: 10 }}>
-            Исследование: соберу материал по теме сама, источники будут указаны под главами.
-          </p>
-        )}
-
         {useLibrary && (
           <>
             <div className="fieldlbl">На что опереться из библиотеки?</div>
@@ -641,7 +677,6 @@ export function Lecture() {
                 <span className="inline-link" onClick={() => go('s-home')}>
                   загрузите книги
                 </span>
-                {' '}или выключите её и оставьте «Исследование ИИ».
               </p>
             ) : (
               <div className="pills">
@@ -654,7 +689,7 @@ export function Lecture() {
                     }
                   >
                     {d.title}
-                    {DOC_KIND_RU[d.kind] ? ` · ${DOC_KIND_RU[d.kind]}` : ''}
+                    {OWN_WORK.includes(docKind(d.kind)) ? ` · ${KIND_LABEL[docKind(d.kind)]}` : ''}
                   </span>
                 ))}
               </div>
