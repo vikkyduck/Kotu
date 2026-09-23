@@ -16,7 +16,7 @@ import { enqueue } from "../../lib/jobs";
 import { UPLOAD_DIR } from "../../lib/paths";
 import { syncTranscriptionDoc, deleteTranscriptionDoc } from "../../lib/transcript-doc";
 import { decodeUploadName } from "../../lib/filename";
-import { resolveInsideDir } from "../../lib/upload-sweep";
+import { resolveInsideDir } from "../../lib/uploads";
 import type { TranscribePayload } from "../../lib/handlers/transcribe";
 
 // Long recordings (2–3 hours) are split server-side, so allow large uploads.
@@ -229,6 +229,13 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
     .where(and(eq(jobsTable.kind, "transcribe"), eq(jobsTable.entityId, id)))
     .orderBy(desc(jobsTable.id))
     .limit(1);
+  // Запись в ошибке, а задача ещё в очереди или в работе (рассинхрон после
+  // сбоя между концом задачи и onGiveUp) — вторая задача на тот же файл
+  // означала бы двойную расшифровку. Ждём, пока текущая закончит.
+  if (lastJob && (lastJob.status === "queued" || lastJob.status === "running")) {
+    res.status(409).json({ error: "Запись уже в работе" });
+    return;
+  }
   const prev = (lastJob?.payload ?? {}) as Partial<TranscribePayload>;
   const inputPath = resolveInsideDir(UPLOAD_DIR, prev.inputPath);
   const onDisk = inputPath

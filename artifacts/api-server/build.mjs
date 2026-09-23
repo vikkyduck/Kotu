@@ -3,7 +3,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
-import { realpathSync } from "node:fs";
 import { rm, cp, readdir, readFile } from "node:fs/promises";
 
 // Plugins (e.g. 'esbuild-plugin-pino') may use `require` to resolve dependencies
@@ -212,9 +211,10 @@ async function checkBundle(distDir) {
   }
 }
 
-// Запуск как скрипта (`node build.mjs`); при импорте из смоук-сборки — ничего.
-// realpath: иначе запуск через симлинк (/tmp → /private/tmp) молча не соберёт.
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// `node build.mjs` собирает всегда. Смоук (smoke/pdf.mjs) импортирует файл ради
+// buildAll и ставит KOTU_BUILD_NO_AUTORUN=1. Сравнение путей здесь было хуже:
+// при несовпадении сборка молча не шла, и deploy.sh увёз бы старый dist.
+if (!process.env["KOTU_BUILD_NO_AUTORUN"]) {
   buildAll().catch((err) => {
     console.error(err);
     process.exit(1);

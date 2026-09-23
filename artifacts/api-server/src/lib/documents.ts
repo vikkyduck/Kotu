@@ -54,6 +54,10 @@ let pdfParseModule: Promise<typeof import("pdf-parse")> | undefined;
  * Для извлечения текста DOMMatrix не нужен (он для отрисовки страниц), поэтому
  * на время загрузки подставляем пустышку и сразу убираем, чтобы не выдавать
  * её остальному коду за настоящий DOMMatrix.
+ *
+ * НЕ делать импорт статическим: в vitest на Mac canvas установлен, и тесты это
+ * не поймают — упадёт только прод. После обновления pdf-parse/pdfjs-dist
+ * прогнать `pnpm --filter @workspace/api-server run smoke:pdf`.
  */
 function loadPdfParse(): Promise<typeof import("pdf-parse")> {
   pdfParseModule ??= (async () => {
@@ -65,11 +69,11 @@ function loadPdfParse(): Promise<typeof import("pdf-parse")> {
     } finally {
       if (stub) delete g.DOMMatrix;
     }
-  })().catch((err: unknown) => {
-    // Не запоминаем провал: следующий PDF попробует загрузить модуль заново.
-    pdfParseModule = undefined;
-    throw err;
-  });
+  })();
+  // Провал загрузки запоминается намеренно: повтор его не лечит (и ESM, и
+  // обёртка esbuild кэшируют упавший модуль — второй заход дал бы невнятное
+  // «PDFParse is not a constructor»), а так каждый PDF получает исходную
+  // ошибку. Лечится только рестартом процесса.
   return pdfParseModule;
 }
 
