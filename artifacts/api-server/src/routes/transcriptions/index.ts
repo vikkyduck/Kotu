@@ -2,8 +2,14 @@ import { stat } from "node:fs/promises";
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { eq, and, desc, ne } from "drizzle-orm";
-import { db, jobsTable, transcriptionsTable, type TranscriptSegment } from "@workspace/db";
-import { enqueue } from "../../lib/jobs";
+import {
+  db,
+  documentsTable,
+  jobsTable,
+  transcriptionsTable,
+  type Transcription,
+  type TranscriptSegment,
+} from "@workspace/db";
 import { UPLOAD_DIR } from "../../lib/paths";
 import { syncTranscriptionDoc, deleteTranscriptionDoc } from "../../lib/transcript-doc";
 import { decodeUploadName } from "../../lib/filename";
@@ -53,6 +59,18 @@ const upload = multer({
 
 const NOT_FOUND = "Расшифровка не найдена";
 
+/** Запись строго своего владельца. Кривой id — как чужая запись: null, и ручка отвечает 404. */
+async function loadTranscription(rawId: string, ownerId: number): Promise<Transcription | null> {
+  const id = parseId(rawId);
+  if (id === null) return null;
+  const [row] = await db
+    .select()
+    .from(transcriptionsTable)
+    .where(and(eq(transcriptionsTable.id, id), eq(transcriptionsTable.ownerId, ownerId)))
+    .limit(1);
+  return row ?? null;
+}
+
 /** Реплики из тела правки: только {who, text} строками — мусор в jsonb не пускаем. */
 function parseSegments(raw: unknown): TranscriptSegment[] | null {
   if (!Array.isArray(raw)) return null;
@@ -66,9 +84,18 @@ function parseSegments(raw: unknown): TranscriptSegment[] | null {
 
 const router: IRouter = Router();
 
+// Список нужен только библиотеке, и она перечитывает его каждые 3 с, пока
+// что-то в работе, — без текста записей: полный текст отдаёт GET /:id.
 router.get("/transcriptions", async (req, res): Promise<void> => {
   const rows = await db
-    .select()
+    .select({
+      id: transcriptionsTable.id,
+      title: transcriptionsTable.title,
+      status: transcriptionsTable.status,
+      statusMessage: transcriptionsTable.statusMessage,
+      progress: transcriptionsTable.progress,
+      createdAt: transcriptionsTable.createdAt,
+    })
     .from(transcriptionsTable)
     .where(eq(transcriptionsTable.ownerId, req.user!.id))
     .orderBy(desc(transcriptionsTable.createdAt));
@@ -76,15 +103,7 @@ router.get("/transcriptions", async (req, res): Promise<void> => {
 });
 
 router.get("/transcriptions/:id", async (req, res): Promise<void> => {
-  const id = parseId(req.params.id);
-  const [row] =
-    id === null
-      ? []
-      : await db
-          .select()
-          .from(transcriptionsTable)
-          .where(and(eq(transcriptionsTable.id, id), eq(transcriptionsTable.ownerId, req.user!.id)));
-
+  const row = await loadTranscription(req.params.id, req.user!.id);
   if (!row) {
     res.status(404).json({ message: NOT_FOUND });
     return;
@@ -155,37 +174,38 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
   }
 
   // Правка текста должна доехать и до библиотечной копии — там переиндексация.
-  if (row.status === "done") {
+  // Смена одного названия текст не меняет: переразбирать копию (NER, векторы,
+  // «В очереди…» на карточке) незачем. Со скрытием имён название копии
+  // нейтральное и от названия записи не зависит; без скрытия — то же, что
+  // даёт prepareLibraryCopy (title уже обрезан до 200 знаков).
+  if (row.status === "done" && updates.segments !== undefined) {
     void syncTranscriptionDoc(row).catch((err) =>
       req.log.error({ err, id: row.id }, "Не смог обновить расшифровку в библиотеке"),
     );
+  } else if (row.status === "done" && !row.hideNames) {
+    await db
+      .update(documentsTable)
+      .set({ title: row.title })
+      .where(
+        and(eq(documentsTable.transcriptionId, row.id), eq(documentsTable.ownerId, row.ownerId)),
+      )
+      .catch((err) =>
+        req.log.error({ err, id: row.id }, "Не смог обновить расшифровку в библиотеке"),
+      );
   }
 
   res.json(row);
 });
 
 router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
-  const id = parseId(req.params.id);
-  if (id === null) {
-    res.status(404).json({ message: NOT_FOUND });
-    return;
-  }
-
   // Чужую запись не трогаем даже косвенно: задачи и аудио ниже ищутся по id
   // записи без владельца, поэтому владельца проверяем заранее.
-  const [owned] = await db
-    .select({ id: transcriptionsTable.id })
-    .from(transcriptionsTable)
-    .where(
-      and(
-        eq(transcriptionsTable.id, id),
-        eq(transcriptionsTable.ownerId, req.user!.id),
-      ),
-    );
+  const owned = await loadTranscription(req.params.id, req.user!.id);
   if (!owned) {
     res.status(404).json({ message: NOT_FOUND });
     return;
   }
+  const id = owned.id;
 
   // Удаление убирает запись из рабочего пространства, но не стирает: строки
   // уходят в архив триггерами, файлы — archiveAndRemove (решение владелицы
@@ -244,20 +264,12 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
  * «ошибка» часто не про файл, и заставлять заново грузить час записи незачем.
  */
 router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
-  const id = parseId(req.params.id);
-  if (id === null) {
-    res.status(404).json({ message: NOT_FOUND });
-    return;
-  }
-
-  const [row] = await db
-    .select()
-    .from(transcriptionsTable)
-    .where(and(eq(transcriptionsTable.id, id), eq(transcriptionsTable.ownerId, req.user!.id)));
+  const row = await loadTranscription(req.params.id, req.user!.id);
   if (!row) {
     res.status(404).json({ message: NOT_FOUND });
     return;
   }
+  const id = row.id;
   if (row.status !== "error") {
     res.status(409).json({ message: "Повторять нечего — ошибки нет" });
     return;
@@ -302,6 +314,7 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
   // задачи висела бы вечно. Условие status = 'error' в UPDATE закрывает
   // двойной клик — второй запрос не найдёт ошибки и не поставит вторую задачу.
   // Поэтому вставка прямо в jobs, а не через enqueue(): тот пишет мимо транзакции.
+  // Так же — и загрузка ниже.
   const queued = await db.transaction(async (tx) => {
     const [updated] = await tx
       .update(transcriptionsTable)
@@ -367,26 +380,42 @@ router.post(
     const markSpeakers = req.body?.markSpeakers === "true";
     const filename = decodeUploadName(req.file.originalname) || "запись";
     const inputPath = req.file.path;
-    const title = filename.replace(/\.[^.]+$/, "") || "Запись";
+    // Название — до 200 знаков, как при переименовании (PATCH выше).
+    const title = filename.replace(/\.[^.]+$/, "").trim().slice(0, 200) || "Запись";
 
     req.log.info({ filename, hideNames, markSpeakers }, "Queued transcription");
 
-    const [row] = await db
-      .insert(transcriptionsTable)
-      .values({
-        ownerId: req.user!.id,
-        title,
-        filename,
-        hideNames,
-        markSpeakers,
-        segments: [] as TranscriptSegment[],
-        status: "processing",
-        progress: 4,
-        statusMessage: "Готовлю запись…",
-      })
-      .returning();
+    // Работа уходит в очередь в базе: ответ не ждёт расшифровку, а сама задача
+    // переживает перезапуск сервера и при сбое повторяется. Запись и задача —
+    // в одной транзакции, как в повторе: запись «в работе» без задачи висела
+    // бы вечно, а повтор её не берёт — он только для записей в ошибке.
+    // «В очереди…» — пока задача ждёт; обработчик сам сменит на «Готовлю запись…».
+    const payload: TranscribePayload = { inputPath, filename, hideNames, markSpeakers };
+    const row = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(transcriptionsTable)
+        .values({
+          ownerId: req.user!.id,
+          title,
+          filename,
+          hideNames,
+          markSpeakers,
+          segments: [] as TranscriptSegment[],
+          status: "processing",
+          progress: 4,
+          statusMessage: "В очереди…",
+        })
+        .returning();
+      await tx.insert(jobsTable).values({
+        kind: "transcribe",
+        entityId: created.id,
+        payload: payload as unknown as Record<string, unknown>,
+      });
+      return created;
+    });
 
-    // Аудио — в архив файлов сразу: оно хранится, пока владелица не удалит
+    // Аудио — в архив файлов сразу после постановки (сам архив не бросает,
+    // промах догонит сверка файлов): оно хранится, пока владелица не удалит
     // запись, и после удаления тоже остаётся в архиве.
     await archiveUpload(inputPath, {
       entityType: "transcription",
@@ -394,10 +423,6 @@ router.post(
       originalName: filename,
       mime: req.file.mimetype,
     });
-
-    // Работа уходит в очередь в базе: ответ не ждёт расшифровку, а сама задача
-    // переживает перезапуск сервера и при сбое повторяется.
-    await enqueue("transcribe", row.id, { inputPath, filename, hideNames, markSpeakers });
 
     res.status(201).json(row);
   },
