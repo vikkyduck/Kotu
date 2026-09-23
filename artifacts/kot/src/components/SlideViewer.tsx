@@ -176,8 +176,14 @@ export function SlideViewer({
   const leaveRef = useRef(leave);
   leaveRef.current = leave;
 
+  // Корень окна: пока поверх вход (сессия кончилась), окно спрятано вместе с
+  // приложением — клавиши тогда не его, иначе Escape на экране входа закрыл бы
+  // слайд с правками.
+  const rootRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!rootRef.current || rootRef.current.getClientRects().length === 0) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
       if (typing) return;
@@ -298,7 +304,7 @@ export function SlideViewer({
   // fixed не спасает, стопка считается внутри своего контекста наложения.
   // #modal-root лежит в приложении и прячется с ним, когда поверх вход.
   return createPortal(
-    <div className="vw" role="dialog" aria-modal="true" aria-label="Слайд крупно">
+    <div ref={rootRef} className="vw" role="dialog" aria-modal="true" aria-label="Слайд крупно">
       <div className="vw-top">
         <button className="iconbtn" onClick={() => leave(onClose)} title="Закрыть">
           <Icon name="x" />
