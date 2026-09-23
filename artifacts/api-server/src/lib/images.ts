@@ -1,5 +1,7 @@
 import { geminiImage } from "./gemini";
+import { failHttp } from "./http-fail";
 import { logger } from "./logger";
+import { OPENAI_API_KEY, OPENAI_BASE_URL } from "./openai";
 
 /** Форматы, которые понимает и приёмка Anthropic, и PowerPoint. */
 export type IllustrationMime = "image/png" | "image/jpeg" | "image/webp";
@@ -37,10 +39,6 @@ export function sniffImage(buffer: Buffer): { mime: IllustrationMime; ext: "png"
   return { mime: "image/png", ext: "png" };
 }
 
-const OPENAI_BASE_URL =
-  process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"] ?? "http://127.0.0.1:8444/v1";
-const OPENAI_API_KEY = process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] ?? "";
-
 async function renderWithOpenAi(prompt: string): Promise<RenderedIllustration> {
   const model = process.env["MODEL_IMAGE_FALLBACK"] ?? "gpt-image-2";
   const res = await fetch(`${OPENAI_BASE_URL}/images/generations`, {
@@ -59,10 +57,7 @@ async function renderWithOpenAi(prompt: string): Promise<RenderedIllustration> {
     signal: AbortSignal.timeout(300_000),
   });
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`OpenAI ответил ${res.status}: ${body.slice(0, 200)}`);
-  }
+  if (!res.ok) return failHttp(res, "OpenAI");
 
   const data = (await res.json()) as { data?: { b64_json?: string }[] };
   const b64 = data.data?.[0]?.b64_json;
