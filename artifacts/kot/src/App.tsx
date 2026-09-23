@@ -24,6 +24,9 @@ function AppContent() {
         <Slides />
         <How />
       </div>
+      {/* Сюда, а не в body, открываются окна-порталы (просмотр слайда): так
+          они прячутся вместе с приложением, когда сессия кончилась. */}
+      <div id="modal-root" />
       <FixSheet />
       <Toast />
     </>
@@ -96,6 +99,17 @@ function AuthGate() {
       window.fetch = original;
     };
   }, []);
+
+  // Открытое окно (просмотр слайда) запирает прокрутку body; пока поверх
+  // вход, она ему нужнее. После входа окно снова на месте — и запрет тоже.
+  useEffect(() => {
+    if (state !== 'expired') return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = '';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [state]);
 
   if (resetToken) {
     return (
