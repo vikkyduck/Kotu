@@ -42,7 +42,6 @@ catalog:
   react-dom: 19.1.0
   tsx: ^4.21.0
   vite: ^7.3.2
-  zod: ^3.25.76
 
 autoInstallPeers: false
 
