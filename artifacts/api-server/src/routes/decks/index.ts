@@ -1,6 +1,6 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { eq, and, or, asc, desc, isNotNull, isNull } from "drizzle-orm";
 import {
   db,
@@ -12,11 +12,11 @@ import {
   documentsTable,
   jobsTable,
   type Deck,
-  type StylePack,
+  type DeckSlide,
   type SlideLayout,
 } from "@workspace/db";
 import { inArray } from "drizzle-orm";
-import { SLIDE_LAYOUTS } from "@workspace/db/slides";
+import { SLIDE_LAYOUTS, layoutHasImage } from "@workspace/db/slides";
 import { enqueue } from "../../lib/jobs";
 import { ownFolderId } from "../../lib/folders";
 import { deckToLibrary, dropDeckCopies } from "../../lib/work-doc";
@@ -24,6 +24,9 @@ import { DECKS_DIR } from "../../lib/paths";
 import { buildDeckPptx } from "../../lib/pptx";
 import { buildDeckPdf } from "../../lib/pdf";
 import { sanitizeSlideContent } from "../../lib/slide-content";
+import { deckStylePack } from "../../lib/deck-style";
+import { parseId } from "../../lib/parse-id";
+import { attachmentHeader } from "../../lib/filename";
 import {
   archiveInputSql,
   archiveTreeAndRemove,
@@ -35,17 +38,48 @@ const router: IRouter = Router();
 
 /**
  * Колода строго своего владельца — проверка в каждой ручке, как везде.
- * NaN в id превращается в «не найдено», а не в ошибку запроса.
+ * Чужая, удалённая или кривой id — одинаковые 404; ответ уже отправлен,
+ * ручке остаётся выйти.
  */
-async function loadDeck(rawId: string, ownerId: number): Promise<Deck | null> {
-  const id = Number(rawId);
-  if (!Number.isInteger(id)) return null;
-  const [deck] = await db
-    .select()
-    .from(decksTable)
-    .where(and(eq(decksTable.id, id), eq(decksTable.ownerId, ownerId)))
-    .limit(1);
-  return deck ?? null;
+async function deckOr404(req: Request, res: Response): Promise<Deck | null> {
+  const id = parseId(req.params["id"]);
+  const [deck] = id
+    ? await db
+        .select()
+        .from(decksTable)
+        .where(and(eq(decksTable.id, id), eq(decksTable.ownerId, req.user!.id)))
+        .limit(1)
+    : [];
+  if (!deck) {
+    res.status(404).json({ message: "Презентация не найдена" });
+    return null;
+  }
+  return deck;
+}
+
+/** Слайд этой колоды по :sid из адреса; нет такого — 404, как с колодой. */
+async function slideOr404(deck: Deck, req: Request, res: Response): Promise<DeckSlide | null> {
+  const sid = parseId(req.params["sid"]);
+  const [slide] = sid
+    ? await db
+        .select()
+        .from(deckSlidesTable)
+        .where(and(eq(deckSlidesTable.id, sid), eq(deckSlidesTable.deckId, deck.id)))
+        .limit(1)
+    : [];
+  if (!slide) {
+    res.status(404).json({ message: "Слайд не найден" });
+    return null;
+  }
+  return slide;
+}
+
+/** В ошибке колода стоит — не «работает»: сказать, что делать. */
+const RETRY_FIRST = "Сначала нажмите «Попробовать ещё раз»";
+
+/** Копия в библиотеке отстала от правки — ответ всё равно ok, но след в журнале. */
+function logLibraryLag(req: Request, id: number) {
+  return (err: unknown) => req.log.error({ err, id }, "Не смог обновить копию презентации в библиотеке");
 }
 
 /**
@@ -74,11 +108,8 @@ router.get("/decks", async (req, res): Promise<void> => {
 });
 
 router.get("/decks/:id", async (req, res): Promise<void> => {
-  const deck = await loadDeck(req.params.id, req.user!.id);
-  if (!deck) {
-    res.status(404).json({ message: "Презентация не найдена" });
-    return;
-  }
+  const deck = await deckOr404(req, res);
+  if (!deck) return;
 
   const slides = await db
     .select()
@@ -93,13 +124,7 @@ router.get("/decks/:id", async (req, res): Promise<void> => {
 
   // Палитра нужна фронту, чтобы показать слайд крупно в цветах серии, а не
   // «примерно похоже». Отдаём только цвета: промпты стиля — не дело браузера.
-  const [pack] = deck.stylePackId
-    ? await db
-        .select({ palette: stylePacksTable.palette })
-        .from(stylePacksTable)
-        .where(eq(stylePacksTable.id, deck.stylePackId))
-        .limit(1)
-    : [];
+  const pack = await deckStylePack(deck.stylePackId);
 
   res.json({ ...deck, slides, images, palette: pack?.palette ?? null });
 });
@@ -198,15 +223,17 @@ router.post("/decks", async (req, res): Promise<void> => {
   res.status(201).json(deck);
 });
 
-/** Переложить презентацию в папку библиотеки — как книгу или лекцию. */
+/** Переименовать презентацию или переложить её в папку библиотеки. */
 router.patch("/decks/:id", async (req, res): Promise<void> => {
-  const deck = await loadDeck(req.params.id, req.user!.id);
-  if (!deck) {
-    res.status(404).json({ message: "Презентация не найдена" });
-    return;
-  }
+  const deck = await deckOr404(req, res);
+  if (!deck) return;
 
   const body = req.body ?? {};
+  const title = typeof body.title === "string" ? body.title.trim() : "";
+  if ("title" in body && (title === "" || title.length > 200)) {
+    res.status(400).json({ message: "Название — от 1 до 200 знаков" });
+    return;
+  }
   if ("folderId" in body) {
     const folderId = await ownFolderId(body.folderId, req.user!.id);
     if (folderId === undefined) {
@@ -221,33 +248,25 @@ router.patch("/decks/:id", async (req, res): Promise<void> => {
       .set({ folderId })
       .where(eq(documentsTable.deckId, deck.id));
   }
+  if (title !== "") {
+    // Копия в поиске называется так же, как колода.
+    await db.update(decksTable).set({ title }).where(eq(decksTable.id, deck.id));
+    await db.update(documentsTable).set({ title }).where(eq(documentsTable.deckId, deck.id));
+  }
   res.json({ ok: true });
 });
 
 /** Правка слайда автором — только пока конвейер не работает над колодой. */
 router.patch("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
-  const deck = await loadDeck(req.params.id, req.user!.id);
-  if (!deck) {
-    res.status(404).json({ message: "Презентация не найдена" });
-    return;
-  }
+  const deck = await deckOr404(req, res);
+  if (!deck) return;
   if (deck.status === "storyboarding" || deck.status === "drawing") {
     res.status(409).json({ message: "Подождите, я ещё работаю" });
     return;
   }
 
-  const sid = Number(req.params.sid);
-  const [slide] = Number.isInteger(sid)
-    ? await db
-        .select()
-        .from(deckSlidesTable)
-        .where(and(eq(deckSlidesTable.id, sid), eq(deckSlidesTable.deckId, deck.id)))
-        .limit(1)
-    : [];
-  if (!slide) {
-    res.status(404).json({ message: "Слайд не найден" });
-    return;
-  }
+  const slide = await slideOr404(deck, req, res);
+  if (!slide) return;
 
   const body = req.body ?? {};
   const patch: Partial<typeof deckSlidesTable.$inferInsert> = {};
@@ -268,10 +287,11 @@ router.patch("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
       patch.imageStatus = "none";
       patch.imageId = null;
     } else if (typeof body.imageBrief === "string" && body.imageBrief.trim() !== "") {
-      // На схеме образа не бывает: там структура, её рисуют кодом.
+      // На схеме и финале образа не бывает: схему рисуют кодом, финал —
+      // только текст. Картинку оплатили бы, а показать её негде.
       const layout = patch.layout ?? slide.layout;
-      if (layout === "diagram") {
-        res.status(400).json({ message: "У схемы образа не бывает" });
+      if (!layoutHasImage(layout)) {
+        res.status(400).json({ message: "На этом макете образа не бывает" });
         return;
       }
       patch.imageBrief = body.imageBrief.trim().slice(0, 2000);
@@ -283,22 +303,38 @@ router.patch("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
 
   if (Object.keys(patch).length > 0) {
     await db.update(deckSlidesTable).set(patch).where(eq(deckSlidesTable.id, slide.id));
+    // Автор поправил слайд сам — прошлая неудачная переделка уже не новость.
+    // В статусе error строка — причина у кнопки повтора, её не трогаем.
+    if (deck.status !== "error" && deck.error) {
+      await db.update(decksTable).set({ error: null }).where(eq(decksTable.id, deck.id));
+    }
     // Текст изменился — библиотечная копия не должна отставать. Переиндексация
     // локальная и дешёвая, поэтому делаем сразу, а не «когда-нибудь потом».
     if (patch.content || patch.notes !== undefined) {
-      await deckToLibrary(deck.id).catch(() => undefined);
+      await deckToLibrary(deck.id).catch(logLibraryLag(req, deck.id));
     }
+  }
+
+  // Образ добавлен к слайду готовой колоды — рисуем его сразу, как перерисовку:
+  // иначе «queued» на готовой колоде никто бы не подобрал. До утверждения его
+  // подберёт approve, в ошибке — повтор; у слайда, где образ уже рисовали,
+  // есть «Перерисовать» (с указанием автора). Сначала задача, потом статус.
+  if (deck.status === "ready" && patch.imageStatus === "queued" && slide.imageStatus === "none") {
+    await enqueue("deck.illustrate", deck.id, { slideIds: [slide.id] });
+    await db
+      .update(decksTable)
+      .set({ status: "drawing", statusMessage: "В очереди…", error: null })
+      .where(eq(decksTable.id, deck.id));
+    res.status(202).json({ ok: true });
+    return;
   }
   res.json({ ok: true });
 });
 
 /** Человек в цикле: ни одна картинка не рисуется до утверждения раскадровки. */
 router.post("/decks/:id/approve", async (req, res): Promise<void> => {
-  const deck = await loadDeck(req.params.id, req.user!.id);
-  if (!deck) {
-    res.status(404).json({ message: "Презентация не найдена" });
-    return;
-  }
+  const deck = await deckOr404(req, res);
+  if (!deck) return;
   if (deck.status !== "storyboard_ready") {
     res.status(409).json({ message: "Раскадровка ещё не готова" });
     return;
@@ -315,7 +351,7 @@ router.post("/decks/:id/approve", async (req, res): Promise<void> => {
       .update(decksTable)
       .set({ storyboardApproved: true, status: "ready", statusMessage: "", error: null })
       .where(eq(decksTable.id, deck.id));
-    await deckToLibrary(deck.id).catch(() => undefined);
+    await deckToLibrary(deck.id).catch(logLibraryLag(req, deck.id));
     res.status(202).json({ ok: true });
     return;
   }
@@ -339,9 +375,10 @@ router.post("/decks/:id/approve", async (req, res): Promise<void> => {
  * здесь автор объясняет, что не так, а формулирует модель.
  */
 router.post("/decks/:id/slides/:sid/rewrite", async (req, res): Promise<void> => {
-  const deck = await loadDeck(req.params.id, req.user!.id);
-  if (!deck) {
-    res.status(404).json({ message: "Презентация не найдена" });
+  const deck = await deckOr404(req, res);
+  if (!deck) return;
+  if (deck.status === "error") {
+    res.status(409).json({ message: RETRY_FIRST });
     return;
   }
   if (deck.status !== "ready" && deck.status !== "storyboard_ready") {
@@ -349,18 +386,8 @@ router.post("/decks/:id/slides/:sid/rewrite", async (req, res): Promise<void> =>
     return;
   }
 
-  const sid = Number(req.params.sid);
-  const [slide] = Number.isInteger(sid)
-    ? await db
-        .select({ id: deckSlidesTable.id })
-        .from(deckSlidesTable)
-        .where(and(eq(deckSlidesTable.id, sid), eq(deckSlidesTable.deckId, deck.id)))
-        .limit(1)
-    : [];
-  if (!slide) {
-    res.status(404).json({ message: "Слайд не найден" });
-    return;
-  }
+  const slide = await slideOr404(deck, req, res);
+  if (!slide) return;
 
   const instruction =
     typeof req.body?.instruction === "string" ? req.body.instruction.trim().slice(0, 2000) : "";
@@ -383,28 +410,15 @@ router.post("/decks/:id/slides/:sid/rewrite", async (req, res): Promise<void> =>
 
 /** Перерисовка одного образа — по желанию автора, с его замечанием. */
 router.post("/decks/:id/slides/:sid/redraw", async (req, res): Promise<void> => {
-  const deck = await loadDeck(req.params.id, req.user!.id);
-  if (!deck) {
-    res.status(404).json({ message: "Презентация не найдена" });
-    return;
-  }
+  const deck = await deckOr404(req, res);
+  if (!deck) return;
   if (deck.status !== "ready") {
     res.status(409).json({ message: "Перерисовать можно, когда колода готова" });
     return;
   }
 
-  const sid = Number(req.params.sid);
-  const [slide] = Number.isInteger(sid)
-    ? await db
-        .select()
-        .from(deckSlidesTable)
-        .where(and(eq(deckSlidesTable.id, sid), eq(deckSlidesTable.deckId, deck.id)))
-        .limit(1)
-    : [];
-  if (!slide) {
-    res.status(404).json({ message: "Слайд не найден" });
-    return;
-  }
+  const slide = await slideOr404(deck, req, res);
+  if (!slide) return;
   if (!slide.imageBrief) {
     res.status(400).json({ message: "У этого слайда нет образа" });
     return;
@@ -432,14 +446,11 @@ router.post("/decks/:id/slides/:sid/redraw", async (req, res): Promise<void> => 
 });
 
 router.get("/decks/:id/images/:imageId/file", async (req, res): Promise<void> => {
-  const deck = await loadDeck(req.params.id, req.user!.id);
-  if (!deck) {
-    res.status(404).json({ message: "Презентация не найдена" });
-    return;
-  }
+  const deck = await deckOr404(req, res);
+  if (!deck) return;
 
-  const imageId = Number(req.params.imageId);
-  const [image] = Number.isInteger(imageId)
+  const imageId = parseId(req.params.imageId);
+  const [image] = imageId
     ? await db
         .select()
         .from(deckImagesTable)
@@ -461,19 +472,22 @@ router.get("/decks/:id/images/:imageId/file", async (req, res): Promise<void> =>
 });
 
 /** Выгрузка колоды: PPTX по умолчанию, PDF-раздатка по ?format=pdf.
- * Разрешена и до отрисовки: текстовая колода тоже колода. */
+ * Разрешена и до отрисовки: текстовая колода тоже колода. И после неудачной
+ * отрисовки утверждённой колоды: текст слайдов цел, недорисованные образы
+ * уходят текстовой пластиной. */
 router.get("/decks/:id/export", async (req, res): Promise<void> => {
-  const deck = await loadDeck(req.params.id, req.user!.id);
-  if (!deck) {
-    res.status(404).json({ message: "Презентация не найдена" });
-    return;
-  }
+  const deck = await deckOr404(req, res);
+  if (!deck) return;
   const format = req.query.format ?? "pptx";
   if (format !== "pptx" && format !== "pdf") {
     res.status(400).json({ message: "Такой формат не умею — только pptx и pdf" });
     return;
   }
-  if (deck.status !== "ready" && deck.status !== "storyboard_ready") {
+  if (deck.status === "error" && !deck.storyboardApproved) {
+    res.status(409).json({ message: RETRY_FIRST });
+    return;
+  }
+  if (deck.status === "storyboarding" || deck.status === "drawing") {
     res.status(409).json({ message: "Подождите, я ещё работаю" });
     return;
   }
@@ -489,17 +503,7 @@ router.get("/decks/:id/export", async (req, res): Promise<void> => {
     .from(deckImagesTable)
     .where(eq(deckImagesTable.deckId, deck.id));
 
-  let pack: StylePack | undefined;
-  if (deck.stylePackId) {
-    [pack] = await db
-      .select()
-      .from(stylePacksTable)
-      .where(eq(stylePacksTable.id, deck.stylePackId))
-      .limit(1);
-  }
-  if (!pack) {
-    [pack] = await db.select().from(stylePacksTable).orderBy(asc(stylePacksTable.id)).limit(1);
-  }
+  const pack = await deckStylePack(deck.stylePackId);
   if (!pack) {
     res.status(500).json({ message: "Стилевой пакет не найден" });
     return;
@@ -511,11 +515,7 @@ router.get("/decks/:id/export", async (req, res): Promise<void> => {
     // Раздатка для зала: те же макеты, но без заметок докладчика.
     const buffer = await buildDeckPdf(deck, slides, imagesById, pack);
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      // ASCII-fallback для старых клиентов + полное имя по RFC 5987.
-      `attachment; filename="presentation.pdf"; filename*=UTF-8''${encodeURIComponent(deck.title)}.pdf`,
-    );
+    res.setHeader("Content-Disposition", attachmentHeader(deck.title, "pdf", "презентация"));
     res.send(buffer);
     return;
   }
@@ -526,11 +526,7 @@ router.get("/decks/:id/export", async (req, res): Promise<void> => {
     "Content-Type",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   );
-  res.setHeader(
-    "Content-Disposition",
-    // ASCII-fallback для старых клиентов + полное имя по RFC 5987.
-    `attachment; filename="presentation.pptx"; filename*=UTF-8''${encodeURIComponent(deck.title)}.pptx`,
-  );
+  res.setHeader("Content-Disposition", attachmentHeader(deck.title, "pptx", "презентация"));
   res.send(buffer);
 });
 
@@ -540,11 +536,8 @@ router.get("/decks/:id/export", async (req, res): Promise<void> => {
  * недорисованные образы.
  */
 router.post("/decks/:id/retry", async (req, res): Promise<void> => {
-  const deck = await loadDeck(req.params.id, req.user!.id);
-  if (!deck) {
-    res.status(404).json({ message: "Презентация не найдена" });
-    return;
-  }
+  const deck = await deckOr404(req, res);
+  if (!deck) return;
   if (deck.status !== "error") {
     res.status(409).json({ message: "Повторять нечего — ошибки нет" });
     return;
@@ -589,41 +582,9 @@ router.post("/decks/:id/retry", async (req, res): Promise<void> => {
   res.status(202).json({ ok: true });
 });
 
-/**
- * Сохранить презентацию в библиотеку — как текстовый материал, на который
- * потом можно опереться в лекции. Повторное сохранение ОБНОВЛЯЕТ ту же
- * запись: материал должен лежать в одном месте, а не размножаться копиями.
- */
-/**
- * Обновить текст презентации в поиске. Обычно это происходит само — когда
- * колода готова и когда автор правит слайды; ручка остаётся как способ
- * пересобрать копию, если что-то разошлось.
- */
-router.post("/decks/:id/to-library", async (req, res): Promise<void> => {
-  const deck = await loadDeck(req.params.id, req.user!.id);
-  if (!deck) {
-    res.status(404).json({ message: "Презентация не найдена" });
-    return;
-  }
-  if (deck.status === "storyboarding") {
-    res.status(409).json({ message: "Подождите, я ещё раскладываю по слайдам" });
-    return;
-  }
-
-  const docId = await deckToLibrary(deck.id);
-  if (!docId) {
-    res.status(409).json({ message: "В презентации ещё нет слайдов" });
-    return;
-  }
-  res.status(202).json({ ok: true });
-});
-
 router.delete("/decks/:id", async (req, res): Promise<void> => {
-  const deck = await loadDeck(req.params.id, req.user!.id);
-  if (!deck) {
-    res.status(404).json({ message: "Презентация не найдена" });
-    return;
-  }
+  const deck = await deckOr404(req, res);
+  if (!deck) return;
 
   // Удаление убирает колоду из рабочего пространства, но не стирает: колода,
   // слайды и картинки (каскад по FK) уходят в архив триггерами, файлы

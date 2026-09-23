@@ -1,4 +1,3 @@
-import os from "node:os";
 import path from "node:path";
 import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import {
@@ -6,12 +5,12 @@ import {
   decksTable,
   deckSlidesTable,
   deckImagesTable,
-  stylePacksTable,
   type Job,
   type DeckSlide,
   type StylePack,
   type ImageSide,
 } from "@workspace/db";
+import { layoutSided } from "@workspace/db/slides";
 import { ask, type ImageAttachment } from "../claude";
 import { geminiJson } from "../gemini";
 import { renderIllustration } from "../images";
@@ -19,7 +18,9 @@ import { registerHandler, enqueue } from "../jobs";
 import { DECKS_DIR } from "../paths";
 import { deckToLibrary } from "../work-doc";
 import { writeDataFile } from "../archive";
+import { deckStylePack } from "../deck-style";
 import { logger } from "../logger";
+import { onGiveUp } from "./storyboard";
 
 /** Потолок перерисовок: после второй попытки слайд идёт с тем, что есть. */
 const MAX_ATTEMPTS = 2;
@@ -246,32 +247,21 @@ async function run(job: Job): Promise<void> {
   // Статус 'drawing' в выборке — след прошлого рестарта посреди слайда:
   // без него такой слайд навсегда выпадал бы из перерисовок.
   const pending = ["queued", "error", "drawing"] as const;
-  const allTargets = payload.slideIds?.length
-    ? await db
-        .select()
-        .from(deckSlidesTable)
-        .where(
-          and(
-            eq(deckSlidesTable.deckId, id),
-            inArray(deckSlidesTable.id, payload.slideIds),
-            isNotNull(deckSlidesTable.imageBrief),
-            // Ретрай упавшей задачи не должен перерисовывать то, что успело
-            // дорисоваться до падения.
-            inArray(deckSlidesTable.imageStatus, [...pending]),
-          ),
-        )
-        .orderBy(asc(deckSlidesTable.ord))
-    : await db
-        .select()
-        .from(deckSlidesTable)
-        .where(
-          and(
-            eq(deckSlidesTable.deckId, id),
-            isNotNull(deckSlidesTable.imageBrief),
-            inArray(deckSlidesTable.imageStatus, [...pending]),
-          ),
-        )
-        .orderBy(asc(deckSlidesTable.ord));
+  const allTargets = await db
+    .select()
+    .from(deckSlidesTable)
+    .where(
+      and(
+        eq(deckSlidesTable.deckId, id),
+        // drizzle пропускает undefined: без slideIds условие просто выпадает.
+        payload.slideIds?.length ? inArray(deckSlidesTable.id, payload.slideIds) : undefined,
+        isNotNull(deckSlidesTable.imageBrief),
+        // Ретрай упавшей задачи не должен перерисовывать то, что успело
+        // дорисоваться до падения.
+        inArray(deckSlidesTable.imageStatus, [...pending]),
+      ),
+    )
+    .orderBy(asc(deckSlidesTable.ord));
 
   const slides = allTargets.slice(0, MAX_IMAGES);
   if (allTargets.length > slides.length) {
@@ -283,13 +273,7 @@ async function run(job: Job): Promise<void> {
 
   // Стиль живёт в базе, а не в коде: это вопрос вкуса автора. Без пакета
   // рисовать нечем — нет ни мастер-промпта, ни запретов.
-  const [pack] = deck.stylePackId
-    ? await db
-        .select()
-        .from(stylePacksTable)
-        .where(eq(stylePacksTable.id, deck.stylePackId))
-        .limit(1)
-    : await db.select().from(stylePacksTable).orderBy(asc(stylePacksTable.id)).limit(1);
+  const pack = await deckStylePack(deck.stylePackId);
   if (!pack) throw new Error("Стилевой пакет не найден");
 
   await db.update(decksTable).set({ status: "drawing", error: null }).where(eq(decksTable.id, id));
@@ -306,7 +290,10 @@ async function run(job: Job): Promise<void> {
       .where(eq(deckSlidesTable.id, slide.id));
 
     try {
-      await illustrateSlide(id, slide, pack, payload.instruction);
+      // Сторону слушают не все макеты: обложка и разделитель ставят образ
+      // справа, что бы ни лежало в imageSide, — промпт должен знать настоящую.
+      const side = layoutSided(slide.layout) ? slide.imageSide : "right";
+      await illustrateSlide(id, { ...slide, imageSide: side }, pack, payload.instruction);
       drawn += 1;
     } catch (err) {
       // Один упавший образ не должен останавливать остальные: помечаем слайд
@@ -354,14 +341,6 @@ async function run(job: Job): Promise<void> {
       })
       .where(eq(decksTable.id, id));
   }
-}
-
-async function onGiveUp(job: Job, message: string): Promise<void> {
-  await db
-    .update(decksTable)
-    .set({ status: "error", statusMessage: "", error: message })
-    .where(eq(decksTable.id, job.entityId))
-    .catch((err) => logger.error({ err, id: job.entityId }, "Не смог записать ошибку презентации"));
 }
 
 export function registerIllustrateHandler(): void {
