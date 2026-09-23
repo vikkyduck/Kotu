@@ -219,7 +219,7 @@ BEGIN
 END
 $fn$`;
 
-const APPEND_ONLY_TABLES = ["rows", "files", "file_events"] as const;
+const APPEND_ONLY_TABLES = ["rows", "files", "file_events", "meta"] as const;
 
 /**
  * Таблицы и функции архива. Всё идемпотентно: выполняется на каждом старте.
@@ -231,6 +231,10 @@ const APPEND_ONLY_TABLES = ["rows", "files", "file_events"] as const;
  * archive.file_seen — не архив, а кэш сверки файлов: путь, размер, mtime и
  * inode последнего заархивированного состояния, чтобы не хэшировать весь
  * диск каждые шесть часов.
+ *
+ * archive.meta — отметки о сделанном раз и навсегда: 'initial:<таблица>' —
+ * первичный снимок таблицы уже в archive.rows (см. ensureArchiveWith).
+ * Только пополняется, как и сам архив.
  */
 export const BASE_DDL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS archive.rows (
@@ -270,6 +274,11 @@ export const BASE_DDL: readonly string[] = [
      ino      text NOT NULL,
      sha256   text NOT NULL,
      seen_at  timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE TABLE IF NOT EXISTS archive.meta (
+     key   text PRIMARY KEY,
+     value jsonb NOT NULL DEFAULT '{}'::jsonb,
+     at    timestamptz NOT NULL DEFAULT now()
    )`,
   FORBID_FUNCTION,
   ...APPEND_ONLY_TABLES.flatMap((t) => [
@@ -385,18 +394,62 @@ export interface EnsureResult {
 }
 
 /**
+ * Пределы, которые транзакциям архива ставит сама база (SET LOCAL — только
+ * на эту транзакцию, соединение пула после неё прежнее).
+ *
+ * lock_timeout: CREATE TRIGGER ждёт блокировку таблицы, pg_advisory_xact_lock —
+ * соседнюю попытку. Открытая транзакция в psql или drizzle push иначе
+ * подвесила бы попытку навсегда вместе с клиентом пула. 20 с — и база сама
+ * отменит ожидание: попытка упадёт ("off"), клиент и advisory lock
+ * освободятся, через минуту — повтор.
+ *
+ * statement_timeout: только страховка от оператора, который не ждёт
+ * блокировку, но и не кончается, — чтобы попытка рано или поздно
+ * завершилась и отпустила клиента. Щедро, 10 минут: самый долгий законный
+ * оператор — первичный снимок (INSERT … SELECT всей таблицы) — на базе одной
+ * пользовательницы (дамп — десятки мегабайт) идёт секунды; оборвать его
+ * предел не должен. Оборвёт — снимок откатится целиком (без дублей) и
+ * повторится через минуту, а в журнале будет видно почему.
+ */
+export const ENSURE_LOCK_TIMEOUT = "20s";
+export const ENSURE_STATEMENT_TIMEOUT = "10min";
+/** Проверка триггеров — один лёгкий запрос к каталогу: секунд хватает с запасом. */
+export const CHECK_STATEMENT_TIMEOUT = "5s";
+
+async function limitEnsure(q: Query): Promise<void> {
+  await q(`SET LOCAL lock_timeout = '${ENSURE_LOCK_TIMEOUT}'`);
+  await q(`SET LOCAL statement_timeout = '${ENSURE_STATEMENT_TIMEOUT}'`);
+}
+
+/** Ключ отметки «первичный снимок таблицы сделан» в archive.meta. */
+export function initialKey(table: string): string {
+  return `initial:${ident(table)}`;
+}
+
+/**
  * Включает архив строк. Идемпотентно и безопасно для двух стартов разом.
  *
- * Триггер ставится на КАЖДОМ старте (CREATE OR REPLACE): если drizzle push
- * когда-нибудь пересоздаст таблицу, триггер пропадёт вместе с ней, и
- * следующий старт вернёт его. Первичный снимок (op='INITIAL') делается в той
- * же транзакции, что и установка триггера, и только когда действующего
- * триггера не было: CREATE TRIGGER держит блокировку таблицы до COMMIT,
- * поэтому между снимком и триггером ни одна запись не проскочит, а повторный
- * старт при живом триггере снимок не дублирует.
+ * Триггер ставится на КАЖДОМ старте (CREATE OR REPLACE и ENABLE): если
+ * drizzle push когда-нибудь пересоздаст таблицу, триггер пропадёт вместе с
+ * ней, а если его выключат (ALTER TABLE … DISABLE TRIGGER), он останется
+ * выключенным, — следующий старт вернёт его в строй.
+ *
+ * Первичный снимок (op='INITIAL') — ровно один раз на таблицу, как бы ни
+ * менялось состояние триггера потом: отметка 'initial:<таблица>' в
+ * archive.meta. Прежде снимок повторялся, когда действующего триггера не
+ * было, и выключенный триггер давал дубль всей таблицы. Повторный снимок и не
+ * нужен: всё, что меняется после возврата триггера, он сохранит сам (OLD).
+ * Для баз, где архив включён до отметки: снимок уже был, если триггер
+ * стоит (в любом состоянии — его ставили вместе со снимком) или INITIAL этой
+ * таблицы уже лежит в архиве; тогда только ставим отметку.
+ *
+ * Снимок делается в той же транзакции, что и установка триггера:
+ * CREATE TRIGGER держит блокировку таблицы до COMMIT, поэтому между снимком
+ * и триггером ни одна запись не проскочит.
  */
 export async function ensureArchiveWith(runner: SqlRunner): Promise<EnsureResult> {
   await runner.transaction(async (q) => {
+    await limitEnsure(q);
     await q(`SELECT pg_advisory_xact_lock(${ARCHIVE_LOCK_KEY})`);
     // Схему заранее создаёт deploy.sh от postgres с владельцем-приложением:
     // права CREATE на базу у приложения может не быть, а CREATE SCHEMA
@@ -409,30 +462,66 @@ export async function ensureArchiveWith(runner: SqlRunner): Promise<EnsureResult
   const result: EnsureResult = { snapshotted: [], initialRows: 0 };
   for (const t of ARCHIVED_TABLES) {
     await runner.transaction(async (q) => {
+      await limitEnsure(q);
       await q(`SELECT pg_advisory_xact_lock(${ARCHIVE_LOCK_KEY})`);
-      const qualified = `public.${ident(t.table)}`;
+      const table = ident(t.table);
+      const qualified = `public.${table}`;
       const reg = await q(`SELECT to_regclass($1)::text AS reg`, [qualified]);
       if (!reg.rows[0]?.["reg"]) {
         throw new Error(`Архив: нет таблицы ${qualified} — не на что ставить триггер`);
       }
-      const active = await q(
-        `SELECT 1 FROM pg_trigger
-          WHERE tgrelid = $1::regclass AND tgname = $2 AND tgenabled <> 'D'`,
-        [qualified, TRIGGER_NAME],
-      );
+      const key = initialKey(table);
+      const marked = await q(`SELECT 1 FROM archive.meta WHERE key = $1`, [key]);
+      let snapshot = false;
+      if (marked.rows.length === 0) {
+        const had = await q(
+          `SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = $1::regclass AND tgname = $2)
+               OR EXISTS (SELECT 1 FROM archive.rows WHERE tbl = $3 AND op = 'INITIAL') AS had`,
+          [qualified, TRIGGER_NAME, table],
+        );
+        snapshot = had.rows[0]?.["had"] !== true;
+      }
       await q(triggerDdl(t));
       await q(truncateTriggerDdl(t));
-      if (active.rows.length === 0) {
+      // CREATE OR REPLACE и так включает триггер, но явно — надёжнее: без
+      // этой строки выключенный триггер держался бы на одной детали PG.
+      await q(`ALTER TABLE ${qualified} ENABLE TRIGGER ${TRIGGER_NAME}`);
+      await q(`ALTER TABLE ${qualified} ENABLE TRIGGER ${TRUNCATE_TRIGGER_NAME}`);
+      let rows = 0;
+      if (snapshot) {
         const n = await q(snapshotSql(t));
+        rows = Number(n.rows[0]?.["n"] ?? 0);
         result.snapshotted.push(t.table);
-        result.initialRows += Number(n.rows[0]?.["n"] ?? 0);
+        result.initialRows += rows;
+      }
+      if (marked.rows.length === 0) {
+        await q(
+          `INSERT INTO archive.meta (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`,
+          [key, JSON.stringify(snapshot ? { rows } : { rows: null, note: "снимок сделан до отметки" })],
+        );
       }
     });
   }
   // «ok» должно значить «триггеры стоят», а не «DDL отработал без ошибок».
-  const missing = await runner.transaction((q) => findMissingTriggers(q));
+  const missing = await runner.transaction(async (q) => {
+    await limitEnsure(q);
+    return findMissingTriggers(q);
+  });
   if (missing.length > 0) {
     throw new Error(`Архив: после установки нет триггеров — ${missing.join(", ")}`);
   }
   return result;
+}
+
+/**
+ * Самопроверка на лету (archive-state.ts verify): каких триггеров нет. Лёгкий
+ * запрос к каталогу, ограниченный самой базой: повисни он (блокировка
+ * каталога, перегруз) — база отменит его за секунды и отпустит клиента пула.
+ */
+export function checkTriggersWith(runner: SqlRunner): Promise<string[]> {
+  return runner.transaction(async (q) => {
+    await q(`SET LOCAL statement_timeout = '${CHECK_STATEMENT_TIMEOUT}'`);
+    await q(`SET LOCAL lock_timeout = '${CHECK_STATEMENT_TIMEOUT}'`);
+    return findMissingTriggers(q);
+  });
 }
