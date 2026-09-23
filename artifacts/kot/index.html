@@ -16,13 +16,12 @@
   </head>
   <body>
     <div id="root"></div>
-    <!-- Тема до загрузки приложения — чтобы не мигало тёмным у любителей бумаги -->
+    <!-- Тема до загрузки приложения, чтобы не мигало. По умолчанию — бумага;
+         тёмная только по сохранённому выбору. Приложение тему отсюда читает. -->
     <script>
-      try {
-        var t = localStorage.getItem('kot-theme');
-        if (!t) t = matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light';
-        document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
-      } catch (e) {}
+      var t = null;
+      try { t = localStorage.getItem('kot-theme'); } catch (e) {}
+      document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
     </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
