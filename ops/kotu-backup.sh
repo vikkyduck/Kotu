@@ -16,6 +16,26 @@
 # бэкапе они по возможности тоже одна копия (-H, см. ниже), а не две.
 # Прежние версии строк — в схеме archive, она в каждом дампе базы.
 set -euo pipefail
+
+# Архив, снимки перед деплоем и этот бэкап ничего не удаляют сами — место
+# только убывает. Громко в журнал (journalctl -u kotu-backup), пока не поздно:
+# в начале — до того, как нехватка места уронит дамп (тогда до конца
+# скрипта дело не дошло бы), и ещё раз на выходе, в том числе при сбое, если
+# место кончилось по ходу.
+LOW_SPACE_WARNED=""
+warn_low_space() {
+  local free
+  free=$(df -P -BG / 2>/dev/null | awk 'NR == 2 { sub(/G$/, "", $4); print $4 }')
+  if ! [ "$free" -ge 10 ] 2>/dev/null; then
+    [ "$LOW_SPACE_WARNED" = "$free" ] && return 0
+    LOW_SPACE_WARNED=$free
+    echo "ВНИМАНИЕ: на / свободно ${free:-?} ГБ (меньше 10). Бэкап и архив ничего не удаляют сами — решите, что вынести с сервера" >&2
+  fi
+  return 0
+}
+warn_low_space
+trap warn_low_space EXIT
+
 STAMP=$(date +%Y-%m-%d)
 DB_DIR=/opt/backups/db
 FILES_DIR=/opt/backups/files
@@ -90,10 +110,4 @@ pg_restore --list "$DB_DIR/kotu-$STAMP.dump" > /dev/null
 
 DATA_SIZE=$(du -sh "$DATA_DIR" 2>/dev/null | cut -f1)
 echo "ok: база $((SIZE/1024)) КБ, файлы $DATA_SIZE"
-
-# Архив, снимки перед деплоем и этот бэкап ничего не удаляют сами — место
-# только убывает. Громко в журнал (journalctl -u kotu-backup), пока не поздно.
-FREE_GB=$(df -P -BG / | awk 'NR == 2 { sub(/G$/, "", $4); print $4 }')
-if ! [ "$FREE_GB" -ge 10 ] 2>/dev/null; then
-  echo "ВНИМАНИЕ: на / свободно ${FREE_GB:-?} ГБ (меньше 10). Бэкап и архив ничего не удаляют сами — решите, что вынести с сервера" >&2
-fi
+# Место на диске ещё раз проверит trap на выходе (warn_low_space выше).
