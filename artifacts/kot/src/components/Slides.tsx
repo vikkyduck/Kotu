@@ -1,14 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '@/hooks/use-app';
 import { Icon } from '@/lib/icons';
 import { SlideViewer } from './SlideViewer';
 import { DeckForm } from './slides/DeckForm';
 import { DiagramThumb } from './slides/DiagramThumb';
+import { OFFLINE, failText, send, json, downloadFile } from '@/lib/http';
 import {
   layoutName,
+  layoutHasImage,
+  layoutSided,
+  deckWorking,
+  lastImageBySlide,
   type DeckFull,
-  type DeckImage,
-  type DiagramSpec,
   type SlideContent,
 } from '@/lib/deck';
 
@@ -25,9 +28,11 @@ function tilePreview(c: SlideContent): string | undefined {
 export function Slides() {
   // Какую колоду открыть, решает библиотека: инструмент — это действие,
   // а список сделанного лежит там же, где книги и лекции.
-  const { screen, go, toast, openSheet, activeDeckId, openDeck } = useApp();
+  const { screen, go, toast, activeDeckId, openDeck } = useApp();
   const openId = activeDeckId;
   const [deck, setDeck] = useState<DeckFull | null>(null);
+  /** Открытую колоду не удалось загрузить — текст причины для экрана. */
+  const [failed, setFailed] = useState<string | null>(null);
   /** Какой слайд открыт крупно — индекс в колоде; null = просмотр закрыт. */
   const [openSlide, setOpenSlide] = useState<number | null>(null);
 
@@ -35,6 +40,11 @@ export function Slides() {
 
   // Имя стилевого пакета показывается на готовой колоде — за этим и список.
   const [packs, setPacks] = useState<{ id: number; name: string }[]>([]);
+
+  // Какая колода открыта сейчас. Ответ опроса, начатого до ухода с колоды,
+  // не должен вернуть её на экран: компонент живёт всегда, setDeck сработал бы.
+  const openRef = useRef(openId);
+  openRef.current = openId;
 
   const loadPacks = useCallback(async () => {
     try {
@@ -44,16 +54,28 @@ export function Slides() {
   }, []);
 
   const loadOne = useCallback(async (id: number) => {
+    let res: Response;
     try {
-      const res = await fetch(`/api/decks/${id}`);
-      if (res.ok) {
-        setDeck(await res.json());
-      } else if (res.status === 404) {
-        // Колоду удалили в другой вкладке — не опрашивать же её вечно.
-        toast('Презентация не найдена');
-        go('s-home');
-      }
-    } catch { /* тихо: поллинг повторит */ }
+      res = await fetch(`/api/decks/${id}`);
+    } catch {
+      if (id === openRef.current) setFailed(OFFLINE);
+      return;
+    }
+    if (id !== openRef.current) return;
+    if (res.status === 404) {
+      // Колоду удалили в другой вкладке — не опрашивать же её вечно.
+      toast('Презентация не найдена');
+      go('s-home');
+      return;
+    }
+    if (!res.ok) {
+      setFailed(await failText(res, 'Не удалось открыть презентацию'));
+      return;
+    }
+    const data = (await res.json()) as DeckFull;
+    if (id !== openRef.current) return;
+    setDeck(data);
+    setFailed(null);
   }, [toast, go]);
 
   // Форма новой презентации — то, что видно, когда ничего не открыто.
@@ -65,171 +87,110 @@ export function Slides() {
   }, [screen, creating, loadPacks]);
 
   useEffect(() => {
-    if (openId === null) {
-      setDeck(null);
-      return;
-    }
+    // Прежняя колода не висит на экране, пока грузится другая.
+    setDeck(null);
+    setFailed(null);
+    if (openId === null) return;
     setOpenSlide(null);
     void loadOne(openId);
   }, [openId, loadOne]);
 
   // Пока конвейер раскладывает или рисует — подтягиваем колоду, чтобы прогресс двигался сам.
   useEffect(() => {
-    if (openId === null || !deck) return;
-    if (deck.status !== 'storyboarding' && deck.status !== 'drawing') return;
+    if (openId === null || !deck || !deckWorking(deck.status)) return;
     const t = setInterval(() => void loadOne(openId), 3000);
     return () => clearInterval(t);
   }, [openId, deck, loadOne]);
 
-  const patchSlide = async (sid: number, body: Record<string, unknown>) => {
-    if (!deck) return;
-    try {
-      const res = await fetch(`/api/decks/${deck.id}/slides/${sid}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) await loadOne(deck.id);
-      else {
-        const data = await res.json().catch(() => ({}));
-        toast(data.message ?? 'Не удалось сохранить');
-      }
-    } catch {
-      toast('Нет связи с сервером. Попробуйте ещё раз.');
+  /**
+   * Запрос-действие над колодой: отказ сервера или обрыв сети — тост с
+   * причиной и false; успех — колода перечитана и true. Вызывающему
+   * (окну слайда) нужно знать, получилось ли, чтобы не сказать «Сохранила» зря.
+   */
+  const act = async (url: string, init: RequestInit, fail: string, done?: string): Promise<boolean> => {
+    if (!deck) return false;
+    const r = await send(url, init, fail);
+    if (!r.ok) {
+      toast(r.message);
+      return false;
     }
+    if (done) toast(done);
+    await loadOne(deck.id);
+    return true;
   };
+
+  const base = deck ? `/api/decks/${deck.id}` : '';
+
+  const patchSlide = (sid: number, body: Record<string, unknown>) =>
+    act(`${base}/slides/${sid}`, json('PATCH', body), 'Не удалось сохранить');
+
+  const redraw = (sid: number, instruction: string) =>
+    act(`${base}/slides/${sid}/redraw`, json('POST', { instruction }), 'Не удалось запустить перерисовку');
+
+  /** Переделать текст слайда словами автора — работает и до, и после рисования. */
+  const rewrite = (sid: number, instruction: string) =>
+    act(
+      `${base}/slides/${sid}/rewrite`,
+      json('POST', { instruction }),
+      'Не удалось переделать слайд',
+      'Переделываю слайд — покажу, когда будет готово',
+    );
 
   const approve = async () => {
     if (!deck) return;
     const hasImages = deck.slides.some((s) => s.imageBrief !== null);
     setBusy(true);
-    try {
-      const res = await fetch(`/api/decks/${deck.id}/approve`, { method: 'POST' });
-      if (res.ok) {
-        toast(hasImages ? 'Рисую образы. Можно закрыть страницу.' : 'Готово — презентация собрана');
-        await loadOne(deck.id);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast(data.message ?? 'Не удалось запустить');
-      }
-    } catch {
-      toast('Нет связи с сервером. Попробуйте ещё раз.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const redraw = async (sid: number, instruction: string) => {
-    if (!deck) return;
-    try {
-      const res = await fetch(`/api/decks/${deck.id}/slides/${sid}/redraw`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instruction }),
-      });
-      if (res.ok) {
-        await loadOne(deck.id);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast(data.message ?? 'Не удалось запустить перерисовку');
-      }
-    } catch {
-      toast('Нет связи с сервером. Попробуйте ещё раз.');
-    }
-  };
-
-  /** Переделать текст слайда словами автора — работает и до, и после рисования. */
-  const rewrite = async (sid: number, instruction: string) => {
-    if (!deck) return;
-    try {
-      const res = await fetch(`/api/decks/${deck.id}/slides/${sid}/rewrite`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instruction }),
-      });
-      if (res.ok) {
-        toast('Переделываю слайд — покажу, когда будет готово');
-        await loadOne(deck.id);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast(data.message ?? 'Не удалось переделать слайд');
-      }
-    } catch {
-      toast('Нет связи с сервером. Попробуйте ещё раз.');
-    }
-  };
-
-  const toLibrary = async () => {
-    if (!deck) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/decks/${deck.id}/to-library`, { method: 'POST' });
-      if (res.ok) toast('Сохранила в библиотеку — можно опираться в лекциях');
-      else {
-        const data = await res.json().catch(() => ({}));
-        toast(data.message ?? 'Не удалось сохранить');
-      }
-    } catch {
-      toast('Нет связи с сервером. Попробуйте ещё раз.');
-    } finally {
-      setBusy(false);
-    }
+    await act(
+      `${base}/approve`,
+      { method: 'POST' },
+      'Не удалось запустить',
+      hasImages ? 'Рисую образы. Можно закрыть страницу.' : 'Готово — презентация собрана',
+    );
+    setBusy(false);
   };
 
   // Тупика после ошибки быть не должно: конвейер можно перезапустить.
   const retry = async () => {
-    if (!deck) return;
     setBusy(true);
-    try {
-      const res = await fetch(`/api/decks/${deck.id}/retry`, { method: 'POST' });
-      if (res.ok) {
-        toast('Пробую ещё раз');
-        await loadOne(deck.id);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast(data.message ?? 'Не удалось перезапустить');
-      }
-    } catch {
-      toast('Нет связи с сервером. Попробуйте ещё раз.');
-    } finally {
-      setBusy(false);
-    }
+    await act(`${base}/retry`, { method: 'POST' }, 'Не удалось перезапустить', 'Пробую ещё раз');
+    setBusy(false);
   };
 
   /** Удалить можно на любом этапе — ждать окончания работы незачем. */
-  const removeDeck = async (id: number) => {
-    if (!window.confirm('Удалить презентацию?')) return;
-    try {
-      const res = await fetch(`/api/decks/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        toast('Презентация удалена');
-        if (openId === id) go('s-home');
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast(data.message ?? 'Не удалось удалить');
-      }
-    } catch {
-      toast('Нет связи с сервером. Попробуйте ещё раз.');
+  const remove = async () => {
+    if (!deck || !window.confirm('Удалить презентацию?')) return;
+    const r = await send(base, { method: 'DELETE' }, 'Не удалось удалить');
+    if (!r.ok) {
+      toast(r.message);
+      return;
     }
+    toast('Презентация удалена');
+    go('s-home');
   };
-  const remove = async () => { if (deck) await removeDeck(deck.id); };
+
+  const download = async (format: 'pptx' | 'pdf') => {
+    const fail = await downloadFile(`${base}/export?format=${format}`, `презентация.${format}`);
+    if (fail) toast(fail);
+  };
 
   if (screen !== 's-slides') return null;
 
   // ── Открытая презентация ────────────────────────────────────────────────
   if (deck) {
-    const working = deck.status === 'storyboarding' || deck.status === 'drawing';
+    const working = deckWorking(deck.status);
     const briefCount = deck.slides.filter((s) => s.imageBrief !== null).length;
     // Имя стиля серии — из списка пакетов; не нашли — строку не показываем.
     const packName = packs.find((p) => p.id === deck.stylePackId)?.name;
+    const lastImage = lastImageBySlide(deck.images);
 
-    // Судьбу картинки решает последняя попытка. «Последняя» — по id, а не по
-    // attempt: перерисовка начинает счёт попыток заново с 1.
-    const lastImage = new Map<number, DeckImage>();
-    for (const im of deck.images) {
-      const prev = lastImage.get(im.slideId);
-      if (!prev || im.id > prev.id) lastImage.set(im.slideId, im);
-    }
+    // Что показать под шапкой. Утверждённая колода остаётся колодой, пока
+    // правится один слайд и даже когда образы не нарисовались: текст слайдов
+    // цел, его можно смотреть и выгружать. Раскадровка — пока не утверждена.
+    const body = deck.storyboardApproved
+      ? 'ready'
+      : deck.status === 'storyboard_ready' || (working && deck.slides.length > 0)
+        ? 'storyboard'
+        : null;
 
     return (
       <section className="screen active" id="s-slides">
@@ -242,11 +203,6 @@ export function Slides() {
         {/* Удалить можно на любом этапе — ждать окончания работы незачем.
             Кнопка живёт рядом с заголовком, а не только на готовой колоде. */}
         <div className="deck-tools">
-          {deck.status !== 'storyboarding' && (
-            <button className="chg" disabled={busy} onClick={() => void toLibrary()}>
-              сохранить в библиотеку
-            </button>
-          )}
           <button className="chg deck-drop" onClick={() => void remove()}>
             удалить презентацию
           </button>
@@ -289,7 +245,7 @@ export function Slides() {
         )}
 
         {/* Раскадровка на утверждение: рисование стоит денег, поэтому — человек в цикле */}
-        {deck.status === 'storyboard_ready' && (
+        {body === 'storyboard' && (
           <>
             <p className="sub">
               Посмотрите раскадровку. Любой слайд можно открыть крупно и переделать —
@@ -330,44 +286,33 @@ export function Slides() {
                     <span className="sb-brief-lbl">Образ</span>
                     {s.imageBrief}
                     <div className="sb-actions">
-                      <button
-                        className="btn"
-                        onClick={() =>
-                          void patchSlide(s.id, {
-                            imageSide: s.imageSide === 'left' ? 'right' : 'left',
-                          })
-                        }
-                      >
-                        сторона: {s.imageSide === 'left' ? 'слева' : 'справа'}
-                      </button>
-                      <button
-                        className="btn"
-                        onClick={() =>
-                          openSheet('Каким должен быть образ?', 'C', (txt) =>
-                            void patchSlide(s.id, { imageBrief: txt }),
-                          )
-                        }
-                      >
-                        <Icon name="edit" /> править
-                      </button>
+                      {/* Сторону слушают не все макеты — на остальных кнопка ничего бы не меняла */}
+                      {layoutSided(s.layout) && (
+                        <button
+                          className="btn"
+                          disabled={working}
+                          onClick={() =>
+                            void patchSlide(s.id, {
+                              imageSide: s.imageSide === 'left' ? 'right' : 'left',
+                            })
+                          }
+                        >
+                          сторона: {s.imageSide === 'left' ? 'слева' : 'справа'}
+                        </button>
+                      )}
                       <button
                         className="btn danger"
+                        disabled={working}
                         onClick={() => void patchSlide(s.id, { imageBrief: null })}
                       >
                         убрать образ
                       </button>
                     </div>
                   </div>
-                ) : s.layout !== 'diagram' ? (
+                ) : layoutHasImage(s.layout) ? (
                   <div className="sb-actions">
-                    <button
-                      className="btn ghost"
-                      onClick={() =>
-                        openSheet('Каким должен быть образ?', 'C', (txt) =>
-                          void patchSlide(s.id, { imageBrief: txt }),
-                        )
-                      }
-                    >
+                    {/* Мысль образа пишется в окне слайда — там же видно, что выйдет */}
+                    <button className="btn ghost" onClick={() => setOpenSlide(i)}>
                       добавить образ
                     </button>
                   </div>
@@ -375,21 +320,23 @@ export function Slides() {
               </div>
             ))}
             <div className="sb-total">Образов: {briefCount}</div>
-            <button className="btn primary big" disabled={busy} onClick={() => void approve()}>
+            <button className="btn primary big" disabled={busy || working} onClick={() => void approve()}>
               {busy ? 'Запускаю…' : 'Утвердить — рисуем'} <Icon name="arrow" />
             </button>
           </>
         )}
 
-        {deck.status === 'ready' && (
+        {body === 'ready' && (
           <>
-            <div className="done-head">
-              <span className="dh-ic"><Icon name="check" /></span>
-              <div>
-                <h3>Готово — презентация собрана</h3>
-                <p>Слайдов: {deck.slides.length}. Можно скачать или доработать образы.</p>
+            {deck.status === 'ready' && (
+              <div className="done-head">
+                <span className="dh-ic"><Icon name="check" /></span>
+                <div>
+                  <h3>Готово — презентация собрана</h3>
+                  <p>Слайдов: {deck.slides.length}. Можно скачать или доработать образы.</p>
+                </div>
               </div>
-            </div>
+            )}
             {packName && (
               <p className="doc-meta" style={{ marginBottom: 10 }}>Стиль: {packName}</p>
             )}
@@ -404,7 +351,7 @@ export function Slides() {
                 const canRedraw = s.imageBrief !== null;
                 return (
                   <div key={s.id} className="slide" onClick={() => setOpenSlide(i)}>
-                    {s.imageId !== null ? (
+                    {s.imageId !== null && layoutHasImage(s.layout) ? (
                       <div className="th th-img">
                         <img
                           src={`/api/decks/${deck.id}/images/${s.imageId}/file`}
@@ -444,16 +391,17 @@ export function Slides() {
             </div>
 
             <div className="btnrow">
-              <a
+              <button
                 className="btn primary"
                 style={{ flex: 1 }}
-                href={`/api/decks/${deck.id}/export?format=pptx`}
+                disabled={working}
+                onClick={() => void download('pptx')}
               >
                 <Icon name="download" /> Скачать PPTX
-              </a>
-              <a className="btn" href={`/api/decks/${deck.id}/export?format=pdf`}>
+              </button>
+              <button className="btn" disabled={working} onClick={() => void download('pdf')}>
                 <Icon name="download" /> PDF
-              </a>
+              </button>
             </div>
           </>
         )}
@@ -471,6 +419,31 @@ export function Slides() {
             rewrite={rewrite}
             toast={toast}
           />
+        )}
+      </section>
+    );
+  }
+
+  // ── Колода открыта по адресу, но ещё не пришла (или не пришла вовсе) ────
+  // Форма новой презентации здесь была бы ложью: кнопка под ней завела бы дубль.
+  if (openId !== null) {
+    return (
+      <section className="screen active" id="s-slides">
+        <button className="btn ghost back-link" onClick={() => go('s-home')}>
+          <Icon name="back" /> В библиотеку
+        </button>
+        {failed ? (
+          <div className="errblock">
+            <h3 className="errttl">Не удалось открыть</h3>
+            <p className="errwhy">{failed}</p>
+            <div className="btnrow">
+              <button className="btn primary" style={{ flex: 1 }} onClick={() => void loadOne(openId)}>
+                Ещё раз
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="doc-meta">Загружаю…</p>
         )}
       </section>
     );

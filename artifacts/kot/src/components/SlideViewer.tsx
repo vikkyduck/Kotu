@@ -2,14 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from '@/lib/icons';
 import { SlideStage } from './SlideStage';
+import { MAX_CARDS, SLIDE_FIELDS } from '@workspace/db/slides';
 import {
-  FIELDS_BY_LAYOUT,
   FIELD_RU,
   LAYOUTS,
+  deckWorking,
+  fieldsOf,
+  layoutHasImage,
   layoutName,
+  layoutSided,
+  lastImageBySlide,
   type DeckFull,
   type DeckSlide,
   type SlideContent,
+  type SlideField,
 } from '@/lib/deck';
 
 /**
@@ -51,7 +57,7 @@ function toForm(s: DeckSlide): Form {
     question: c.question ?? '',
     plate: c.plate ?? '',
     bullets: (c.bullets ?? []).join('\n'),
-    cards: [0, 1].map((i) => ({
+    cards: Array.from({ length: MAX_CARDS }, (_, i) => ({
       title: c.cards?.[i]?.title ?? '',
       body: c.cards?.[i]?.body ?? '',
     })),
@@ -60,32 +66,20 @@ function toForm(s: DeckSlide): Form {
   };
 }
 
-const ALL_FIELDS = [
-  'eyebrow',
-  'title',
-  'subtitle',
-  'quote',
-  'attribution',
-  'question',
-  'plate',
-  'bullets',
-  'cards',
-];
-
 /**
  * Из формы — content этого макета. Поля, которых на макете нет, переносим из
  * прежнего содержимого нетронутыми: смена функции слайда не должна стирать
  * тезисы насовсем — автор передумает и вернёт «Теорию», а текст на месте.
  */
 function toContent(f: Form, base: SlideContent = {}): SlideContent {
-  const fields = FIELDS_BY_LAYOUT[f.layout] ?? ['title', 'bullets'];
+  const fields = fieldsOf(f.layout);
   const out: SlideContent = {};
-  for (const name of ALL_FIELDS) {
+  for (const name of SLIDE_FIELDS) {
     if (fields.includes(name)) continue;
     const kept = (base as Record<string, unknown>)[name];
     if (kept !== undefined) (out as Record<string, unknown>)[name] = kept;
   }
-  const put = (name: string, value: string): void => {
+  const put = (name: SlideField, value: string): void => {
     if (fields.includes(name) && value.trim() !== '') {
       (out as Record<string, unknown>)[name] = value.trim();
     }
@@ -119,9 +113,10 @@ interface Props {
   index: number;
   onIndex: (i: number) => void;
   onClose: () => void;
-  patchSlide: (sid: number, body: Record<string, unknown>) => Promise<void>;
-  redraw: (sid: number, instruction: string) => Promise<void>;
-  rewrite: (sid: number, instruction: string) => Promise<void>;
+  /** Все три — true, если сервер принял; об отказе они уже сказали тостом сами. */
+  patchSlide: (sid: number, body: Record<string, unknown>) => Promise<boolean>;
+  redraw: (sid: number, instruction: string) => Promise<boolean>;
+  rewrite: (sid: number, instruction: string) => Promise<boolean>;
   toast: (message: string) => void;
 }
 
@@ -136,7 +131,7 @@ export function SlideViewer({
   toast,
 }: Props) {
   const slide = deck.slides[index];
-  const working = deck.status === 'storyboarding' || deck.status === 'drawing';
+  const working = deckWorking(deck.status);
 
   const [form, setForm] = useState<Form | null>(slide ? toForm(slide) : null);
   const [instruction, setInstruction] = useState('');
@@ -172,14 +167,25 @@ export function SlideViewer({
     };
   }, []);
 
+  // Уйти с несохранёнными правками — только переспросив: система сама
+  // ничего не стирает. dirty в ref, поэтому эффекту клавиш он не зависимость.
+  const leave = (fn: () => void): void => {
+    if (dirty.current && !window.confirm('Правки не сохранены. Уйти без сохранения?')) return;
+    fn();
+  };
+  const leaveRef = useRef(leave);
+  leaveRef.current = leave;
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-      if (e.key === 'Escape' && !typing) onClose();
       if (typing) return;
-      if (e.key === 'ArrowLeft' && index > 0) onIndex(index - 1);
-      if (e.key === 'ArrowRight' && index < deck.slides.length - 1) onIndex(index + 1);
+      if (e.key === 'Escape') leaveRef.current(onClose);
+      if (e.key === 'ArrowLeft' && index > 0) leaveRef.current(() => onIndex(index - 1));
+      if (e.key === 'ArrowRight' && index < deck.slides.length - 1) {
+        leaveRef.current(() => onIndex(index + 1));
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -193,14 +199,13 @@ export function SlideViewer({
     setForm((f) => (f ? { ...f, ...patch } : f));
   };
 
-  const fields = FIELDS_BY_LAYOUT[form.layout] ?? ['title', 'bullets'];
+  const fields = fieldsOf(form.layout);
   const imageUrl = slide.imageId !== null ? `/api/decks/${deck.id}/images/${slide.imageId}/file` : null;
   // Судьба образа — по последней попытке; вердикт автору стоит видеть.
-  const last = deck.images
-    .filter((im) => im.slideId === slide.id)
-    .reduce<(typeof deck.images)[number] | null>((a, b) => (!a || b.id > a.id ? b : a), null);
+  const last = lastImageBySlide(deck.images).get(slide.id) ?? null;
 
-  const save = async (): Promise<void> => {
+  /** Сохранить форму; true — сервер принял (об отказе patchSlide сказал сам). */
+  const save = async (): Promise<boolean> => {
     setBusy(true);
     try {
       const body: Record<string, unknown> = {
@@ -208,16 +213,17 @@ export function SlideViewer({
         notes: form.notes,
         layout: form.layout,
       };
-      // Образ на схеме сервер не принимает — и правильно делает.
-      if (form.layout !== 'diagram') {
+      // Образ на схеме и финале сервер не принимает — и правильно делает.
+      if (layoutHasImage(form.layout)) {
         const brief = form.imageBrief.trim();
         if (brief === '' && slide.imageBrief !== null) body.imageBrief = null;
         else if (brief !== '' && brief !== slide.imageBrief) body.imageBrief = brief;
       }
-      await patchSlide(slide.id, body);
+      if (!(await patchSlide(slide.id, body))) return false;
       dirty.current = false;
       setDirtyView(false);
       toast('Сохранила');
+      return true;
     } finally {
       setBusy(false);
     }
@@ -225,21 +231,23 @@ export function SlideViewer({
 
   const askModel = async (what: 'text' | 'image'): Promise<void> => {
     const text = instruction.trim();
-    if (text === '') {
+    // Перерисовать можно и без указания — «ещё раз», например после сбоя.
+    if (what === 'text' && text === '') {
       toast('Напишите, что изменить');
       return;
     }
+    // Несохранённые правки модель не видит, а её ответ под ними не показался бы
+    // и затёрся бы следующим «Сохранить» — поэтому сначала сохраняем.
+    if (dirty.current && !(await save())) return;
     setBusy(true);
     try {
-      if (what === 'text') await rewrite(slide.id, text);
-      else await redraw(slide.id, text);
-      setInstruction('');
+      if (await (what === 'text' ? rewrite : redraw)(slide.id, text)) setInstruction('');
     } finally {
       setBusy(false);
     }
   };
 
-  const field = (name: string, rows = 1) => {
+  const field = (name: SlideField, rows = 1) => {
     if (!fields.includes(name)) return null;
     const value = (form as unknown as Record<string, string>)[name] ?? '';
     return (
@@ -270,7 +278,7 @@ export function SlideViewer({
   return createPortal(
     <div className="vw" role="dialog" aria-modal="true" aria-label="Слайд крупно">
       <div className="vw-top">
-        <button className="iconbtn" onClick={onClose} title="Закрыть">
+        <button className="iconbtn" onClick={() => leave(onClose)} title="Закрыть">
           <Icon name="x" />
         </button>
         <span className="vw-count">
@@ -280,7 +288,7 @@ export function SlideViewer({
           <button
             className="iconbtn"
             disabled={index === 0}
-            onClick={() => onIndex(index - 1)}
+            onClick={() => leave(() => onIndex(index - 1))}
             title="Предыдущий слайд"
           >
             <Icon name="back" />
@@ -288,7 +296,7 @@ export function SlideViewer({
           <button
             className="iconbtn"
             disabled={index >= deck.slides.length - 1}
-            onClick={() => onIndex(index + 1)}
+            onClick={() => leave(() => onIndex(index + 1))}
             title="Следующий слайд"
           >
             <Icon name="arrow" />
@@ -328,7 +336,7 @@ export function SlideViewer({
           <div className="vw-actions">
             <button
               className="btn primary"
-              disabled={busy || working}
+              disabled={busy || working || deck.status === 'error'}
               onClick={() => void askModel('text')}
             >
               <Icon name="loop" /> Переделать текст
@@ -362,7 +370,10 @@ export function SlideViewer({
               disabled={working}
               onChange={(e) => set({ layout: e.target.value })}
             >
-              {LAYOUTS.map((l) => (
+              {/* Схему руками не завести — её состав даёт только раскадровка */}
+              {LAYOUTS.filter(
+                (l) => l !== 'diagram' || slide.diagramSpec || slide.layout === 'diagram',
+              ).map((l) => (
                 <option key={l} value={l}>
                   {layoutName(l)}
                 </option>
@@ -421,7 +432,7 @@ export function SlideViewer({
             />
           </label>
 
-          {form.layout !== 'diagram' && (
+          {layoutHasImage(form.layout) && (
             <>
               <label className="vw-field">
                 <span className="fieldlbl">
@@ -435,7 +446,7 @@ export function SlideViewer({
                   onChange={(e) => set({ imageBrief: e.target.value })}
                 />
               </label>
-              {form.imageBrief.trim() !== '' && (
+              {form.imageBrief.trim() !== '' && layoutSided(form.layout) && (
                 <button
                   className="chg"
                   disabled={working}
@@ -454,7 +465,7 @@ export function SlideViewer({
       </div>
 
       <div className="vw-foot">
-        <button className="btn" style={{ flex: 1 }} onClick={onClose}>
+        <button className="btn" style={{ flex: 1 }} onClick={() => leave(onClose)}>
           Закрыть
         </button>
         <button
