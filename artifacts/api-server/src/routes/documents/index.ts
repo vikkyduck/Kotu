@@ -82,9 +82,19 @@ interface IngestPayload {
 }
 
 /**
- * Сам загруженный файл — открыть во вкладке. inline, а не attachment: PDF
- * браузер покажет сразу, остальное скачает под исходным именем.
+ * Во вкладке открываются только PDF и простой текст — с типом, заданным здесь,
+ * а не присланным при загрузке. Остальное скачивается: сохранённая из
+ * интернета HTML-страница, открытая inline, запустила бы чужие скрипты на
+ * домене приложения — с доступом ко всей библиотеке через cookie владелицы.
  */
+const INLINE_TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  txt: "text/plain; charset=utf-8",
+  md: "text/plain; charset=utf-8",
+  markdown: "text/plain; charset=utf-8",
+};
+
+/** Сам загруженный файл — открыть во вкладке или скачать под исходным именем. */
 router.get("/documents/:id/file", async (req, res): Promise<void> => {
   const doc = await ownDoc(req.params.id, req.user!.id);
   const file = doc ? resolveInsideDir(LIBRARY_DIR, doc.sourcePath) : null;
@@ -94,15 +104,16 @@ router.get("/documents/:id/file", async (req, res): Promise<void> => {
     return;
   }
   const prev = (await lastIngest(doc.id))?.payload as Partial<IngestPayload> | undefined;
-  const ext = path.extname(typeof prev?.filename === "string" ? prev.filename : "").slice(1);
-  const headers: Record<string, string> = {
-    // Кириллица в .txt без charset открылась бы кракозябрами.
-    "Content-Type": doc.mime.startsWith("text/") && !doc.mime.includes("charset")
-      ? `${doc.mime}; charset=utf-8`
-      : doc.mime,
-  };
-  if (ext) headers["Content-Disposition"] = attachmentHeader(doc.title, ext, "document").replace(/^attachment/, "inline");
-  res.sendFile(file, { headers });
+  const ext = path.extname(typeof prev?.filename === "string" ? prev.filename : "").slice(1).toLowerCase();
+  const inlineType = INLINE_TYPES[ext];
+  const disposition = ext ? attachmentHeader(doc.title, ext, "document") : "attachment";
+  res.sendFile(file, {
+    headers: {
+      "Content-Type": inlineType ?? "application/octet-stream",
+      "Content-Disposition": inlineType ? disposition.replace(/^attachment/, "inline") : disposition,
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 });
 
 /**
