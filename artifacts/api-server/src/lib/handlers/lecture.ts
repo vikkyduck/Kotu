@@ -90,8 +90,35 @@ function warnNoResearchKey(id: number, wanted: boolean): void {
   }
 }
 
+/**
+ * Строка прогресса — заодно проверка, что лекция ещё есть: её могли удалить
+ * посреди письма, и тогда дальше платить модели не за что. Задачу DELETE уже
+ * снял, так что брошенная ошибка никуда не запишется.
+ */
 async function setStatus(id: number, message: string): Promise<void> {
-  await db.update(lecturesTable).set({ statusMessage: message }).where(eq(lecturesTable.id, id));
+  const alive = await db
+    .update(lecturesTable)
+    .set({ statusMessage: message })
+    .where(eq(lecturesTable.id, id))
+    .returning({ id: lecturesTable.id });
+  if (alive.length === 0) throw new Error("Лекция удалена");
+}
+
+// Свои фразы для экрана ошибки. Всё прочее (сбой SDK, сети, базы) — техника
+// на английском или с кодами: на экран вместо неё идёт одна общая фраза.
+const PLAN_UNREADABLE = "Модель вернула план в непонятном виде";
+const PLAN_EMPTY = "Не удалось составить план";
+const NOT_APPROVED = "План ещё не утверждён";
+const emptyChapter = (heading: string) => `Глава «${heading}» вышла пустой`;
+const MODEL_SILENT = "Модель не ответила";
+
+function shownError(message: string): string {
+  const own =
+    message === PLAN_UNREADABLE ||
+    message === PLAN_EMPTY ||
+    message === NOT_APPROVED ||
+    (message.startsWith("Глава «") && message.endsWith("» вышла пустой"));
+  return own ? message : MODEL_SILENT;
 }
 
 // ─── Шаг 1: план ──────────────────────────────────────────────────────────
@@ -172,10 +199,10 @@ async function runPlan(job: Job): Promise<void> {
     }
     notes = { outOfScope: strings(parsed.outOfScope), decisions: strings(parsed.decisions) };
   } catch {
-    throw new Error("Модель вернула план в непонятном виде. Попробуйте ещё раз.");
+    throw new Error(PLAN_UNREADABLE);
   }
 
-  if (sections.length === 0) throw new Error("Не удалось составить план");
+  if (sections.length === 0) throw new Error(PLAN_EMPTY);
 
   await db
     .update(lecturesTable)
@@ -191,7 +218,7 @@ async function runWrite(job: Job): Promise<void> {
   const id = job.entityId;
   const [lecture] = await db.select().from(lecturesTable).where(eq(lecturesTable.id, id)).limit(1);
   if (!lecture) throw new Error("Лекция не найдена");
-  if (!lecture.planApproved) throw new Error("План ещё не утверждён");
+  if (!lecture.planApproved) throw new Error(NOT_APPROVED);
 
   const brief = lecture.brief as LectureBrief;
   await db
@@ -212,8 +239,9 @@ async function runWrite(job: Job): Promise<void> {
   /**
    * Объём главы считаем от заказанной длительности, а не берём из головы.
    * Лекцию читают примерно 125 слов в минуту. Если план вышел короче
-   * задуманного, главы становятся длиннее и лекция всё равно занимает
-   * заказанное время. Потолок в 1800 слов — за ним качество текста падает.
+   * задуманного, главы становятся длиннее — но только до потолка в 1800
+   * слов (за ним качество текста падает); дальше лекция выходит короче
+   * заказанного времени.
    */
   const wordsPerSection = Math.max(
     600,
@@ -268,7 +296,6 @@ async function runWrite(job: Job): Promise<void> {
     }
 
     const material = parts.join("\n\n═══\n\n");
-    const materialLabel = "Материал";
 
     await setStatus(id, `Пишу блок ${section.ord + 1} из ${total}: ${section.heading}`);
 
@@ -282,6 +309,7 @@ async function runWrite(job: Job): Promise<void> {
       abstract: section.abstract,
       concepts: planned?.concepts ?? [],
       hook: planned?.hook ?? "",
+      outOfScope: lecture.planNotes?.outOfScope ?? [],
       words: wordsPerSection,
       nextHeading: sections[section.ord + 1]?.heading ?? null,
     });
@@ -298,13 +326,13 @@ async function runWrite(job: Job): Promise<void> {
               ? `\nОпорные концепции и авторы: ${planned!.concepts!.join("; ")}`
               : "") +
             (planned?.hook ? `\nКрючок для аудитории: ${planned.hook}` : "") +
-            (material !== "" ? `\n\n${materialLabel}:\n\n${material}` : ""),
+            (material !== "" ? `\n\nМатериал:\n\n${material}` : ""),
         },
       ],
     });
 
     const reply = (response.choices[0]?.message?.content ?? "").trim();
-    if (reply === "") throw new Error(`Глава «${section.heading}» вышла пустой`);
+    if (reply === "") throw new Error(emptyChapter(section.heading));
 
     // Записываем только те источники, на которые модель реально сослалась:
     // так под текстом стоят проверяемые цитаты, а не список «что мы читали».
@@ -423,7 +451,7 @@ async function runWrite(job: Job): Promise<void> {
 async function onGiveUp(job: Job, message: string): Promise<void> {
   await db
     .update(lecturesTable)
-    .set({ status: "error", statusMessage: "", error: message })
+    .set({ status: "error", statusMessage: "", error: shownError(message) })
     .where(eq(lecturesTable.id, job.entityId))
     .catch((err) => logger.error({ err, id: job.entityId }, "Не смог записать ошибку лекции"));
 }

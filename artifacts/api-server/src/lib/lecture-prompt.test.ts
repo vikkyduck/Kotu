@@ -1,5 +1,5 @@
 import { test, expect } from "vitest";
-import { renumberCitations, titleFromTopic } from "./lecture-prompt";
+import { renumberCitations, sectionPrompt, titleFromTopic } from "./lecture-prompt";
 
 test("renumberCitations: номера в тексте совпадают со списком источников под главой", () => {
   // Процитированы выдержка 3 и веб-источник 7 — под главой они станут 1 и 2.
@@ -39,4 +39,22 @@ test("titleFromTopic: длинная тема — первая фраза, ин�
   const title = titleFromTopic(long);
   expect(title).toBe("Психоаналитическая теория объектных отношений в работах британской…");
   expect(title.length).toBeLessThanOrEqual(71);
+});
+
+test("sectionPrompt: вынесенное планом за скобки доходит до письма главы", () => {
+  const base = {
+    brief: { topic: "Перенос", audience: "коллеги", durationMin: 60, documentIds: [] },
+    title: "Перенос",
+    heading: "Истоки",
+    abstract: "Фрейд о переносе",
+    concepts: [],
+    hook: "",
+    words: 1500,
+    nextHeading: null,
+  };
+  const withNotes = sectionPrompt({ ...base, outOfScope: ["Лакан", "нейронауки"] });
+  expect(withNotes).toContain("Сознательно за скобками (не разворачивай): Лакан; нейронауки.");
+  expect(sectionPrompt({ ...base, outOfScope: [] })).not.toContain("за скобками");
+  // Метки скрытых имён из копий расшифровок в текст не переносятся.
+  expect(withNotes).toContain("[[PER1]]");
 });
