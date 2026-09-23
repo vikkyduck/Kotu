@@ -1,5 +1,16 @@
 import { test, describe, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
-import { link, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile, readdir } from "node:fs/promises";
+import {
+  appendFile,
+  link,
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+  readdir,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
@@ -260,6 +271,43 @@ describe("архив файлов", () => {
         `SELECT count(*) FROM archive.file_events WHERE entity_type = 'deck' AND entity_id = 12 AND kind = 'remove'`,
       ),
     ).toBe(2);
+  });
+
+  test("каталог колоды: файл дописали на месте между проходами — перед rm архивируется заново", async () => {
+    const dir = path.join(decks, "13");
+    await mkdir(dir, { recursive: true });
+    const one = path.join(dir, "1.png");
+    await writeFile(one, "образ 1");
+    await writeFile(path.join(dir, "2.png"), "образ 2");
+    // Другой диск: архив — копия, а не ссылка, и запись на месте (тот же
+    // inode) архивную копию не трогает. Сверка только по inode пропустила бы
+    // такую правку, и rm стёр бы дописанное.
+    let seen = 0;
+    const a = makeArchive({
+      link: failingLink("EXDEV"),
+      query: async (text, params) => {
+        const r = await query(text, params);
+        if (text.includes("INSERT INTO archive.file_seen") && ++seen === 2) {
+          await appendFile(one, " и дописанное");
+        }
+        return r;
+      },
+    });
+
+    expect(await a.archiveTreeAndRemove(dir, { entityType: "deck", entityId: 13 })).toBe(2);
+    await expect(stat(dir)).rejects.toThrow();
+    const shas = (
+      await db.query(
+        `SELECT e.sha256 FROM archive.file_events e WHERE e.source_path = $1 ORDER BY e.id`,
+        [path.resolve(one)],
+      )
+    ).rows.map((r) => String(r["sha256"]));
+    const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+    // Обе версии — и до, и после дописывания — в архиве.
+    expect(shas).toEqual([sha("образ 1"), sha("образ 1 и дописанное")]);
+    expect(await readFile(path.join(archiveDir, shas[1]!.slice(0, 2), shas[1]!), "utf8")).toBe(
+      "образ 1 и дописанное",
+    );
   });
 
   test("гонка двух архиваций одного содержимого: объект не подменяется", async () => {
