@@ -124,13 +124,14 @@ export function Lecture() {
     (planEdit !== null && (planHead !== planFrom.heading || planAbstract !== planFrom.abstract));
   useUnsavedWarning(unsaved || (screen === 's-lecture' && openId === null && topic.trim() !== ''));
 
-  // Уход внутри приложения: правка главы чужой лекции сейчас не на экране и
-  // с уходом не пропадает. Сохранила — сторож молчит сразу, не дожидаясь
-  // перерисовки.
+  // Уход внутри приложения: правка главы или плана чужой лекции сейчас не на
+  // экране и с уходом не пропадает. Сохранила — сторож молчит сразу, не
+  // дожидаясь перерисовки.
   const guard = useRef<() => boolean>(() => false);
   guard.current = () =>
     (editing !== null && editOf.current === openId && draft !== draftFrom) ||
-    (planEdit !== null && (planHead !== planFrom.heading || planAbstract !== planFrom.abstract));
+    (planEdit !== null && planOf.current === openId &&
+      (planHead !== planFrom.heading || planAbstract !== planFrom.abstract));
   useEffect(() => {
     if (screen !== 's-lecture') return;
     setLeaveGuard(() => guard.current());
@@ -251,6 +252,8 @@ export function Lecture() {
       return;
     }
     const created = await r.res.json();
+    // Лекция уже на сервере: переход к ней — не уход, спрашивать не о чем.
+    guard.current = () => false;
     clearTopic();
     setPicked([]);
     openLecture(created.id);
