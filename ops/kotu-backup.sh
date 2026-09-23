@@ -42,8 +42,16 @@ for d in library uploads decks; do
   rsync -a --delete "/opt/kotu/$d/" "$DATA_DIR/$d/"
 done
 
+# Архив файлов (прежние версии и удалённое) — БЕЗ --delete: он только растёт,
+# и зеркало обязано повторять это, а не «догонять» чьё-то удаление. Удалённое
+# владелицей из рабочих каталогов уходит из зеркала выше, но остаётся здесь.
+if [ -d /opt/kotu/archive ]; then
+  rsync -a /opt/kotu/archive/ "$DATA_DIR/archive/"
+fi
+
 # Ротация дампов и конфигов: 14 дней. Зеркало файлов не ротируется —
-# оно всегда одно и повторяет текущее состояние.
+# оно всегда одно и повторяет текущее состояние. Прежние версии строк при
+# этом не теряются: они в схеме archive, а она — в каждом свежем дампе.
 find "$DB_DIR" -name "all-*.sql.gz" -mtime +14 -delete
 find "$DB_DIR" -name "kotu-*.dump" -mtime +14 -delete
 find "$FILES_DIR" -name "config-*.tar.gz" -mtime +14 -delete

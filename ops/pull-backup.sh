@@ -18,7 +18,9 @@ DEST=${DEST:-"$HOME/kotu-backups"}
 # держать ничего своего — лишнее будет стёрто. Лог поэтому лежит снаружи.
 mkdir -p "$DEST"
 echo "==> $(date '+%d.%m.%Y %H:%M') — забираю бэкап с $SERVER в $DEST"
-rsync -az --delete "$SERVER:/opt/backups/" "$DEST/"
+# -H: снимки перед деплоем (predeploy/) и архив держат файлы жёсткими ссылками
+# на одно содержимое — без -H каждая ссылка приехала бы отдельной копией.
+rsync -azH --delete "$SERVER:/opt/backups/" "$DEST/"
 
 echo
 echo "==> Что лежит локально:"
