@@ -168,3 +168,18 @@ export function bibliographyPrompt(brief: LectureBrief, title: string): string {
     'Формат: {"primary":["..."],"modern":["..."]}',
   ].join("\n");
 }
+
+/**
+ * Ссылки [n] в тексте главы → номера по порядку списка источников под ней.
+ * Модель ссылается на номера всего материала, а под главой остаются только
+ * процитированные: без перенумерации [7] вело бы в никуда, а [1] — на чужую
+ * работу. used — старые номера в том порядке, в каком источники встанут в
+ * список. Номер, которого в материале не было, остаётся как есть.
+ */
+export function renumberCitations(text: string, used: number[]): string {
+  const map = new Map(used.map((n, i) => [n, i + 1]));
+  return text.replace(/\[(\d{1,2})\]/g, (m, n: string) => {
+    const next = map.get(Number(n));
+    return next === undefined ? m : `[${next}]`;
+  });
+}

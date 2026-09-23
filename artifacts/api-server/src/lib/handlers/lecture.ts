@@ -14,7 +14,12 @@ import {
 import { searchLibrary } from "../../routes/documents";
 import { embedAll } from "../embeddings";
 import { research, isResearchAvailable, type WebSource } from "../perplexity";
-import { planPrompt, sectionPrompt, bibliographyPrompt } from "../lecture-prompt";
+import {
+  planPrompt,
+  sectionPrompt,
+  bibliographyPrompt,
+  renumberCitations,
+} from "../lecture-prompt";
 
 /**
  * Какие источники включены. Старые записи несли одиночный mode «или/или» —
@@ -27,7 +32,7 @@ function briefSources(brief: LectureBrief): { lib: boolean; res: boolean } {
   if (brief.mode === "research") return { lib: false, res: true };
   return { lib: true, res: false };
 }
-import { registerHandler, enqueue } from "../jobs";
+import { registerHandler } from "../jobs";
 import { lectureToLibrary } from "../work-doc";
 import { logger } from "../logger";
 
@@ -68,6 +73,23 @@ function renderExcerpts(excerpts: Excerpt[]): string {
     .join("\n\n---\n\n");
 }
 
+/** Список строк из ответа модели: пустое и не-строки отбрасываем. */
+function strings(v: unknown): string[] {
+  return Array.isArray(v)
+    ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim())
+    : [];
+}
+
+/** Исследование включено, а ключа нет: пишем без него и оставляем след в журнале. */
+function warnNoResearchKey(id: number, wanted: boolean): void {
+  if (wanted && !isResearchAvailable()) {
+    logger.warn(
+      { id },
+      "«Исследование ИИ» включено, но ключ Perplexity не задан (./set-ai-key.sh, пункт 3) — работаю без веб-поиска",
+    );
+  }
+}
+
 async function setStatus(id: number, message: string): Promise<void> {
   await db.update(lecturesTable).set({ statusMessage: message }).where(eq(lecturesTable.id, id));
 }
@@ -88,7 +110,7 @@ async function runPlan(job: Job): Promise<void> {
   // Источники независимы: библиотека И исследование складываются в общий
   // материал; ни одного — план пишется по знаниям модели.
   const src = briefSources(brief);
-  const isResearch = src.res;
+  warnNoResearchKey(id, src.res);
   const parts: string[] = [];
   if (src.lib && brief.documentIds.length > 0) {
     await setStatus(id, "Смотрю, что есть в библиотеке…");
@@ -128,11 +150,6 @@ async function runPlan(job: Job): Promise<void> {
   const raw = response.choices[0]?.message?.content ?? "";
   let sections: PlannedSection[] = [];
   let notes: LecturePlanNotes = { outOfScope: [], decisions: [] };
-  /** Список строк из ответа модели: пустое и не-строки отбрасываем. */
-  const strings = (v: unknown): string[] =>
-    Array.isArray(v)
-      ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim())
-      : [];
 
   try {
     const parsed = JSON.parse(raw) as {
@@ -189,6 +206,8 @@ async function runWrite(job: Job): Promise<void> {
     .orderBy(asc(lectureSectionsTable.ord));
 
   const total = sections.length;
+  const src = briefSources(brief);
+  warnNoResearchKey(id, src.res);
 
   /**
    * Объём главы считаем от заказанной длительности, а не берём из головы.
@@ -212,7 +231,6 @@ async function runWrite(job: Job): Promise<void> {
       .where(eq(lectureSectionsTable.id, section.id));
 
     const query = `${section.heading}. ${section.abstract}`;
-    const src = briefSources(brief);
 
     // Материал блока: выдержки библиотеки и веб-исследование складываются.
     // Нумерация ссылок единая: выдержки 1..k, веб-источники k+1..k+m —
@@ -285,57 +303,58 @@ async function runWrite(job: Job): Promise<void> {
       ],
     });
 
-    const text = (response.choices[0]?.message?.content ?? "").trim();
-    if (text === "") throw new Error(`Глава «${section.heading}» вышла пустой`);
+    const reply = (response.choices[0]?.message?.content ?? "").trim();
+    if (reply === "") throw new Error(`Глава «${section.heading}» вышла пустой`);
+
+    // Записываем только те источники, на которые модель реально сослалась:
+    // так под текстом стоят проверяемые цитаты, а не список «что мы читали».
+    const cited = new Set(
+      [...reply.matchAll(/\[(\d{1,2})\]/g)].map((m) => Number(m[1])).filter((n) => n > 0),
+    );
+    const usedDocs = excerpts.filter((e) => cited.has(e.n));
+    const usedWeb = webSources.filter((w) => cited.has(w.n)).sort((a, b) => a.n - b.n);
+    // Номера в тексте — по порядку списка под главой: сначала библиотека,
+    // потом веб, как они вставляются ниже и выдаются экрану и выгрузке.
+    const text = renumberCitations(reply, [...usedDocs, ...usedWeb].map((u) => u.n));
 
     await db
       .update(lectureSectionsTable)
       .set({ text, status: "ready" })
       .where(eq(lectureSectionsTable.id, section.id));
 
-    // Записываем только те источники, на которые модель реально сослалась:
-    // так под текстом стоят проверяемые цитаты, а не список «что мы читали».
-    const cited = new Set(
-      [...text.matchAll(/\[(\d{1,2})\]/g)].map((m) => Number(m[1])).filter((n) => n > 0),
-    );
     // Прежние источники главы заменяются новыми; старые строки остаются в
     // архиве (триггер на lecture_sources).
     await db.delete(lectureSourcesTable).where(eq(lectureSourcesTable.sectionId, section.id));
 
-    if (excerpts.length > 0) {
-      const used = excerpts.filter((e) => cited.has(e.n));
-      if (used.length > 0) {
-        await db.insert(lectureSourcesTable).values(
-          used.map((e) => ({
-            lectureId: id,
-            sectionId: section.id,
-            kind: "doc" as const,
-            chunkId: e.chunkId,
-            title: e.heading ? `${e.title} — ${e.heading}` : e.title,
-            quote: e.text.slice(0, 600),
-          })),
-        );
-      }
+    if (usedDocs.length > 0) {
+      await db.insert(lectureSourcesTable).values(
+        usedDocs.map((e) => ({
+          lectureId: id,
+          sectionId: section.id,
+          kind: "doc" as const,
+          chunkId: e.chunkId,
+          title: e.heading ? `${e.title} — ${e.heading}` : e.title,
+          quote: e.text.slice(0, 600),
+        })),
+      );
     }
 
-    if (webSources.length > 0) {
+    if (usedWeb.length > 0) {
       // Веб-источник открывается по ссылке; цитатой кладём фразы выжимки,
-      // которые на него ссылались, — их и стоит сверять.
-      const used = webSources.filter((w) => cited.has(w.n));
-      if (used.length > 0) {
-        const sentences = material.split(/(?<=[.!?…])\s+/);
-        await db.insert(lectureSourcesTable).values(
-          used.map((w) => ({
-            lectureId: id,
-            sectionId: section.id,
-            kind: "web" as const,
-            url: w.url,
-            title: w.title.slice(0, 300),
-            quote: (sentences.filter((t) => t.includes(`[${w.n}]`)).join(" ").trim() ||
-              "Найдено веб-поиском — откройте источник по ссылке.").slice(0, 600),
-          })),
-        );
-      }
+      // которые на него ссылались, — их и стоит сверять. Материал не
+      // перенумерован, поэтому ищем по прежнему номеру.
+      const sentences = material.split(/(?<=[.!?…])\s+/);
+      await db.insert(lectureSourcesTable).values(
+        usedWeb.map((w) => ({
+          lectureId: id,
+          sectionId: section.id,
+          kind: "web" as const,
+          url: w.url,
+          title: w.title.slice(0, 300),
+          quote: (sentences.filter((t) => t.includes(`[${w.n}]`)).join(" ").trim() ||
+            "Найдено веб-поиском — откройте источник по ссылке.").slice(0, 600),
+        })),
+      );
     }
 
     if (material === "") {
@@ -345,10 +364,7 @@ async function runWrite(job: Job): Promise<void> {
         sectionId: section.id,
         kind: "model" as const,
         title: "Написано по знаниям модели",
-        quote:
-          "Веб-поиск не настроен, глава основана на общих знаниях модели: имена, даты и " +
-          "формулировки стоит сверить. Ключ Perplexity (./set-ai-key.sh, пункт 3) включит " +
-          "настоящие источники со ссылками.",
+        quote: "Материала не нашлось — имена, даты и формулировки стоит сверить",
       });
     }
   }
@@ -380,11 +396,7 @@ async function runWrite(job: Job): Promise<void> {
     })
     .then((r) => {
       const parsed = JSON.parse(r.choices[0]?.message?.content ?? "{}") as Record<string, unknown>;
-      const list = (v: unknown): string[] =>
-        Array.isArray(v)
-          ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim())
-          : [];
-      const out: Bibliography = { primary: list(parsed.primary), modern: list(parsed.modern) };
+      const out: Bibliography = { primary: strings(parsed.primary), modern: strings(parsed.modern) };
       return out.primary.length + out.modern.length > 0 ? out : null;
     })
     // Список — украшение, а не суть: лекция готова и без него.
@@ -420,5 +432,3 @@ export function registerLectureHandlers(): void {
   registerHandler("lecture.plan", { run: runPlan, onGiveUp });
   registerHandler("lecture.write", { run: runWrite, onGiveUp });
 }
-
-export { enqueue };
