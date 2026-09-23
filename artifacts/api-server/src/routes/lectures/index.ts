@@ -19,6 +19,7 @@ import { attachmentHeader } from "../../lib/filename";
 import { ownFolderId } from "../../lib/folders";
 import { lectureToLibrary, dropLectureCopies } from "../../lib/work-doc";
 import { buildLectureDocx, buildLectureMarkdown } from "../../lib/lecture-export";
+import { titleFromTopic } from "../../lib/lecture-prompt";
 import { deleteJobsArchivingInput, requireArchive } from "../../lib/archive";
 import { LECTURE_PLANNING, PLAN_BUSY_MESSAGE, planEditBlocked } from "../../lib/busy-edit";
 
@@ -60,18 +61,6 @@ async function loadFull(rawId: string, ownerId: number) {
     .orderBy(asc(lectureSourcesTable.id));
 
   return { ...lecture, sections, sources };
-}
-
-/**
- * Название из темы: первая фраза без точки в конце. Длинная режется по
- * границе слова и получает «…» — а не обрывается посреди слова.
- */
-function titleFromTopic(topic: string): string {
-  const first = topic.split(/(?<=[.!?])\s|\n/)[0]!.trim().replace(/\.+$/, "");
-  if (first === "") return topic.slice(0, 70);
-  if (first.length <= 70) return first;
-  const cut = first.slice(0, 71).replace(/\s+\S*$/, "").replace(/[\s,;:—–-]+$/, "");
-  return `${cut !== "" && cut.length <= 70 ? cut : first.slice(0, 70)}…`;
 }
 
 router.get("/lectures", async (req, res): Promise<void> => {
