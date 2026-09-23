@@ -145,6 +145,19 @@ CREATE TABLE deck_images (
   error text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE jobs (
+  id bigserial PRIMARY KEY,
+  kind text NOT NULL,
+  entity_id integer NOT NULL,
+  payload jsonb NOT NULL DEFAULT '{}',
+  status text NOT NULL DEFAULT 'queued',
+  attempts integer NOT NULL DEFAULT 0,
+  last_error text,
+  run_after timestamptz NOT NULL DEFAULT now(),
+  locked_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz
+);
 CREATE TABLE style_packs (
   id serial PRIMARY KEY,
   owner_id integer REFERENCES users (id) ON DELETE CASCADE,
