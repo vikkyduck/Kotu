@@ -72,10 +72,13 @@ pg_restore --list "$DIR/kotu.dump" > /dev/null
 for d in library uploads decks archive; do
   if [ -d "/opt/kotu/$d" ]; then cp -al "/opt/kotu/$d" "$DIR/$d"; fi
 done
-# Прежняя версия кода — для отката, если новая не включит архив (шаг 6).
+# Прежняя версия кода — для разбора, что именно работало до выкатки. Тоже
+# жёсткими ссылками: rsync шага 5 (без --inplace) пишет каждый файл во
+# временный и переименовывает поверх, так что старые версии в снимке не
+# меняются, а место не удваивается. Откат — только по DEPLOY.md («Откат»).
 mkdir -p "$DIR/code"
 for d in server public; do
-  if [ -d "/opt/kotu/$d" ]; then cp -a "/opt/kotu/$d" "$DIR/code/$d"; fi
+  if [ -d "/opt/kotu/$d" ]; then cp -al "/opt/kotu/$d" "$DIR/code/$d"; fi
 done
 
 # Ротации нет: снимки не удаляются. Файлы в них — жёсткие ссылки (место почти
@@ -85,6 +88,15 @@ REMOTE
 )
 echo "   снимок: $SNAP"
 ssh "$SERVER" "sed 's/^/   /' '$SNAP/inventory.txt'"
+# Снимки, архив и бэкап только растут (ничего не удаляется) — место на диске
+# надо видеть на каждой выкатке. Деплой при этом не останавливаем: без места
+# встанет запись, а не данные пропадут, и решать, что делать, — владелице.
+FREE_GB=$(ssh "$SERVER" "df -P -BG /opt | awk 'NR == 2 { sub(/G\$/, \"\", \$4); print \$4 }'" || true)
+echo "   свободно на /opt: ${FREE_GB:-?} ГБ"
+if ! [ "$FREE_GB" -ge 10 ] 2>/dev/null; then
+  echo "⚠️  ВНИМАНИЕ: на /opt свободно меньше 10 ГБ (${FREE_GB:-не удалось узнать}). Архив, снимки и бэкап"
+  echo "   ничего не удаляют сами — место кончится. Решите с владелицей, что вынести с сервера."
+fi
 
 echo "==> [4/6] Архив на сервере: схема базы, каталог, ночной бэкап"
 # До заливки: новый бандл не должен оказаться на сервере без схемы архива,
@@ -107,36 +119,60 @@ cd /tmp
 # выполнить только владелец. Чужая таблица — и ensureArchive упадёт уже на
 # новой версии, после рестарта. Поэтому проверяем здесь, до заливки: список
 # таблиц — ARCHIVED_TABLES в artifacts/api-server/src/lib/archive-sql.ts.
+# Суперпользователю владелец не важен — он гасит ТОЛЬКО строки про чужого
+# владельца. «Таблицы нет» и «роли нет» выводятся всегда: их не починит
+# никакое право (проверку прогоняет тест deploy-owner-check.test.ts на PGlite).
 bad=$(sudo -u postgres psql -d kotu -v ON_ERROR_STOP=1 -Atq -v u="$app_user" <<'SQL'
 WITH need(t) AS (
   VALUES ('transcriptions'), ('folders'), ('documents'), ('decks'), ('deck_slides'),
          ('deck_images'), ('style_packs'), ('lectures'), ('lecture_sections'), ('lecture_sources')
-), problems AS (
-  SELECT 'public.' || n.t || coalesce(' (владелец ' || c.tableowner || ')', ' (таблицы нет)') AS what
-    FROM need n LEFT JOIN pg_tables c ON c.schemaname = 'public' AND c.tablename = n.t
-   WHERE c.tableowner IS DISTINCT FROM :'u'
+), owners AS (
+  SELECT 'public.' || n.t || ' (владелец ' || c.tableowner || ')' AS what
+    FROM need n JOIN pg_tables c ON c.schemaname = 'public' AND c.tablename = n.t
+   WHERE c.tableowner <> :'u'
   UNION ALL
+  -- Последовательность bigserial меняет владельца вместе со своей таблицей
+  -- (ALTER SEQUENCE для неё запрещён). Если таблица уже в списке —
+  -- последовательность не выводим; если таблица своя, а последовательность
+  -- чужая — подсказываем, как её перевести через таблицу.
   SELECT 'archive.' || c.relname || ' (владелец ' || pg_get_userbyid(c.relowner) || ')'
+         || CASE WHEN t.relname IS NOT NULL
+                 THEN ' — последовательность таблицы archive.' || t.relname
+                      || ', владелец меняется только вместе с ней: ALTER TABLE archive.' || t.relname
+                      || ' OWNER TO postgres; ALTER TABLE archive.' || t.relname || ' OWNER TO ' || quote_ident(:'u')
+                 ELSE '' END
     FROM pg_class c JOIN pg_namespace s ON s.oid = c.relnamespace
+    LEFT JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.objid = c.oid
+                         AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a', 'i')
+    LEFT JOIN pg_class t ON t.oid = d.refobjid
    WHERE s.nspname = 'archive' AND c.relkind IN ('r', 'p', 'S')
      AND pg_get_userbyid(c.relowner) <> :'u'
+     AND NOT (c.relkind = 'S' AND t.relname IS NOT NULL AND pg_get_userbyid(t.relowner) <> :'u')
   UNION ALL
   SELECT 'функция archive.' || p.proname || ' (владелец ' || pg_get_userbyid(p.proowner) || ')'
     FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
    WHERE s.nspname = 'archive' AND pg_get_userbyid(p.proowner) <> :'u'
 )
-SELECT what FROM problems
+SELECT what FROM owners
  WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'u' AND rolsuper)
+UNION ALL
+SELECT 'public.' || n.t || ' (таблицы нет)'
+  FROM need n
+ WHERE NOT EXISTS (SELECT 1 FROM pg_tables c WHERE c.schemaname = 'public' AND c.tablename = n.t)
 UNION ALL
 SELECT 'роли ' || :'u' || ' в базе нет'
  WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'u');
 SQL
 )
 if [ -n "$bad" ]; then
-  echo "❌ Архив на новой версии не включится: владелец этих объектов базы kotu — не $app_user" >&2
+  echo "❌ Архив на новой версии не включится — в базе kotu не так (пользователь приложения: $app_user):" >&2
   printf '%s\n' "$bad" | sed 's/^/   /' >&2
-  echo "   Новая версия НЕ залита, прод работает как раньше. Починить от postgres:" >&2
-  echo "   ALTER TABLE <таблица> OWNER TO \"$app_user\"; (функция — ALTER FUNCTION archive.<имя>() OWNER TO …)" >&2
+  echo "   Новая версия НЕ залита, прод работает как раньше. Починить от postgres (sudo -u postgres psql -d kotu):" >&2
+  echo "   чужой владелец таблицы — ALTER TABLE <схема>.<таблица> OWNER TO \"$app_user\";" >&2
+  echo "     (последовательности archive.*_seq переходят к нему вместе со своей таблицей)" >&2
+  echo "   чужой владелец функции — ALTER FUNCTION archive.<имя>() OWNER TO \"$app_user\";" >&2
+  echo "   таблицы нет — схема базы не применена (DEPLOY.md, «Миграция схемы»)." >&2
+  echo "   роли нет — DATABASE_URL в /opt/kotu/.env указывает не на ту роль." >&2
   exit 1
 fi
 echo "   владелец таблиц данных и архива: $app_user"
@@ -169,17 +205,39 @@ for _ in $(seq 1 40); do
   sleep 3
 done
 echo "   $HEALTH"
-if [ "$ARCHIVE" != ok ]; then
-  echo "❌ Архив на сервере не включился (healthz: archive=${ARCHIVE:-нет ответа})."
-  echo "   Новая версия УЖЕ работает, но без архива строк: она только на чтение — очередь задач"
-  echo "   стоит, изменения и удаления через интерфейс отклоняются, архив она пробует включить"
-  echo "   раз в минуту. Данные до выкатки — в снимке $SNAP (kotu.dump + файлы)."
-  echo "   Причина: ssh $SERVER \"journalctl -u kotu -n 200 | grep -i архив\""
-  echo "   Откат на прежнюю версию кода (она без архива и удаляет аудио после расшифровки —"
-  echo "   только если работа нужна срочно, лучше починить причину):"
-  echo "   ssh $SERVER 'rsync -a --delete $SNAP/code/server/ /opt/kotu/server/ && rsync -a --delete $SNAP/code/public/ /opt/kotu/public/ && chown -R kotu:kotu /opt/kotu/server /opt/kotu/public && systemctl restart kotu'"
-  exit 1
-fi
+# Никаких команд отката здесь нет намеренно: прежний код без архива удаляет
+# аудио после расшифровки, чистит каталоги колод и пишет файлы на месте, то
+# есть сам ведёт к потере данных. Откат — только по DEPLOY.md («Откат»).
+JOURNAL="ssh $SERVER \"journalctl -u kotu -n 200 --no-pager | grep -i архив\""
+case "$ARCHIVE" in
+  ok) ;;
+  pending)
+    # Первое включение делает снимок всех таблиц (INITIAL) — на большой базе
+    # это дольше двух минут ожидания выше. Это не провал.
+    echo "⏳ Архив ещё включается (healthz: archive=pending)."
+    echo "   Проверьте через минуту: curl -s $HEALTH_URL — должно стать \"archive\":\"ok\"."
+    echo "   Пока так, сервер только на чтение и очередь стоит — это нормально, ничего не трогайте."
+    echo "   Журнал: $JOURNAL"
+    echo "   Опись до выкатки — $SNAP/inventory.txt; сверку описи этот запуск не делал."
+    exit 2
+    ;;
+  off)
+    echo "❌ Архив на сервере не включился (healthz: archive=off)."
+    echo "   Сервер работает только на чтение, очередь стоит — данные не меняются."
+    echo "   Ничего не откатывайте и не чистите — пришлите этот вывод."
+    echo "   Журнал: $JOURNAL"
+    echo "   Данные до выкатки — в снимке $SNAP."
+    exit 1
+    ;;
+  *)
+    echo "❌ Сервис не ответил на $HEALTH_URL."
+    echo "   Ничего не откатывайте и не чистите — пришлите этот вывод."
+    echo "   Журнал: $JOURNAL"
+    echo "   Состояние: ssh $SERVER \"systemctl status kotu --no-pager\""
+    echo "   Данные до выкатки — в снимке $SNAP."
+    exit 1
+    ;;
+esac
 
 # Сверка описи: стартовые сверки нового кода уже отработали (сервис отвечает).
 # Меньше файлов или строк, чем в снимке (или опись не снялась вовсе), —
