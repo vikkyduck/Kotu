@@ -168,3 +168,33 @@ export function bibliographyPrompt(brief: LectureBrief, title: string): string {
     'Формат: {"primary":["..."],"modern":["..."]}',
   ].join("\n");
 }
+
+/**
+ * Ссылки [n] в тексте главы → номера по порядку списка источников под ней.
+ * Модель ссылается на номера всего материала, а под главой остаются только
+ * процитированные: без перенумерации [7] вело бы в никуда, а [1] — на чужую
+ * работу. used — старые номера в том порядке, в каком источники встанут в
+ * список. Номер, которого в материале не было, остаётся как есть.
+ */
+export function renumberCitations(text: string, used: number[]): string {
+  const map = new Map(used.map((n, i) => [n, i + 1]));
+  return text.replace(/\[(\d{1,2})\]/g, (m, n: string) => {
+    const next = map.get(Number(n));
+    return next === undefined ? m : `[${next}]`;
+  });
+}
+
+/**
+ * Название из темы: первая строка без точки в конце. Строка до 70 знаков
+ * остаётся целой — сокращения («проф.», «напр.») её не режут. Длиннее —
+ * первая фраза (конец фразы — знак после слова от трёх букв, чтобы не резали
+ * «З. Фрейд», «т. е.»), а если и она длинная — по границе слова с «…».
+ */
+export function titleFromTopic(topic: string): string {
+  const line = topic.trim().split("\n")[0]!.trim();
+  if (line.length <= 70) return line.replace(/\.+$/, "");
+  const first = line.split(/(?<=[^\s.!?]{3}[.!?])\s+/u)[0]!.trim().replace(/\.+$/, "");
+  if (first.length <= 70) return first;
+  const cut = first.slice(0, 71).replace(/\s+\S*$/, "").replace(/[\s,;:—–-]+$/, "");
+  return `${cut !== "" && cut.length <= 70 ? cut : first.slice(0, 70)}…`;
+}
