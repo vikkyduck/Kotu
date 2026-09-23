@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { failHttp } from "./http-fail";
+import type { IllustrationMime } from "./images";
+import { logger } from "./logger";
 import { JSON_RULE, parseModelJson } from "./model-json";
 
 /**
@@ -13,13 +15,12 @@ const VERSION = "2023-06-01";
 
 export interface ImageAttachment {
   path: string;
-  mediaType: "image/png" | "image/jpeg" | "image/webp";
+  mediaType: IllustrationMime;
 }
 
 interface AskOptions {
   system: string;
   user: string;
-  model?: string;
   maxTokens?: number;
   /** Картинки, на которые Claude должен посмотреть. */
   images?: ImageAttachment[];
@@ -29,7 +30,7 @@ type ContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
 
-export function claudeConfigured(): boolean {
+function claudeConfigured(): boolean {
   return API_KEY !== "";
 }
 
@@ -64,7 +65,7 @@ export async function ask(opts: AskOptions): Promise<string> {
     // генерируется дольше десяти минут, и нестриминговый запрос такой
     // длины обрывается по таймаутам — у API и у прокси по дороге.
     body: JSON.stringify({
-      model: opts.model ?? process.env["MODEL_DECK"] ?? "claude-opus-5",
+      model: process.env["MODEL_DECK"] ?? "claude-opus-5",
       max_tokens: opts.maxTokens ?? 8000,
       stream: true,
       system: opts.system,
@@ -101,7 +102,9 @@ export async function ask(opts: AskOptions): Promise<string> {
         } else if (ev.type === "message_delta" && ev.delta?.stop_reason) {
           stopReason = ev.delta.stop_reason;
         } else if (ev.type === "error") {
-          throw new Error(`Claude прервал поток: ${ev.error?.message ?? "без объяснения"}`);
+          // Как в failHttp: сырой текст поставщика — в журнал, не на карточку.
+          logger.error({ error: ev.error }, "Claude прервал поток");
+          throw new Error("Claude прервал ответ на середине");
         }
       }
     }

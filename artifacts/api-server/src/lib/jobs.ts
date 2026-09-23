@@ -21,12 +21,20 @@ export function registerHandler(kind: JobKind, handler: JobHandler): void {
   handlers.set(kind, handler);
 }
 
+/** Подпись сущности, пока её задача ждёт в очереди, — одна на все разделы. */
+export const QUEUED_MESSAGE = "В очереди…";
+
+/**
+ * Ставит задачу. С tx — в той же транзакции, что и смена статуса сущности:
+ * иначе сбой между ними оставит её «в работе» без задачи навсегда.
+ */
 export async function enqueue(
   kind: JobKind,
   entityId: number,
   payload: Record<string, unknown> = {},
+  tx: Pick<typeof db, "insert"> = db,
 ): Promise<Job> {
-  const [job] = await db.insert(jobsTable).values({ kind, entityId, payload }).returning();
+  const [job] = await tx.insert(jobsTable).values({ kind, entityId, payload }).returning();
   return job;
 }
 

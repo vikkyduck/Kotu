@@ -12,7 +12,8 @@ import {
 } from "@workspace/db";
 import { LIBRARY_DIR } from "./paths";
 import { archiveAndRemove, writeDataFile } from "./archive";
-import { enqueue } from "./jobs";
+import type { IngestPayload } from "./handlers/ingest";
+import { enqueue, QUEUED_MESSAGE } from "./jobs";
 import { logger } from "./logger";
 
 /**
@@ -34,6 +35,21 @@ import { logger } from "./logger";
 /** Меньше этого в поиске только мешает: ни цитат, ни смысла. */
 export const MIN_LIBRARY_TEXT = 200;
 
+/**
+ * Синхронизация копии «лучше не удалась, чем уронила» работу: сбой только в
+ * журнал, одной строкой на все виды — копию догонит стартовая сверка.
+ */
+export const syncQuietly = <T>(
+  p: Promise<T>,
+  what: "lecture" | "deck" | "transcription",
+  id: number,
+  log: { error: (o: object, m: string) => void } = logger,
+): Promise<T | undefined> =>
+  p.catch((err: unknown) => {
+    log.error({ err, what, id }, "Копия работы не обновилась в библиотеке");
+    return undefined;
+  });
+
 /** Колонка-ссылка копии на свою работу — по ней стоит уникальный индекс. */
 type LinkColumn =
   | typeof documentsTable.lectureId
@@ -50,7 +66,11 @@ export async function upsertWorkDoc(opts: {
   kind: "lecture" | "deck" | "transcript";
   link: { column: LinkColumn; id: number };
   values: { lectureId?: number; deckId?: number; transcriptionId?: number };
-  folderId: number | null;
+  /**
+   * Папка работы — у лекции и колоды. У расшифровки её нет: папку копии
+   * выбирает пользовательница, и повторная синхронизация её не трогает.
+   */
+  folderId?: number | null;
   fileName: string;
   text: string;
 }): Promise<number | null> {
@@ -67,66 +87,72 @@ export async function upsertWorkDoc(opts: {
     mime: "text/plain",
   });
 
-  // Уникальный индекс превращает гонку двух синхронизаций в спокойное
-  // «второй просто обновит».
-  const inserted = await db
-    .insert(documentsTable)
-    .values({
-      ownerId: opts.ownerId,
-      title: opts.title,
-      kind: opts.kind,
-      ...opts.values,
-      folderId: opts.folderId,
-      sourcePath: filePath,
-      mime: "text/plain",
-      status: "parsing",
-      statusMessage: "В очереди…",
-    })
-    .onConflictDoNothing()
-    .returning({ id: documentsTable.id });
-
-  let docId = inserted[0]?.id;
-  if (docId === undefined) {
-    const [existing] = await db
-      .select({ id: documentsTable.id })
-      .from(documentsTable)
-      .where(eq(opts.link.column, opts.link.id))
-      .limit(1);
-    if (!existing) return null;
-    docId = existing.id;
-    await db
-      .update(documentsTable)
-      .set({
+  // Статус копии и её разбор — одной транзакцией: иначе сбой между ними
+  // оставит копию «в очереди» без задачи, и сверка её не заметит.
+  return db.transaction(async (tx) => {
+    // Уникальный индекс превращает гонку двух синхронизаций в спокойное
+    // «второй просто обновит».
+    const inserted = await tx
+      .insert(documentsTable)
+      .values({
+        ownerId: opts.ownerId,
         title: opts.title,
+        kind: opts.kind,
+        ...opts.values,
+        folderId: opts.folderId ?? null,
         sourcePath: filePath,
+        mime: "text/plain",
         status: "parsing",
-        statusMessage: "В очереди…",
-        error: null,
+        statusMessage: QUEUED_MESSAGE,
       })
-      .where(eq(documentsTable.id, docId));
-  }
+      .onConflictDoNothing()
+      .returning({ id: documentsTable.id });
 
-  // Правки идут сериями (каждое исправленное слово — сохранение). Разбор,
-  // который уже ждёт в очереди, и так прочтёт свежий файл — второй не нужен.
-  const [waiting] = await db
-    .select({ id: jobsTable.id })
-    .from(jobsTable)
-    .where(
-      and(
-        eq(jobsTable.kind, "doc.ingest"),
-        eq(jobsTable.entityId, docId),
-        eq(jobsTable.status, "queued"),
-      ),
-    )
-    .limit(1);
-  if (!waiting) {
-    await enqueue("doc.ingest", docId, {
-      sourcePath: filePath,
-      mime: "text/plain",
-      filename: opts.fileName,
-    });
-  }
-  return docId;
+    let docId = inserted[0]?.id;
+    if (docId === undefined) {
+      const [existing] = await tx
+        .select({ id: documentsTable.id })
+        .from(documentsTable)
+        .where(eq(opts.link.column, opts.link.id))
+        .limit(1);
+      if (!existing) return null;
+      docId = existing.id;
+      await tx
+        .update(documentsTable)
+        .set({
+          title: opts.title,
+          ...(opts.folderId !== undefined && { folderId: opts.folderId }),
+          sourcePath: filePath,
+          status: "parsing",
+          statusMessage: QUEUED_MESSAGE,
+          error: null,
+        })
+        .where(eq(documentsTable.id, docId));
+    }
+
+    // Правки идут сериями (каждое исправленное слово — сохранение). Разбор,
+    // который уже ждёт в очереди, и так прочтёт свежий файл — второй не нужен.
+    const [waiting] = await tx
+      .select({ id: jobsTable.id })
+      .from(jobsTable)
+      .where(
+        and(
+          eq(jobsTable.kind, "doc.ingest"),
+          eq(jobsTable.entityId, docId),
+          eq(jobsTable.status, "queued"),
+        ),
+      )
+      .limit(1);
+    if (!waiting) {
+      await enqueue(
+        "doc.ingest",
+        docId,
+        { sourcePath: filePath, mime: "text/plain", filename: opts.fileName } satisfies IngestPayload,
+        tx,
+      );
+    }
+    return docId;
+  });
 }
 
 /** Текст готовой лекции: заголовки глав и сам текст, по порядку. */
@@ -165,10 +191,15 @@ export async function lectureToLibrary(lectureId: number): Promise<number | null
   return docId;
 }
 
-/** Текст готовой презентации: то, что на слайдах, плюс заметки докладчику. */
+/**
+ * Текст готовой презентации: то, что на слайдах, плюс заметки докладчику.
+ * Только готовой: правка слайда и переделка бывают и у неутверждённой
+ * раскадровки, а черновику в поиске не место — правило здесь, а не у
+ * каждого вызывающего.
+ */
 export async function deckToLibrary(deckId: number): Promise<number | null> {
   const [deck] = await db.select().from(decksTable).where(eq(decksTable.id, deckId)).limit(1);
-  if (!deck) return null;
+  if (!deck || deck.status !== "ready") return null;
 
   const slides = await db
     .select()
@@ -252,9 +283,33 @@ export async function sweepStuckDeckImages(): Promise<number> {
 }
 
 /**
- * Стартовая сверка для работ, в обе стороны: готовое без копии — завести
- * (бэкфилл и самолечение после сбоев), копия без оригинала — убрать (строка
- * и файл остаются в архиве).
+ * Сирота сверки — копия, чей оригинал исчез: в архив через dropCopies.
+ * Сбой одной копии сверку не останавливает — копия остаётся как есть.
+ */
+export async function dropOrphan(column: LinkColumn, id: number, docId: number): Promise<void> {
+  logger.warn({ docId }, "Копия без оригинала — убираю в архив");
+  await dropCopies(column, id).catch((err: unknown) =>
+    logger.error({ err, docId }, "Копия не заархивировалась — оставил как есть"),
+  );
+}
+
+/**
+ * Нужно ли сверке (пере)собрать копию: её нет или её разбор сдался (скажем,
+ * долго лежал сервис векторов) — иначе копия так и осталась бы в ошибке.
+ */
+export async function needsCopy(column: LinkColumn, id: number): Promise<boolean> {
+  const [doc] = await db
+    .select({ status: documentsTable.status })
+    .from(documentsTable)
+    .where(eq(column, id))
+    .limit(1);
+  return !doc || doc.status === "error";
+}
+
+/**
+ * Стартовая сверка для работ, в обе стороны: готовое без копии или с копией
+ * в ошибке — собрать заново (бэкфилл и самолечение после сбоев), копия без
+ * оригинала — убрать (строка и файл остаются в архиве).
  */
 export async function sweepWorkToLibrary(): Promise<number> {
   let synced = 0;
@@ -262,39 +317,26 @@ export async function sweepWorkToLibrary(): Promise<number> {
   const copies = await db
     .select({
       id: documentsTable.id,
-      sourcePath: documentsTable.sourcePath,
-      mime: documentsTable.mime,
       lectureId: documentsTable.lectureId,
       deckId: documentsTable.deckId,
     })
     .from(documentsTable);
   for (const copy of copies) {
-    if (copy.lectureId === null && copy.deckId === null) continue;
-    const alive =
-      copy.lectureId !== null
-        ? await db
-            .select({ id: lecturesTable.id })
-            .from(lecturesTable)
-            .where(eq(lecturesTable.id, copy.lectureId))
-            .limit(1)
-        : await db
-            .select({ id: decksTable.id })
-            .from(decksTable)
-            .where(eq(decksTable.id, copy.deckId!))
-            .limit(1);
-    if (alive.length > 0) continue;
-    logger.warn({ docId: copy.id }, "Копия работы без оригинала — убираю в архив");
-    try {
-      await archiveAndRemove(copy.sourcePath, {
-        entityType: "document",
-        entityId: copy.id,
-        mime: copy.mime,
-      });
-    } catch (err) {
-      logger.error({ err, docId: copy.id }, "Копия не заархивировалась — оставил как есть");
-      continue;
+    if (copy.lectureId !== null) {
+      const [alive] = await db
+        .select({ id: lecturesTable.id })
+        .from(lecturesTable)
+        .where(eq(lecturesTable.id, copy.lectureId))
+        .limit(1);
+      if (!alive) await dropOrphan(documentsTable.lectureId, copy.lectureId, copy.id);
+    } else if (copy.deckId !== null) {
+      const [alive] = await db
+        .select({ id: decksTable.id })
+        .from(decksTable)
+        .where(eq(decksTable.id, copy.deckId))
+        .limit(1);
+      if (!alive) await dropOrphan(documentsTable.deckId, copy.deckId, copy.id);
     }
-    await db.delete(documentsTable).where(eq(documentsTable.id, copy.id));
   }
 
   const readyLectures = await db
@@ -302,17 +344,8 @@ export async function sweepWorkToLibrary(): Promise<number> {
     .from(lecturesTable)
     .where(eq(lecturesTable.status, "ready"));
   for (const l of readyLectures) {
-    const [doc] = await db
-      .select({ id: documentsTable.id })
-      .from(documentsTable)
-      .where(eq(documentsTable.lectureId, l.id))
-      .limit(1);
-    if (doc) continue;
-    try {
-      if (await lectureToLibrary(l.id)) synced += 1;
-    } catch (err) {
-      logger.error({ err, lectureId: l.id }, "Не смог отправить лекцию в библиотеку");
-    }
+    if (!(await needsCopy(documentsTable.lectureId, l.id))) continue;
+    if (await syncQuietly(lectureToLibrary(l.id), "lecture", l.id)) synced += 1;
   }
 
   const readyDecks = await db
@@ -320,17 +353,8 @@ export async function sweepWorkToLibrary(): Promise<number> {
     .from(decksTable)
     .where(eq(decksTable.status, "ready"));
   for (const k of readyDecks) {
-    const [doc] = await db
-      .select({ id: documentsTable.id })
-      .from(documentsTable)
-      .where(eq(documentsTable.deckId, k.id))
-      .limit(1);
-    if (doc) continue;
-    try {
-      if (await deckToLibrary(k.id)) synced += 1;
-    } catch (err) {
-      logger.error({ err, deckId: k.id }, "Не смог отправить презентацию в библиотеку");
-    }
+    if (!(await needsCopy(documentsTable.deckId, k.id))) continue;
+    if (await syncQuietly(deckToLibrary(k.id), "deck", k.id)) synced += 1;
   }
 
   return synced;
