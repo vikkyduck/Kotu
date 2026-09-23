@@ -1,30 +1,22 @@
-import { SLIDE_LAYOUTS, LAYOUT_RU } from '@workspace/db/slides';
+import {
+  SLIDE_LAYOUTS,
+  LAYOUT_RU,
+  FIELDS_BY_LAYOUT,
+  type SlideContent,
+  type DiagramSpec,
+  type SlideField,
+} from '@workspace/db/slides';
+import type { DeckStatus, ImageSide, ImageStatus, DeckImageStatus } from '@workspace/db/schema';
 
 /**
  * Форма презентации на фронте — общая для списка слайдов и для просмотра
  * слайда крупно. Вынесена из Slides.tsx, чтобы два экрана описывали колоду
- * одинаково, а не расходились по мере правок.
+ * одинаково, а не расходились по мере правок. Типы содержимого и статусов —
+ * из схемы базы: руками их не дублируем. Здесь только форма JSON-ответа
+ * (даты по сети приходят строками).
  */
 
-export type DeckStatus = 'storyboarding' | 'storyboard_ready' | 'drawing' | 'ready' | 'error';
-
-export interface SlideContent {
-  eyebrow?: string;
-  title?: string;
-  subtitle?: string;
-  bullets?: string[];
-  cards?: { title: string; body: string }[];
-  quote?: string;
-  attribution?: string;
-  question?: string;
-  plate?: string;
-}
-
-/** Схема diagram-слайда, которую рисует код (контракт — lib/db, DiagramSpec). */
-export interface DiagramSpec {
-  kind: 'flow' | 'pillars';
-  items: { label: string; sub?: string }[];
-}
+export type { DeckStatus, SlideContent, DiagramSpec, SlideField };
 
 export interface DeckSlide {
   id: number;
@@ -33,9 +25,9 @@ export interface DeckSlide {
   content: SlideContent;
   notes: string;
   imageBrief: string | null;
-  imageSide: 'left' | 'right';
+  imageSide: ImageSide;
   imageId: number | null;
-  imageStatus: 'none' | 'queued' | 'drawing' | 'ready' | 'error';
+  imageStatus: ImageStatus;
   diagramSpec: DiagramSpec | null;
 }
 
@@ -43,7 +35,7 @@ export interface DeckImage {
   id: number;
   slideId: number;
   attempt: number;
-  status: 'drawing' | 'ready' | 'rejected' | 'error';
+  status: DeckImageStatus;
   verdict: string | null;
 }
 
@@ -54,16 +46,22 @@ export interface DeckFull {
   statusMessage: string;
   error: string | null;
   stylePackId: number | null;
+  /** Раскадровка утверждена — колода уже «готовая», даже пока правится слайд. */
+  storyboardApproved: boolean;
   /** Цвета стилевого пакета — ими рисуется предпросмотр слайда. */
   palette: Record<string, string> | null;
   slides: DeckSlide[];
   images: DeckImage[];
 }
 
+/** Конвейер раскладывает или рисует — править и выгружать пока нельзя. */
+export const deckWorking = (status: DeckStatus): boolean =>
+  status === 'storyboarding' || status === 'drawing';
+
 // Названия и порядок макетов — из общей таблицы: тот же список, по которому
 // собираются PPTX и PDF. Иначе в браузере появлялся бы макет, которого нет
 // в выгрузке (или наоборот).
-export { LAYOUT_RU } from '@workspace/db/slides';
+export { LAYOUT_RU, layoutHasImage, layoutSided } from '@workspace/db/slides';
 export const LAYOUTS: readonly string[] = SLIDE_LAYOUTS;
 
 /**
@@ -74,22 +72,13 @@ export const layoutName = (layout: string): string =>
   (LAYOUT_RU as Record<string, string>)[layout] ?? layout;
 
 /**
- * Какие поля осмысленны на каком макете. Тот же список, что у модели в
- * lib/handlers/reslide.ts: автор правит ровно то, что попадёт на слайд,
- * и не видит полей, которые этот макет всё равно не покажет.
+ * Какие поля осмысленны на макете — из общей таблицы, по которой переписывает
+ * слайд и модель. Незнакомый макет — заголовок и тезисы, как у теории.
  */
-export const FIELDS_BY_LAYOUT: Record<string, string[]> = {
-  cover: ['eyebrow', 'title', 'subtitle'],
-  divider: ['eyebrow', 'title'],
-  theory: ['title', 'bullets', 'question', 'plate'],
-  quote: ['quote', 'attribution'],
-  clinical: ['title', 'bullets', 'question'],
-  comparison: ['title', 'cards'],
-  final: ['title', 'subtitle'],
-  diagram: ['title'],
-};
+export const fieldsOf = (layout: string): readonly SlideField[] =>
+  (FIELDS_BY_LAYOUT as Record<string, readonly SlideField[]>)[layout] ?? ['title', 'bullets'];
 
-export const FIELD_RU: Record<string, string> = {
+export const FIELD_RU: Record<SlideField, string> = {
   eyebrow: 'Надзаголовок',
   title: 'Заголовок',
   subtitle: 'Подзаголовок',
@@ -100,3 +89,17 @@ export const FIELD_RU: Record<string, string> = {
   question: 'Рабочий вопрос',
   plate: 'Музейная подпись под образом',
 };
+
+/**
+ * Последний образ каждого слайда. Судьбу картинки решает последняя попытка,
+ * и «последняя» — по id, а не по attempt: перерисовка начинает счёт попыток
+ * заново с 1.
+ */
+export function lastImageBySlide(images: DeckImage[]): Map<number, DeckImage> {
+  const last = new Map<number, DeckImage>();
+  for (const im of images) {
+    const prev = last.get(im.slideId);
+    if (!prev || im.id > prev.id) last.set(im.slideId, im);
+  }
+  return last;
+}

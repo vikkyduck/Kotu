@@ -51,6 +51,14 @@ describe("приведение слайда к строгой форме", () =>
     expect(out.cards?.[1]).toEqual({ title: "Verwerfung", body: "" });
   });
 
+  test("колонок не больше, чем рисует лист", () => {
+    const out = sanitizeSlideContent({
+      cards: [1, 2, 3, 4].map((i) => ({ title: `колонка ${i}`, body: "текст" })),
+    });
+
+    expect(out.cards?.map((c) => c.title)).toEqual(["колонка 1", "колонка 2"]);
+  });
+
   test("чужие поля не протаскиваются дальше", () => {
     const out = sanitizeSlideContent({ title: "Тезис", onclick: "alert(1)", __proto__: { hack: true } });
 

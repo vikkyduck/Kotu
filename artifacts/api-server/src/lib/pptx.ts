@@ -9,7 +9,15 @@ import type {
   SlideContent,
   DiagramSpec,
 } from "@workspace/db";
-import { SLIDE_SPEC, SLIDE_TYPE as T, SHEET } from "@workspace/db/slides";
+import {
+  SLIDE_SPEC,
+  SLIDE_TYPE as T,
+  BRAND_PALETTE,
+  SLIDE_TEXT,
+  SLIDE_SEAM,
+  MAX_CARDS,
+  type BrandColor,
+} from "@workspace/db/slides";
 
 /**
  * Сборка PPTX по утверждённой раскадровке. Макеты — раздел 9 брендбука
@@ -24,33 +32,14 @@ const inch = (pt: number): number => pt / 72;
 /** Музейное поле по краям: текст не прижимается к обрезу листа. */
 const MARGIN = inch(SLIDE_SPEC.margin);
 
-/**
- * Палитра пакета может прийти неполной — фолбэки из брендбука (раздел 2),
- * чтобы колода собиралась всегда.
- */
-const BRAND_FALLBACK = {
-  archiveBlack: "#1D1E24",
-  deepIndigo: "#232638",
-  charcoal: "#2B292B",
-  agedPaper: "#D8C7A7",
-  deepSepia: "#C4AD87",
-  etchingInk: "#302B27",
-  burntUmber: "#7B432F",
-  museumIndigo: "#677184",
-  driedCarmine: "#955A52",
-  dullGold: "#B08D57",
-} as const;
+/** pptxgenjs ждёт hex без решётки — в базе цвета лежат как #RRGGBB. */
+function hex(value: string): string {
+  return value.replace(/^#/, "").toUpperCase();
+}
 
-type BrandColor = keyof typeof BRAND_FALLBACK;
-
-/**
- * Цвет букв на слайде. Один на всю колоду и чисто белый: тёплые бежевые
- * и сепия читались на тёмном как приглушённые, а умбра и музейный индиго
- * не дотягивали до нормы контраста (4.3 и 3.4 при норме 4.5).
- */
-const TEXT = "FFFFFF";
-/** Цвет шва между колонками сравнения — тонкая линия старой сшивки. */
-const SEAM = "65594E";
+/** Цвет букв и шва — из общей таблицы, как у PDF и предпросмотра. */
+const TEXT = hex(SLIDE_TEXT);
+const SEAM = hex(SLIDE_SEAM);
 
 interface Style {
   display: string;
@@ -58,17 +47,17 @@ interface Style {
   color: (name: BrandColor) => string;
 }
 
-/** pptxgenjs ждёт hex без решётки — в базе цвета лежат как #RRGGBB. */
-function hex(value: string): string {
-  return value.replace(/^#/, "").toUpperCase();
-}
-
+/**
+ * Гарнитура — Manrope, как в PDF и предпросмотре; из пакета её не берём:
+ * кегли общей таблицы подобраны под неё, и колода не должна выходить
+ * в двух гарнитурах. Палитра пакета может прийти неполной — тогда брендбук.
+ */
 function makeStyle(pack: StylePack | null): Style {
   const palette = pack?.palette ?? {};
   return {
-    display: pack?.typography?.display ?? "Manrope",
-    body: pack?.typography?.body ?? "Manrope",
-    color: (name) => hex(palette[name] ?? BRAND_FALLBACK[name]),
+    display: "Manrope",
+    body: "Manrope",
+    color: (name) => hex(palette[name] ?? BRAND_PALETTE[name]),
   };
 }
 
@@ -359,7 +348,7 @@ function addComparison(out: PptxGenJS.Slide, c: SlideContent, img: string | null
   const colW = PAGE_W / 2 - MARGIN - 0.45;
 
   const cards = c.cards ?? [];
-  cards.slice(0, 2).forEach((card, i) => {
+  cards.slice(0, MAX_CARDS).forEach((card, i) => {
     const runs: PptxGenJS.TextProps[] = [
       {
         text: card.title,
@@ -479,9 +468,9 @@ function addDiagram(out: PptxGenJS.Slide, c: SlideContent, spec: DiagramSpec, st
     return;
   }
 
-  // pillars: колонки рядом. Больше четырёх в строку листа не влезает —
-  // лишние опоры отбрасываем, состав всё равно виден в раскадровке.
-  const items = spec.items.slice(0, 4);
+  // pillars: колонки рядом. Больше maxItems в строку листа не влезает;
+  // раскадровка столько и не даёт, а старые схемы режутся одинаково везде.
+  const items = spec.items.slice(0, SLIDE_SPEC.diagram.maxItems);
   const gap = 0.45;
   const colW = (PAGE_W - MARGIN * 2 - gap * (items.length - 1)) / items.length;
   items.forEach((it, i) => {

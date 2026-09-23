@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/hooks/use-app';
 import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
 import { Icon } from '@/lib/icons';
+import { send, json } from '@/lib/http';
+import { KIND_LABEL, docKind } from '@/lib/library-items';
 
 /**
  * Новая презентация: из чего её собрать.
@@ -29,13 +31,6 @@ interface StylePackItem {
   id: number;
   name: string;
 }
-
-const DOC_KIND_RU: Record<string, string> = {
-  book: 'книга',
-  article: 'статья',
-  note: 'заметка',
-  transcript: 'расшифровка · имена скрыты',
-};
 
 interface Props {
   active: boolean;
@@ -117,31 +112,26 @@ export function DeckForm({ active, onCreated }: Props) {
       // Явный выбор либо первый из списка; список пуст (сеть моргнула) —
       // поле не шлём, сервер возьмёт первый доступный сам.
       const stylePackId = pickedPack ?? packs[0]?.id;
-      const body = {
-        ...(pickedLecture !== null
+      const source =
+        pickedLecture !== null
           ? { sourceKind: 'lecture', sourceId: pickedLecture }
           : pickedDoc !== null
             ? { sourceKind: 'document', sourceId: pickedDoc }
-            : { sourceKind: 'raw', rawText: raw }),
-        ...(stylePackId !== undefined ? { stylePackId } : {}),
-      };
-      const res = await fetch('/api/decks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        const created = await res.json();
-        clearRawText();
-        setPickedLecture(null);
-        setPickedPack(null);
-        onCreated(created.id);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast(data.message ?? 'Не удалось создать презентацию');
+            : { sourceKind: 'raw', rawText: raw };
+      const body = { ...source, ...(stylePackId !== undefined ? { stylePackId } : {}) };
+      const r = await send('/api/decks', json('POST', body), 'Не удалось создать презентацию');
+      if (!r.ok) {
+        toast(r.message);
+        return;
       }
-    } catch {
-      toast('Нет связи с сервером. Попробуйте ещё раз.');
+      const created = (await r.res.json()) as { id: number };
+      // Черновик стираем, только если колода собрана из него: текст, который
+      // лежал рядом с выбранной лекцией, сервер так и не получил.
+      if (source.sourceKind === 'raw') clearRawText();
+      setPickedLecture(null);
+      setPickedDoc(null);
+      setPickedPack(null);
+      onCreated(created.id);
     } finally {
       setBusy(false);
     }
@@ -206,7 +196,7 @@ export function DeckForm({ active, onCreated }: Props) {
                 </span>
                 <span className="rt">
                   <b>{d.title}</b>
-                  <span>{DOC_KIND_RU[d.kind] ?? 'документ'}</span>
+                  <span>{KIND_LABEL[docKind(d.kind)]}</span>
                 </span>
                 {pickedDoc === d.id && (
                   <span className="chev sel-mark"><Icon name="check" /></span>
@@ -220,7 +210,14 @@ export function DeckForm({ active, onCreated }: Props) {
         <textarea
           className="topic"
           value={rawText}
-          onChange={(e) => setRawText(e.target.value)}
+          onChange={(e) => {
+            setRawText(e.target.value);
+            // Вставила свой текст — значит, собирать из него, а не из выбранного выше.
+            if (e.target.value.trim() !== '') {
+              setPickedLecture(null);
+              setPickedDoc(null);
+            }
+          }}
           placeholder="Вставьте текст выступления — хотя бы пару абзацев."
         />
 

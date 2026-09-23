@@ -48,6 +48,113 @@ export const LAYOUT_RU: Record<SlideLayout, string> = {
   diagram: "Схема",
 };
 
+/** Содержимое слайда. Поля необязательные: у каждого макета свои. */
+export interface SlideContent {
+  eyebrow?: string;
+  title?: string;
+  subtitle?: string;
+  bullets?: string[];
+  cards?: { title: string; body: string }[];
+  quote?: string;
+  attribution?: string;
+  /**
+   * «Рабочий вопрос» / «вопрос к материалу» — приём брендбука на слайдах
+   * теории и клинического фрагмента: слайд заканчивается не выводом,
+   * а вопросом к слушателю.
+   */
+  question?: string;
+  /** Музейная подпись под изображением: «PLATE V · PSYCHIC ATLAS». */
+  plate?: string;
+}
+
+/** Все поля содержимого — для перебора там, где форма собирает content. */
+export const SLIDE_FIELDS = [
+  "eyebrow",
+  "title",
+  "subtitle",
+  "bullets",
+  "cards",
+  "quote",
+  "attribution",
+  "question",
+  "plate",
+] as const satisfies readonly (keyof SlideContent)[];
+
+export type SlideField = (typeof SLIDE_FIELDS)[number];
+
+/**
+ * Какие поля осмысленны на каком макете. По этой таблице автор правит слайд
+ * руками, и по ней же модель переписывает его словами (lib/handlers/reslide.ts):
+ * автор видит ровно то, что попадёт на слайд. Новый макет без строки здесь
+ * не соберётся.
+ */
+export const FIELDS_BY_LAYOUT: Record<SlideLayout, readonly SlideField[]> = {
+  cover: ["eyebrow", "title", "subtitle"],
+  divider: ["eyebrow", "title"],
+  theory: ["title", "bullets", "question", "plate"],
+  quote: ["quote", "attribution"],
+  clinical: ["title", "bullets", "question"],
+  comparison: ["title", "cards"],
+  final: ["title", "subtitle"],
+  diagram: ["title"],
+};
+
+/** Колонок у сопоставления — две: столько рисуют все три движка и правит форма. */
+export const MAX_CARDS = 2;
+
+/**
+ * Схема diagram-слайда, которую рисует код, а не художник: flow — шаги со
+ * стрелками сверху вниз, pillars — колонки рядом. 2..SLIDE_SPEC.diagram.maxItems
+ * элементов, label ≤60 знаков, sub ≤120 — пределы держит разбор раскадровки.
+ */
+export type DiagramSpec = {
+  kind: "flow" | "pillars";
+  items: { label: string; sub?: string }[];
+};
+
+/**
+ * Где у макета образ. Сторону (слева/справа) слушают только эти три —
+ * обложка и разделитель ставят образ справа, сопоставление — полосой сверху.
+ */
+const SIDED_LAYOUTS: readonly string[] = ["theory", "quote", "clinical"];
+/** Макеты без образа: финал выводит только текст, схему рисует код. */
+const NO_IMAGE_LAYOUTS: readonly string[] = ["final", "diagram"];
+
+/** Бывает ли у макета образ — иначе картинку оплатили бы и нигде не показали. */
+export const layoutHasImage = (layout: string): boolean => !NO_IMAGE_LAYOUTS.includes(layout);
+
+/** Слушает ли макет сторону образа. */
+export const layoutSided = (layout: string): boolean => SIDED_LAYOUTS.includes(layout);
+
+/**
+ * Палитра брендбука «Архивный сон» (раздел 2). Живая палитра приходит из
+ * стилевого пакета; эта — на случай, когда пакет её не задал, и её же пишет
+ * сид пакета.
+ */
+export const BRAND_PALETTE = {
+  archiveBlack: "#1D1E24",
+  deepIndigo: "#232638",
+  charcoal: "#2B292B",
+  agedPaper: "#D8C7A7",
+  deepSepia: "#C4AD87",
+  etchingInk: "#302B27",
+  burntUmber: "#7B432F",
+  museumIndigo: "#677184",
+  driedCarmine: "#955A52",
+  dullGold: "#B08D57",
+} as const;
+
+export type BrandColor = keyof typeof BRAND_PALETTE;
+
+/**
+ * Цвет букв на слайде. Один на всю колоду и чисто белый: тёплые бежевые
+ * и сепия читались на тёмном как приглушённые, а умбра и музейный индиго
+ * не дотягивали до нормы контраста (4.3 и 3.4 при норме 4.5).
+ */
+export const SLIDE_TEXT = "#FFFFFF";
+/** Шов между колонками сравнения — волосяная линия старой сшивки. */
+export const SLIDE_SEAM = "#65594E";
+
 /** Лист 16:9 в пунктах — система координат всех чисел ниже. */
 export const SHEET = { width: 960, height: 540 } as const;
 
@@ -97,4 +204,8 @@ export const SLIDE_SPEC = {
   },
   /** У сопоставления образ идёт полосой сверху — это доля ВЫСОТЫ листа. */
   comparisonBand: 0.38,
+  diagram: {
+    /** Больше четырёх опор в строку листа не встаёт; шагов раскадровка даёт столько же. */
+    maxItems: 4,
+  },
 } as const;
