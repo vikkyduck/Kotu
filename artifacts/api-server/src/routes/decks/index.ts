@@ -24,7 +24,7 @@ import { deckToLibrary, dropDeckCopies } from "../../lib/work-doc";
 import { DECKS_DIR } from "../../lib/paths";
 import { buildDeckPptx } from "../../lib/pptx";
 import { buildDeckPdf } from "../../lib/pdf";
-import { sanitizeSlideContent } from "../../lib/slide-content";
+import { sanitizeSlideContent, settleSlides } from "../../lib/slide-content";
 import { deckStylePack } from "../../lib/deck-style";
 import { MAX_SOURCE_CHARS, SOURCE_GONE } from "../../lib/handlers/storyboard";
 import { parseId } from "../../lib/parse-id";
@@ -74,6 +74,16 @@ async function slideOr404(deck: Deck, req: Request, res: Response): Promise<Deck
     return null;
   }
   return slide;
+}
+
+/** Слайды колоды по порядку — для экрана и выгрузки, текст в полях макета. */
+async function deckSlides(deckId: number): Promise<DeckSlide[]> {
+  const rows = await db
+    .select()
+    .from(deckSlidesTable)
+    .where(eq(deckSlidesTable.deckId, deckId))
+    .orderBy(asc(deckSlidesTable.ord));
+  return settleSlides(rows);
 }
 
 /** В ошибке колода стоит — не «работает»: сказать, что делать. */
@@ -145,11 +155,7 @@ router.get("/decks/:id", async (req, res): Promise<void> => {
   const deck = await deckOr404(req, res);
   if (!deck) return;
 
-  const slides = await db
-    .select()
-    .from(deckSlidesTable)
-    .where(eq(deckSlidesTable.deckId, deck.id))
-    .orderBy(asc(deckSlidesTable.ord));
+  const slides = await deckSlides(deck.id);
 
   const images = await db
     .select()
@@ -567,11 +573,7 @@ router.get("/decks/:id/export", async (req, res): Promise<void> => {
     return;
   }
 
-  const slides = await db
-    .select()
-    .from(deckSlidesTable)
-    .where(eq(deckSlidesTable.deckId, deck.id))
-    .orderBy(asc(deckSlidesTable.ord));
+  const slides = await deckSlides(deck.id);
 
   const images = await db
     .select()
