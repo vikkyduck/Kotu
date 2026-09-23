@@ -154,6 +154,20 @@ const forgotByIp = createRateLimiter({ limit: 5, windowMs: FORGOT_WINDOW_MS });
 const forgotByEmail = createRateLimiter({ limit: 3, windowMs: FORGOT_WINDOW_MS });
 
 /**
+ * Ключ счётчика почты — sha256, а не сама строка: введённую почту присылает
+ * аноним, и сырой ключ был бы размером с тело запроса (до 5 МБ) и жил бы час.
+ * Хэш фиксированной длины, и заодно чужие почты не лежат в памяти открытым текстом.
+ */
+function emailKey(email: string): string {
+  return createHash("sha256").update(email).digest("hex");
+}
+
+/** Для тестов: сколько ключей держат счётчики «забыли пароль». */
+export function forgotLimiterSizes(): { byIp: number; byEmail: number } {
+  return { byIp: forgotByIp.size(), byEmail: forgotByEmail.size() };
+}
+
+/**
  * Можно ли обработать запрос сброса, и если да — засчитать его. Решение не
  * зависит от того, есть ли такая почта в базе: иначе отказ выдавал бы, кто
  * зарегистрирован. Запрос, отказанный по адресу, лимит почты не расходует:
@@ -163,7 +177,8 @@ export function allowForgotRequest(ip: string, email: string): boolean {
   if (forgotByIp.blocked(ip)) return false;
   forgotByIp.hit(ip);
   if (email === "") return true;
-  if (forgotByEmail.blocked(email)) return false;
-  forgotByEmail.hit(email);
+  const key = emailKey(email);
+  if (forgotByEmail.blocked(key)) return false;
+  forgotByEmail.hit(key);
   return true;
 }
