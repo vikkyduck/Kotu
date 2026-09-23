@@ -5,7 +5,8 @@
 #
 # Запуск с компьютера:  ssh root@5.129.198.180 bash -s < ~/kotu/ops/dump-counts.sh
 set -euo pipefail
-TABLES="transcriptions documents lectures decks"
+# Тот же список, что в описи deploy.sh (строки_*).
+TABLES="transcriptions documents folders lectures decks users"
 printf '%-45s' "дамп"; for t in $TABLES; do printf '%16s' "$t"; done; echo
 for f in /opt/backups/db/kotu-*.dump /opt/backups/predeploy/*/kotu.dump; do
   [ -f "$f" ] || continue

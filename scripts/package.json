@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "hello": "tsx ./src/hello.ts",
     "seed-style-pack": "tsx ./src/seed-style-pack.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
