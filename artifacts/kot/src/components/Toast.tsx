@@ -1,12 +1,11 @@
 import { useApp } from '@/hooks/use-app';
-import { Icon } from '@/lib/icons';
 
+/** Без значка: через тост идут и удачи, и отказы — текст говорит сам. */
 export function Toast() {
   const { toastMsg } = useApp();
-  
+
   return (
     <div className={`toast ${toastMsg ? 'show' : ''}`} id="toast">
-      <Icon name="check" />
       <span>{toastMsg}</span>
     </div>
   );

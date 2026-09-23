@@ -559,7 +559,6 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
   background:var(--press-bg);color:var(--press-ink);padding:13px 20px;font-size:15px;
   box-shadow:var(--shadow-lg);opacity:0;transition:opacity .3s var(--ease),transform .3s var(--ease);
   z-index:80;display:flex;gap:10px;align-items:center;max-width:90vw}
-.toast .ic-svg{width:17px;height:17px;flex-shrink:0}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
 /* ── Вход ────────────────────────────────────────────────────────────── */
