@@ -204,8 +204,23 @@ export function SlideViewer({
   // Судьба образа — по последней попытке; вердикт автору стоит видеть.
   const last = lastImageBySlide(deck.images).get(slide.id) ?? null;
 
-  /** Сохранить форму; true — сервер принял (об отказе patchSlide сказал сам). */
-  const save = async (): Promise<boolean> => {
+  // Образ на схеме и финале сервер не принимает — и правильно делает.
+  const brief = form.imageBrief.trim();
+  let briefChange: string | null | undefined;
+  if (layoutHasImage(form.layout)) {
+    if (brief === '') briefChange = slide.imageBrief !== null ? null : undefined;
+    else if (brief !== slide.imageBrief) briefChange = brief;
+  }
+  // Новый образ слайду без картинки на готовой колоде сервер начинает рисовать
+  // прямо при сохранении — так же, как в раскадровке.
+  const drawsOnSave =
+    deck.status === 'ready' && slide.imageId === null && typeof briefChange === 'string';
+
+  /**
+   * Сохранить форму; true — сервер принял (об отказе patchSlide сказал сам).
+   * instruction — замечание к образу, если сохранение само начнёт рисовать.
+   */
+  const save = async (instruction?: string): Promise<boolean> => {
     setBusy(true);
     try {
       const body: Record<string, unknown> = {
@@ -213,12 +228,8 @@ export function SlideViewer({
         notes: form.notes,
         layout: form.layout,
       };
-      // Образ на схеме и финале сервер не принимает — и правильно делает.
-      if (layoutHasImage(form.layout)) {
-        const brief = form.imageBrief.trim();
-        if (brief === '' && slide.imageBrief !== null) body.imageBrief = null;
-        else if (brief !== '' && brief !== slide.imageBrief) body.imageBrief = brief;
-      }
+      if (briefChange !== undefined) body.imageBrief = briefChange;
+      if (instruction) body.instruction = instruction;
       if (!(await patchSlide(slide.id, body))) return false;
       dirty.current = false;
       setDirtyView(false);
@@ -238,7 +249,17 @@ export function SlideViewer({
     }
     // Несохранённые правки модель не видит, а её ответ под ними не показался бы
     // и затёрся бы следующим «Сохранить» — поэтому сначала сохраняем.
-    if (dirty.current && !(await save())) return;
+    if (dirty.current) {
+      if (drawsOnSave) {
+        // Сохранение уже начало рисовать — замечание уехало с ним; второй
+        // запрос к занятой колоде получил бы отказ.
+        if (!(await save(what === 'image' ? text : undefined))) return;
+        if (what === 'image') setInstruction('');
+        else toast('Рисую образ — о тексте попросите, когда дорисую');
+        return;
+      }
+      if (!(await save())) return;
+    }
     setBusy(true);
     try {
       if (await (what === 'text' ? rewrite : redraw)(slide.id, text)) setInstruction('');
