@@ -13,6 +13,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# pnpm стоит в ~/.local/bin, а этот каталог не прописан в профилях оболочки:
+# из «голого» терминала скрипт падал на `pnpm: command not found`.
+command -v pnpm >/dev/null || export PATH="$HOME/.local/bin:$HOME/Library/pnpm:$PATH"
+command -v pnpm >/dev/null || { echo "❌ pnpm не найден (ищу в PATH, ~/.local/bin, ~/Library/pnpm)"; exit 1; }
+
 SERVER="${SERVER_USER:-root}@${SERVER_HOST:-5.129.198.180}"
 
 echo "==> [1/4] Typecheck + сборка фронта"
