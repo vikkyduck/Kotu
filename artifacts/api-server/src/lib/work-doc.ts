@@ -13,7 +13,7 @@ import {
 import { LIBRARY_DIR } from "./paths";
 import { archiveAndRemove, writeDataFile } from "./archive";
 import type { IngestPayload } from "./handlers/ingest";
-import { enqueue } from "./jobs";
+import { enqueue, QUEUED_MESSAGE } from "./jobs";
 import { logger } from "./logger";
 
 /**
@@ -87,67 +87,72 @@ export async function upsertWorkDoc(opts: {
     mime: "text/plain",
   });
 
-  // Уникальный индекс превращает гонку двух синхронизаций в спокойное
-  // «второй просто обновит».
-  const inserted = await db
-    .insert(documentsTable)
-    .values({
-      ownerId: opts.ownerId,
-      title: opts.title,
-      kind: opts.kind,
-      ...opts.values,
-      folderId: opts.folderId ?? null,
-      sourcePath: filePath,
-      mime: "text/plain",
-      status: "parsing",
-      statusMessage: "В очереди…",
-    })
-    .onConflictDoNothing()
-    .returning({ id: documentsTable.id });
-
-  let docId = inserted[0]?.id;
-  if (docId === undefined) {
-    const [existing] = await db
-      .select({ id: documentsTable.id })
-      .from(documentsTable)
-      .where(eq(opts.link.column, opts.link.id))
-      .limit(1);
-    if (!existing) return null;
-    docId = existing.id;
-    await db
-      .update(documentsTable)
-      .set({
+  // Статус копии и её разбор — одной транзакцией: иначе сбой между ними
+  // оставит копию «в очереди» без задачи, и сверка её не заметит.
+  return db.transaction(async (tx) => {
+    // Уникальный индекс превращает гонку двух синхронизаций в спокойное
+    // «второй просто обновит».
+    const inserted = await tx
+      .insert(documentsTable)
+      .values({
+        ownerId: opts.ownerId,
         title: opts.title,
-        ...(opts.folderId !== undefined && { folderId: opts.folderId }),
+        kind: opts.kind,
+        ...opts.values,
+        folderId: opts.folderId ?? null,
         sourcePath: filePath,
+        mime: "text/plain",
         status: "parsing",
-        statusMessage: "В очереди…",
-        error: null,
+        statusMessage: QUEUED_MESSAGE,
       })
-      .where(eq(documentsTable.id, docId));
-  }
+      .onConflictDoNothing()
+      .returning({ id: documentsTable.id });
 
-  // Правки идут сериями (каждое исправленное слово — сохранение). Разбор,
-  // который уже ждёт в очереди, и так прочтёт свежий файл — второй не нужен.
-  const [waiting] = await db
-    .select({ id: jobsTable.id })
-    .from(jobsTable)
-    .where(
-      and(
-        eq(jobsTable.kind, "doc.ingest"),
-        eq(jobsTable.entityId, docId),
-        eq(jobsTable.status, "queued"),
-      ),
-    )
-    .limit(1);
-  if (!waiting) {
-    await enqueue("doc.ingest", docId, {
-      sourcePath: filePath,
-      mime: "text/plain",
-      filename: opts.fileName,
-    } satisfies IngestPayload);
-  }
-  return docId;
+    let docId = inserted[0]?.id;
+    if (docId === undefined) {
+      const [existing] = await tx
+        .select({ id: documentsTable.id })
+        .from(documentsTable)
+        .where(eq(opts.link.column, opts.link.id))
+        .limit(1);
+      if (!existing) return null;
+      docId = existing.id;
+      await tx
+        .update(documentsTable)
+        .set({
+          title: opts.title,
+          ...(opts.folderId !== undefined && { folderId: opts.folderId }),
+          sourcePath: filePath,
+          status: "parsing",
+          statusMessage: QUEUED_MESSAGE,
+          error: null,
+        })
+        .where(eq(documentsTable.id, docId));
+    }
+
+    // Правки идут сериями (каждое исправленное слово — сохранение). Разбор,
+    // который уже ждёт в очереди, и так прочтёт свежий файл — второй не нужен.
+    const [waiting] = await tx
+      .select({ id: jobsTable.id })
+      .from(jobsTable)
+      .where(
+        and(
+          eq(jobsTable.kind, "doc.ingest"),
+          eq(jobsTable.entityId, docId),
+          eq(jobsTable.status, "queued"),
+        ),
+      )
+      .limit(1);
+    if (!waiting) {
+      await enqueue(
+        "doc.ingest",
+        docId,
+        { sourcePath: filePath, mime: "text/plain", filename: opts.fileName } satisfies IngestPayload,
+        tx,
+      );
+    }
+    return docId;
+  });
 }
 
 /** Текст готовой лекции: заголовки глав и сам текст, по порядку. */
