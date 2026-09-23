@@ -21,8 +21,10 @@ command -v pnpm >/dev/null || { echo "❌ pnpm не найден (ищу в PATH
 
 SERVER="${SERVER_USER:-root}@${SERVER_HOST:-5.129.198.180}"
 
-echo "==> [1/6] Typecheck + сборка фронта"
-BASE_PATH=/ PORT=3000 NODE_ENV=production pnpm --filter @workspace/kot run build
+echo "==> [1/6] Проверка типов, тесты, сборка фронта"
+pnpm run typecheck
+pnpm test
+NODE_ENV=production pnpm --filter @workspace/kot run build
 
 echo "==> [2/6] Сборка API-сервера"
 pnpm --filter @workspace/api-server run build
@@ -55,6 +57,7 @@ for d in library uploads decks archive; do
 done
 cd /tmp
 q() { sudo -u postgres psql -d kotu -v ON_ERROR_STOP=1 -Atc "$1"; }
+# Тот же список таблиц — TABLES в ops/dump-counts.sh.
 for t in transcriptions documents folders lectures decks users; do
   echo "строки_$t $(q "select count(*) from $t")"
 done
