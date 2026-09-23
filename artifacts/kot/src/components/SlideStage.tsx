@@ -10,13 +10,15 @@
 import type { CSSProperties } from 'react';
 import {
   SLIDE_TYPE as T,
+  SLIDE_LEADING,
+  FONT_LINE,
   SLIDE_SPEC,
   SHEET,
-  BRAND_PALETTE,
   SLIDE_TEXT as TEXT,
   SLIDE_SEAM as SEAM,
   MAX_CARDS,
   layoutHasImage,
+  slideColor,
   type BrandColor,
   type DiagramSpec,
   type SlideContent,
@@ -31,6 +33,12 @@ export interface StageSlide {
 /** Кегль из пунктов общей таблицы в доли ширины пластины. */
 const pt = (size: number) => `${(size / SHEET.width) * 100}cqw`;
 
+/**
+ * Межстрочный из той же таблицы, что и выгрузка. В файле это множитель к
+ * собственной высоте строки шрифта, в CSS — к кеглю, отсюда FONT_LINE.
+ */
+const lh = (k: keyof typeof SLIDE_LEADING) => SLIDE_LEADING[k] * FONT_LINE;
+
 /** Доля ширины под образ — из той же таблицы, что и выгрузка. */
 const share = (v: number) => `0 0 ${v * 100}%`;
 
@@ -44,10 +52,7 @@ interface Props {
 }
 
 export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) {
-  const color = (name: BrandColor): string => {
-    const v = palette?.[name] ?? BRAND_PALETTE[name];
-    return v.startsWith('#') ? v : `#${v}`;
-  };
+  const color = (name: BrandColor): string => slideColor(palette, name);
   // Фон листа и музейное поле (--m для .stg-pad и .stg-folio) — у всех макетов одни.
   const sheet = {
     background: color('archiveBlack'),
@@ -78,16 +83,16 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
             {c.eyebrow && (
               <div
                 className="stg-eyebrow"
-                style={{ color: TEXT, fontSize: pt(T.coverEyebrow) }}
+                style={{ color: TEXT, fontSize: pt(T.coverEyebrow), lineHeight: lh('plain') }}
               >
                 {c.eyebrow}
               </div>
             )}
-            <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.coverTitle) }}>
+            <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.coverTitle), lineHeight: lh('title') }}>
               {c.title}
             </div>
             {c.subtitle && (
-              <div className="stg-body" style={{ color: TEXT, fontSize: pt(T.coverSubtitle) }}>
+              <div className="stg-body" style={{ color: TEXT, fontSize: pt(T.coverSubtitle), lineHeight: lh('plain') }}>
                 {c.subtitle}
               </div>
             )}
@@ -108,12 +113,12 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
             {c.eyebrow && (
               <div
                 className="stg-eyebrow"
-                style={{ color: TEXT, fontSize: pt(T.dividerEyebrow) }}
+                style={{ color: TEXT, fontSize: pt(T.dividerEyebrow), lineHeight: lh('plain') }}
               >
                 {c.eyebrow}
               </div>
             )}
-            <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.dividerTitle) }}>
+            <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.dividerTitle), lineHeight: lh('title') }}>
               {c.title}
             </div>
           </div>
@@ -131,14 +136,14 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
           <div className="stg-col stg-pad stg-mid stg-quote">
             <div
               className="stg-display"
-              style={{ color: TEXT, fontSize: pt(T.quote), lineHeight: 1.15 }}
+              style={{ color: TEXT, fontSize: pt(T.quote), lineHeight: lh('quote') }}
             >
-              {c.quote ?? c.title}
+              {c.quote}
             </div>
             {c.attribution && (
               <div
                 className="stg-body"
-                style={{ color: TEXT, fontSize: pt(T.attribution) }}
+                style={{ color: TEXT, fontSize: pt(T.attribution), lineHeight: lh('plain') }}
               >
                 {c.attribution}
               </div>
@@ -152,24 +157,23 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
 
   /** Клинический фрагмент: спокойная колонка абзацев. */
   if (slide.layout === 'clinical') {
-    const paragraphs = c.bullets?.length ? c.bullets : c.subtitle ? [c.subtitle] : [];
-    const ink = TEXT;
-    return (
+    const paragraphs = c.bullets ?? [];
+        return (
       <div className="stg" style={sheet}>
         <div className={`stg-row ${side === 'left' ? 'rev' : ''}`}>
           <div className="stg-col stg-pad">
-            <div className="stg-display" style={{ color: ink, fontSize: pt(T.clinicalTitle) }}>
+            <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.clinicalTitle), lineHeight: lh('plain') }}>
               {c.title}
             </div>
             <div className="stg-flow">
               {paragraphs.map((p, i) => (
-                <p key={i} className="stg-body" style={{ color: ink, fontSize: pt(T.clinicalBody) }}>
+                <p key={i} className="stg-body" style={{ color: TEXT, fontSize: pt(T.clinicalBody), lineHeight: lh('body') }}>
                   {p}
                 </p>
               ))}
             </div>
             {c.question && (
-              <div className="stg-body" style={{ color: TEXT, fontSize: pt(T.question) }}>
+              <div className="stg-body" style={{ color: TEXT, fontSize: pt(T.question), lineHeight: lh('plain') }}>
                 {c.question}
               </div>
             )}
@@ -191,16 +195,16 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
           </div>
         )}
         <div className="stg-col stg-pad" style={{ flex: 1 }}>
-          <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.comparisonTitle) }}>
+          <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.comparisonTitle), lineHeight: lh('plain') }}>
             {c.title}
           </div>
           <div className="stg-cols" style={{ borderColor: SEAM }}>
             {cards.slice(0, MAX_CARDS).map((card, i) => (
               <div key={i} className="stg-cell">
-                <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.cardTitle) }}>
+                <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.cardTitle), lineHeight: lh('plain') }}>
                   {card.title}
                 </div>
-                <div className="stg-body" style={{ color: TEXT, fontSize: pt(T.cardBody) }}>
+                <div className="stg-body" style={{ color: TEXT, fontSize: pt(T.cardBody), lineHeight: lh('body') }}>
                   {card.body}
                 </div>
               </div>
@@ -218,12 +222,12 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
         <div className="stg-col stg-pad stg-mid" style={{ width: '82%' }}>
           <div
             className="stg-display"
-            style={{ color: TEXT, fontSize: pt(T.finalTitle), lineHeight: 1.1 }}
+            style={{ color: TEXT, fontSize: pt(T.finalTitle), lineHeight: lh('final') }}
           >
-            {c.title ?? c.quote ?? c.subtitle}
+            {c.title ?? c.subtitle}
           </div>
           {c.subtitle && c.title && (
-            <div className="stg-body" style={{ color: TEXT, fontSize: pt(T.finalSubtitle) }}>
+            <div className="stg-body" style={{ color: TEXT, fontSize: pt(T.finalSubtitle), lineHeight: lh('plain') }}>
               {c.subtitle}
             </div>
           )}
@@ -239,11 +243,11 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
     const line = color('museumIndigo');
     const node = (item: { label: string; sub?: string }, i: number) => (
       <div key={i} className="stg-node" style={{ background: panel, borderColor: line }}>
-        <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.nodeLabel) }}>
+        <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.nodeLabel), lineHeight: lh('plain') }}>
           {item.label}
         </div>
         {item.sub && (
-          <div className="stg-body" style={{ color: TEXT, fontSize: pt(T.nodeSub) }}>
+          <div className="stg-body" style={{ color: TEXT, fontSize: pt(T.nodeSub), lineHeight: lh('nodeSub') }}>
             {item.sub}
           </div>
         )}
@@ -252,7 +256,7 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
     return (
       <div className="stg stg-vert" style={sheet}>
         <div className="stg-col stg-pad" style={{ flex: 1 }}>
-          <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.diagramTitle) }}>
+          <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.diagramTitle), lineHeight: lh('title') }}>
             {c.title}
           </div>
           {diagram.kind === 'flow' ? (
@@ -279,24 +283,24 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
   }
 
   /** Теория и всё остальное: тезис, пункты, рабочий вопрос. */
-  const plateCap: CSSProperties = { color: TEXT, fontSize: pt(T.plate) };
+  const plateCap: CSSProperties = { color: TEXT, fontSize: pt(T.plate), lineHeight: lh('plain') };
   return (
     <div className="stg" style={sheet}>
       <div className={`stg-row ${side === 'left' ? 'rev' : ''}`}>
         <div className="stg-col stg-pad">
-          <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.theoryTitle) }}>
+          <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.theoryTitle), lineHeight: lh('title') }}>
             {c.title}
           </div>
           <div className="stg-flow">
             {(c.bullets ?? []).map((b, i) => (
-              <div key={i} className="stg-bullet" style={{ color: TEXT, fontSize: pt(T.bullets) }}>
+              <div key={i} className="stg-bullet" style={{ color: TEXT, fontSize: pt(T.bullets), lineHeight: lh('bullets') }}>
                 <span className="stg-dia">◊</span>
                 <span>{b}</span>
               </div>
             ))}
           </div>
           {c.question && (
-            <div className="stg-body" style={{ color: TEXT, fontSize: pt(T.question) }}>
+            <div className="stg-body" style={{ color: TEXT, fontSize: pt(T.question), lineHeight: lh('plain') }}>
               {c.question}
             </div>
           )}
