@@ -1,5 +1,6 @@
 import { randomBytes, scrypt, timingSafeEqual, createHash } from "node:crypto";
 import { promisify } from "node:util";
+import { isIPv4, isIPv6 } from "node:net";
 import { eq, lt } from "drizzle-orm";
 import { db, usersTable, sessionsTable, type User } from "@workspace/db";
 
@@ -126,6 +127,46 @@ export function createRateLimiter(opts: { limit: number; windowMs: number; maxKe
   };
 }
 
+/** Восемь 16-битных групп IPv6-адреса: «::» раскрыт, IPv4-хвост переведён в две группы. */
+function ipv6Groups(addr: string): number[] {
+  let head = addr;
+  const tail: number[] = [];
+  const v4 = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(addr);
+  if (v4) {
+    const [a, b, c, d] = v4.slice(1).map(Number) as [number, number, number, number];
+    tail.push((a << 8) | b, (c << 8) | d);
+    head = addr.slice(0, v4.index);
+    if (head.endsWith(":") && !head.endsWith("::")) head = head.slice(0, -1);
+  }
+  const parse = (part: string) => (part === "" ? [] : part.split(":").map((h) => parseInt(h, 16)));
+  const gap = head.indexOf("::");
+  if (gap === -1) return [...parse(head), ...tail];
+  const left = parse(head.slice(0, gap));
+  const right = [...parse(head.slice(gap + 2)), ...tail];
+  return [...left, ...new Array<number>(8 - left.length - right.length).fill(0), ...right];
+}
+
+/**
+ * Ключ клиента для счётчиков попыток. Сырой IPv6-адрес ключом быть не может:
+ * у любого абонента минимум /64, то есть 2^64 адресов, и сменой адреса
+ * обходились бы и блокировка входа, и лимит сброса. Поэтому IPv6 сводим к
+ * префиксу /64, а IPv4, пришедший в виде ::ffff:a.b.c.d, — к обычному IPv4,
+ * чтобы один клиент не считался дважды. Нормализуем внутри функций ниже, а не
+ * в маршрутах: новый вызывающий не сможет забыть это сделать.
+ */
+export function clientKey(ip: string | undefined): string {
+  const addr = (ip ?? "").split("%")[0]!; // зона интерфейса (fe80::1%eth0) адрес не меняет
+  if (isIPv4(addr)) return addr;
+  // Не адрес вовсе — такого за nginx не бывает; складываем всё в одну корзину.
+  if (!isIPv6(addr)) return "unknown";
+  const g = ipv6Groups(addr);
+  if (g.slice(0, 5).every((h) => h === 0) && g[5] === 0xffff) {
+    return [g[6]! >> 8, g[6]! & 0xff, g[7]! >> 8, g[7]! & 0xff].join(".");
+  }
+  const prefix = g.slice(0, 4).map((h) => h.toString(16));
+  return `${prefix.join(":")}::/64`;
+}
+
 // Неудачные входы по адресу клиента. Адрес настоящий только благодаря
 // trust proxy в app.ts — без него за nginx у всех был бы 127.0.0.1 и один
 // общий счётчик на весь интернет.
@@ -133,16 +174,17 @@ const LOGIN_MAX_ATTEMPTS = 10;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const loginFailures = createRateLimiter({ limit: LOGIN_MAX_ATTEMPTS, windowMs: LOGIN_WINDOW_MS });
 
-export function tooManyAttempts(ip: string): boolean {
-  return loginFailures.blocked(ip);
+/** ip — как есть из req.ip, ключ считается внутри (см. clientKey). */
+export function tooManyAttempts(ip: string | undefined): boolean {
+  return loginFailures.blocked(clientKey(ip));
 }
 
-export function registerFailedAttempt(ip: string): void {
-  loginFailures.hit(ip);
+export function registerFailedAttempt(ip: string | undefined): void {
+  loginFailures.hit(clientKey(ip));
 }
 
-export function clearAttempts(ip: string): void {
-  loginFailures.reset(ip);
+export function clearAttempts(ip: string | undefined): void {
+  loginFailures.reset(clientKey(ip));
 }
 
 // «Забыли пароль» считаем отдельно от неудачных входов: раньше десяток анонимных
@@ -176,9 +218,10 @@ export function forgotLimiterSizes(): { byIp: number; byEmail: number } {
  * зарегистрирован. Запрос, отказанный по адресу, лимит почты не расходует:
  * уже заблокированный адрес не должен и дальше выжигать чужой ящик.
  */
-export function allowForgotRequest(ip: string, email: string): boolean {
-  if (forgotByIp.blocked(ip)) return false;
-  forgotByIp.hit(ip);
+export function allowForgotRequest(ip: string | undefined, email: string): boolean {
+  const client = clientKey(ip);
+  if (forgotByIp.blocked(client)) return false;
+  forgotByIp.hit(client);
   // Заведомо ненастоящую почту считаем пустой: письма по ней не будет,
   // и занимать ею счётчик почты незачем — хватает лимита адреса.
   if (email === "" || email.length > MAX_EMAIL_LENGTH) return true;
