@@ -39,6 +39,10 @@ function greeting(): string {
 export function Library() {
   const {
     screen,
+    go,
+    openFolderId,
+    openFolder,
+    leaveMissing,
     toast,
     openSheet,
     openTranscription,
@@ -54,11 +58,6 @@ export function Library() {
 
   const [uploading, setUploading] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
-  /**
-   * Открытая папка. Папка — место, куда ЗАХОДЯТ: содержимое остальных не
-   * мешается под ногами, а действия над папкой живут внутри неё.
-   */
-  const [openFolderId, setOpenFolderId] = useState<number | null>(null);
   /** Раскрытый ряд кнопок — у одной карточки за раз. */
   const [menu, setMenu] = useState<{ key: string; menu: CardMenu } | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
@@ -81,12 +80,13 @@ export function Library() {
   }, [active]);
 
   // Папку могли удалить в другой вкладке — тогда выходим наружу, а не показываем
-  // пустой экран несуществующей папки.
+  // пустой экран несуществующей папки. Только когда список уже пришёл: до него
+  // папки нет ни одной, и открытая по адресу выкинула бы в корень.
   useEffect(() => {
-    if (openFolderId === null) return;
+    if (!loaded || openFolderId === null) return;
     if (folders.some((f) => f.id === openFolderId)) return;
-    setOpenFolderId(null);
-  }, [folders, openFolderId]);
+    leaveMissing();
+  }, [loaded, folders, openFolderId, leaveMissing]);
 
   // ── Действия над материалом ─────────────────────────────────────────────
 
@@ -193,7 +193,7 @@ export function Library() {
         if (item && created?.id && (await moveTo(item, created.id, created.name))) return;
         await reload();
         // Создал папку сверху — сразу внутри неё: дальше человек кладёт туда материал.
-        if (!item && created?.id) setOpenFolderId(created.id);
+        if (!item && created?.id) openFolder(created.id);
       })();
     });
   };
@@ -209,7 +209,7 @@ export function Library() {
       toast(r.message);
       return;
     }
-    setOpenFolderId(null);
+    leaveMissing();
     await reload();
     toast('Папка удалена');
   };
@@ -243,8 +243,8 @@ export function Library() {
   const working = buildWorking(data, act);
 
   const countIn = (folderId: number) => items.filter((i) => i.folderId === folderId).length;
-  const openFolder = folders.find((f) => f.id === openFolderId) ?? null;
-  const visible = items.filter((i) => i.folderId === (openFolder ? openFolder.id : null));
+  const folder = folders.find((f) => f.id === openFolderId) ?? null;
+  const visible = items.filter((i) => i.folderId === (folder ? folder.id : null));
 
   // ── Перетаскивание ──────────────────────────────────────────────────────
 
@@ -342,39 +342,39 @@ export function Library() {
 
   // ── Внутри папки ────────────────────────────────────────────────────────
 
-  if (openFolder) {
-    const inside = countIn(openFolder.id);
+  if (folder) {
+    const inside = countIn(folder.id);
     return (
       <section className="screen active" id="s-home">
         {/* Хлебная крошка — тоже цель: перетащил на неё, материал вышел из папки */}
         <button
           className={`btn ghost back-link crumb-drop ${dropTarget === 'root' ? 'drop-over' : ''}`}
-          onClick={() => setOpenFolderId(null)}
+          onClick={() => go('s-home')}
           {...dropZone('root', setDropTarget, (e) => onDropTo(e, null))}
         >
           <Icon name="back" /> Библиотека
         </button>
 
         <div className="folder-head">
-          <h2 className="h2">{openFolder.name}</h2>
+          <h2 className="h2">{folder.name}</h2>
           <button
             className="chg"
-            onClick={() => renameAt(`/api/folders/${openFolder.id}`, openFolder.name, 'name')}
+            onClick={() => renameAt(`/api/folders/${folder.id}`, folder.name, 'name')}
           >
             переименовать
           </button>
         </div>
         {inside > 0 && <p className="sub">{countLabel(inside)} в папке</p>}
 
-        {filePicker(openFolder.id)}
-        {dropzone(openFolder.id)}
+        {filePicker(folder.id)}
+        {dropzone(folder.id)}
         {uploadingNote}
 
         {visible.length > 0 && <div className="doc-list">{cards(visible)}</div>}
 
         <button
           className="btn danger folder-remove"
-          onClick={() => void removeFolder(openFolder, inside)}
+          onClick={() => void removeFolder(folder, inside)}
         >
           <Icon name="trash" /> Удалить папку
         </button>
@@ -480,7 +480,7 @@ export function Library() {
             dropTarget={dropTarget}
             setDropTarget={setDropTarget}
             onDropTo={onDropTo}
-            onOpen={setOpenFolderId}
+            onOpen={openFolder}
             onCreate={() => createFolder()}
           />
 
