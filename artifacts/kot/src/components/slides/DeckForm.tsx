@@ -3,7 +3,9 @@ import { useApp } from '@/hooks/use-app';
 import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
 import { Icon } from '@/lib/icons';
 import { send, json } from '@/lib/http';
-import { KIND_LABEL, docKind } from '@/lib/library-items';
+import { pressable } from '@/lib/deck';
+import { KIND_ICON, KIND_LABEL, docKind } from '@/lib/library-items';
+import type { DocumentStatus, LectureStatus } from '@workspace/db/schema';
 
 /**
  * Новая презентация: из чего её собрать.
@@ -16,7 +18,7 @@ import { KIND_LABEL, docKind } from '@/lib/library-items';
 interface LectureItem {
   id: number;
   title: string;
-  status: string;
+  status: LectureStatus;
 }
 
 /** Документ библиотеки — тоже законный источник презентации. */
@@ -24,7 +26,8 @@ interface DocItem {
   id: number;
   title: string;
   kind: string;
-  status: string;
+  status: DocumentStatus;
+  transcriptionId: number | null;
 }
 
 interface StylePackItem {
@@ -33,15 +36,21 @@ interface StylePackItem {
 }
 
 interface Props {
-  active: boolean;
   onCreated: (deckId: number) => void;
 }
 
-export function DeckForm({ active, onCreated }: Props) {
+const LIST_FAIL = 'Не удалось загрузить список';
+
+export function DeckForm({ onCreated }: Props) {
   const { go, toast, deckSeed } = useApp();
 
-  const [lectures, setLectures] = useState<LectureItem[]>([]);
-  const [docs, setDocs] = useState<DocItem[]>([]);
+  // null — список ещё не пришёл: «пока нет» говорим только о настоящей пустоте.
+  const [lectures, setLectures] = useState<LectureItem[] | null>(null);
+  const [docs, setDocs] = useState<DocItem[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Имена записей: копия расшифровки со скрытыми именами называется
+  // нейтрально («Расшифровка от …»), а автору нужно настоящее имя, как в библиотеке.
+  const [records, setRecords] = useState<{ id: number; title: string }[]>([]);
   const [packs, setPacks] = useState<StylePackItem[]>([]);
 
   const [pickedLecture, setPickedLecture] = useState<number | null>(null);
@@ -50,41 +59,49 @@ export function DeckForm({ active, onCreated }: Props) {
   const [pickedPack, setPickedPack] = useState<number | null>(null);
   // Вставленный текст — черновик: до нажатия кнопки сервер о нём не знает,
   // поэтому он переживает закрытие вкладки сам.
-  const [rawText, setRawText, clearRawText] = useDraft('deck-text', active);
+  const [rawText, setRawText, clearRawText] = useDraft('deck-text', true);
   const [busy, setBusy] = useState(false);
 
-  useUnsavedWarning(active && rawText.trim() !== '');
+  useUnsavedWarning(rawText.trim() !== '');
 
   const load = useCallback(async () => {
-    try {
-      const [l, d, p] = await Promise.all([
-        fetch('/api/lectures').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/documents').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/style-packs').then((r) => (r.ok ? r.json() : null)),
-      ]);
-      if (l) setLectures((l as LectureItem[]).filter((x) => x.status === 'ready'));
-      // Текст лекции и текст колоды — их поисковые копии: лекция уже стоит
-      // отдельным списком выше, а собирать презентацию из презентации незачем.
-      if (d)
-        setDocs(
-          (d as DocItem[]).filter(
-            (x) => x.status === 'ready' && x.kind !== 'lecture' && x.kind !== 'deck',
-          ),
-        );
-      if (p) setPacks(p);
-    } catch {
-      /* тихо: без списков сервер сам возьмёт стиль по умолчанию */
-    }
+    setLoadError(null);
+    const quiet = (url: string) =>
+      fetch(url)
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+    const [l, d, t, p] = await Promise.all([
+      send('/api/lectures', undefined, LIST_FAIL),
+      send('/api/documents', undefined, LIST_FAIL),
+      // Без имён записей и стилей форма работает: имя копии и стиль по умолчанию.
+      quiet('/api/transcriptions'),
+      quiet('/api/style-packs'),
+    ]);
+    // Не пришло — прежний список остаётся, а вместо «пока нет» видна причина.
+    if (l.ok) {
+      setLectures(((await l.res.json()) as LectureItem[]).filter((x) => x.status === 'ready'));
+    } else setLoadError(l.message);
+    // Текст лекции и текст колоды — их поисковые копии: лекция уже стоит
+    // отдельным списком выше, а собирать презентацию из презентации незачем.
+    if (d.ok) {
+      setDocs(
+        ((await d.res.json()) as DocItem[]).filter(
+          (x) => x.status === 'ready' && x.kind !== 'lecture' && x.kind !== 'deck',
+        ),
+      );
+    } else setLoadError(d.message);
+    if (t) setRecords(t);
+    if (p) setPacks(p);
   }, []);
 
   useEffect(() => {
-    if (active) void load();
-  }, [active, load]);
+    void load();
+  }, [load]);
 
   // Пришли из библиотеки с материалом («сделать презентацию из этого») —
   // источник уже выбран, автору остаётся нажать одну кнопку.
   useEffect(() => {
-    if (!active || !deckSeed) return;
+    if (!deckSeed) return;
     if (deckSeed.sourceKind === 'lecture') {
       setPickedLecture(deckSeed.sourceId);
       setPickedDoc(null);
@@ -92,18 +109,15 @@ export function DeckForm({ active, onCreated }: Props) {
       setPickedDoc(deckSeed.sourceId);
       setPickedLecture(null);
     }
-  }, [active, deckSeed]);
+  }, [deckSeed]);
 
-  useEffect(() => {
-    if (active) return;
-    setPickedLecture(null);
-    setPickedDoc(null);
-    setPickedPack(null);
-  }, [active]);
+  // Колода соберётся из выбранной лекции или документа — вставленный текст
+  // тогда на сервер не уйдёт, и обещать его сохранить нельзя.
+  const fromText = pickedLecture === null && pickedDoc === null;
 
   const create = async () => {
     const raw = rawText.trim();
-    if (pickedLecture === null && pickedDoc === null && raw === '') {
+    if (fromText && raw === '') {
       toast('Выберите лекцию, документ из библиотеки или вставьте текст');
       return;
     }
@@ -144,13 +158,12 @@ export function DeckForm({ active, onCreated }: Props) {
       </button>
 
       <h2 className="h2">Собрать презентацию</h2>
-      <p className="sub">
-        Возьму за основу готовую лекцию, документ из библиотеки — или текст, который вставите.
-      </p>
 
       <div className="panel">
         <div className="fieldlbl">Из готовой лекции</div>
-        {lectures.length === 0 ? (
+        {lectures === null ? (
+          loadError && <p className="doc-meta">{loadError}</p>
+        ) : lectures.length === 0 ? (
           <p className="doc-meta">Готовых лекций пока нет.</p>
         ) : (
           <div className="resume" style={{ marginBottom: 6 }}>
@@ -158,10 +171,11 @@ export function DeckForm({ active, onCreated }: Props) {
               <div
                 key={l.id}
                 className="r sel-lec"
-                onClick={() => {
+                aria-pressed={pickedLecture === l.id}
+                {...pressable(() => {
                   setPickedDoc(null);
                   setPickedLecture((p) => (p === l.id ? null : l.id));
-                }}
+                })}
               >
                 <span className="ri"><Icon name="pen" /></span>
                 <span className="rt">
@@ -178,7 +192,9 @@ export function DeckForm({ active, onCreated }: Props) {
 
         {/* Книга, статья или расшифровка — материал для слайдов не хуже лекции */}
         <div className="fieldlbl">Из библиотеки</div>
-        {docs.length === 0 ? (
+        {docs === null ? (
+          loadError && <p className="doc-meta">{loadError}</p>
+        ) : docs.length === 0 ? (
           <p className="doc-meta">В библиотеке пока нет разобранных документов.</p>
         ) : (
           <div className="resume" style={{ marginBottom: 6 }}>
@@ -186,16 +202,17 @@ export function DeckForm({ active, onCreated }: Props) {
               <div
                 key={d.id}
                 className="r sel-lec"
-                onClick={() => {
+                aria-pressed={pickedDoc === d.id}
+                {...pressable(() => {
                   setPickedLecture(null);
                   setPickedDoc((p) => (p === d.id ? null : d.id));
-                }}
+                })}
               >
                 <span className="ri">
-                  <Icon name={d.kind === 'transcript' ? 'mic' : 'book'} />
+                  <Icon name={KIND_ICON[docKind(d.kind)]} />
                 </span>
                 <span className="rt">
-                  <b>{d.title}</b>
+                  <b>{records.find((t) => t.id === d.transcriptionId)?.title ?? d.title}</b>
                   <span>{KIND_LABEL[docKind(d.kind)]}</span>
                 </span>
                 {pickedDoc === d.id && (
@@ -226,15 +243,20 @@ export function DeckForm({ active, onCreated }: Props) {
           <>
             <div className="fieldlbl">Стиль серии</div>
             <div className="pills">
-              {packs.map((p) => (
-                <span
-                  key={p.id}
-                  className={`pill-opt ${(pickedPack ?? packs[0].id) === p.id ? 'on' : ''}`}
-                  onClick={() => setPickedPack(p.id)}
-                >
-                  {p.name}
-                </span>
-              ))}
+              {packs.map((p) => {
+                const on = (pickedPack ?? packs[0].id) === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`pill-opt ${on ? 'on' : ''}`}
+                    aria-pressed={on}
+                    onClick={() => setPickedPack(p.id)}
+                  >
+                    {p.name}
+                  </button>
+                );
+              })}
             </div>
           </>
         )}
@@ -242,7 +264,7 @@ export function DeckForm({ active, onCreated }: Props) {
 
       {/* Подпись стоит вплотную к кнопке и называет её: пока кнопка не
           нажата, текст живёт только в этом браузере. */}
-      {rawText.trim() !== '' && (
+      {fromText && rawText.trim() !== '' && (
         <p className="draft-note">
           <Icon name="check" /> Чтобы сохранить текст, нажмите «Разложить по слайдам».
           Пока он только в этом браузере.

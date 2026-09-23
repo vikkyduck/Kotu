@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from '@/lib/icons';
+import { useUnsavedWarning } from '@/hooks/use-draft';
 import { SlideStage } from './SlideStage';
 import { MAX_CARDS, SLIDE_FIELDS } from '@workspace/db/slides';
 import {
@@ -12,6 +13,7 @@ import {
   layoutName,
   layoutSided,
   lastImageBySlide,
+  wantsImage,
   type DeckFull,
   type DeckSlide,
   type SlideContent,
@@ -178,6 +180,8 @@ export function SlideViewer({
   };
   const leaveRef = useRef(leave);
   leaveRef.current = leave;
+  // Перезагрузка и закрытие вкладки мимо leave() — их спрашивает браузер.
+  useUnsavedWarning(dirtyView);
 
   // Корень окна: пока поверх вход (сессия кончилась), окно спрятано вместе с
   // приложением — клавиши тогда не его, иначе Escape на экране входа закрыл бы
@@ -384,17 +388,21 @@ export function SlideViewer({
             >
               <Icon name="loop" /> Переделать текст
             </button>
-            {slide.imageBrief !== null && (
+            {/* Перерисовка — у готовой колоды; пока рисует, кнопка на месте, но ждёт */}
+            {wantsImage(slide) && (deck.status === 'ready' || deck.status === 'drawing') && (
               <button
                 className="btn"
-                disabled={busy || working || deck.status !== 'ready'}
+                disabled={busy || working}
                 onClick={() => void askModel('image')}
-                title={deck.status !== 'ready' ? 'Образы ещё не нарисованы' : undefined}
               >
                 <Icon name="loop" /> Перерисовать образ
               </button>
             )}
           </div>
+          {/* Окно закрывает экран колоды — неудачу правки надо сказать здесь */}
+          {deck.status !== 'error' && deck.error && (
+            <p className="tnote bad"><Icon name="info" /> {deck.error}</p>
+          )}
           {last?.status === 'rejected' && last.verdict && (
             <p className="doc-meta" style={{ marginTop: 10 }}>
               Приёмка засомневалась: {last.verdict}
@@ -478,9 +486,7 @@ export function SlideViewer({
           {layoutHasImage(form.layout) && (
             <>
               <label className="vw-field">
-                <span className="fieldlbl">
-                  Мысль образа — что должно быть понятно зрителю. Пусто = слайд без картинки
-                </span>
+                <span className="fieldlbl">Мысль образа</span>
                 <textarea
                   className="topic"
                   rows={2}
