@@ -301,6 +301,8 @@ export function Lecture() {
     }
     toast('Лекция удалена');
     dropEdits(lecture.id);
+    // Правки ушли вместе с лекцией — спрашивать «уйти без сохранения?» не о чем.
+    guard.current = () => false;
     go('s-home');
   };
 
