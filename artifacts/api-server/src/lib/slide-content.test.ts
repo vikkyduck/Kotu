@@ -1,5 +1,5 @@
 import { test, describe, expect } from "vitest";
-import { fieldsLine, sanitizeSlideContent, settleContent } from "./slide-content";
+import { fieldsLine, sanitizeSlideContent, settleContent, settleSlides } from "./slide-content";
 
 /**
  * Содержимое слайда приходит из двух ненадёжных мест: от модели и из правок
@@ -81,6 +81,21 @@ describe("приведение слайда к строгой форме", () =>
     const c = { quote: "Цитата", title: "Заголовок" };
     expect(settleContent("quote", c)).toBe(c);
     expect(settleContent("theory", { subtitle: "x" })).toEqual({ subtitle: "x" });
+  });
+
+  test("старый слайд с текстом не в том поле при чтении показывает его в поле макета", () => {
+    const old = [
+      { id: 1, layout: "quote" as const, content: { title: "X" } },
+      { id: 2, layout: "clinical" as const, content: { subtitle: "Абзац" } },
+      { id: 3, layout: "final" as const, content: { quote: "Вывод" } },
+      { id: 4, layout: "theory" as const, content: null },
+    ];
+    const out = settleSlides(old);
+    expect(out[0]).toEqual({ id: 1, layout: "quote", content: { title: "X", quote: "X" } });
+    expect(out[1]!.content).toEqual({ subtitle: "Абзац", bullets: ["Абзац"] });
+    expect(out[2]!.content).toEqual({ quote: "Вывод", title: "Вывод" });
+    expect(out[3]!.content).toEqual({});
+    expect(old[0]!.content).toEqual({ title: "X" });
   });
 
   test("строка полей для модели — из общей таблицы, с подсказками", () => {

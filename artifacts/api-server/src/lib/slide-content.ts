@@ -78,6 +78,17 @@ export function settleContent(layout: SlideLayout, c: SlideContent): SlideConten
 }
 
 /**
+ * То же при чтении: слайды, записанные раньше settleContent, показывают свой
+ * текст в поле макета — на экране, в форме и в файлах. В базу он ляжет с
+ * первым сохранением слайда; сама система ничего не перезаписывает.
+ */
+export function settleSlides<T extends { layout: SlideLayout; content: SlideContent | null }>(
+  slides: T[],
+): T[] {
+  return slides.map((s) => ({ ...s, content: settleContent(s.layout, s.content ?? {}) }));
+}
+
+/**
  * Подсказки модели к полям — сами поля берутся из общей таблицы
  * FIELDS_BY_LAYOUT, по которой автор правит слайд руками.
  */
