@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   db,
   decksTable,
@@ -82,9 +82,15 @@ async function run(job: Job): Promise<void> {
     .from(deckSlidesTable)
     .where(eq(deckSlidesTable.id, payload.slideId))
     .limit(1);
-  // Слайд мог исчезнуть вместе с новой раскадровкой — это не ошибка автора.
+  // Слайд мог исчезнуть — автор убрал его или пришла новая раскадровка. Это
+  // не ошибка, но колоду надо вернуть из «переделываю», иначе она так и
+  // осталась бы занятой: ни правки, ни выгрузки, ни повтора.
   if (!slide || slide.deckId !== deckId) {
     logger.warn({ deckId, slideId: payload.slideId }, "Слайд для правки не найден — пропускаю");
+    await db
+      .update(decksTable)
+      .set({ status: payload.back, statusMessage: "", error: null })
+      .where(and(eq(decksTable.id, deckId), eq(decksTable.status, "storyboarding")));
     return;
   }
 

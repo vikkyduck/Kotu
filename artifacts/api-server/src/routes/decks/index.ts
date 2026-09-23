@@ -361,6 +361,11 @@ router.patch("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
     }
   }
 
+  // На готовой колоде «в очереди» ставит та же транзакция, что и задачу
+  // рисования: занята колода — слайд не повиснет в «queued» без задачи.
+  const drawNow = deck.status === "ready" && patch.imageStatus === "queued";
+  if (drawNow) delete patch.imageStatus;
+
   if (Object.keys(patch).length > 0) {
     await db.update(deckSlidesTable).set(patch).where(eq(deckSlidesTable.id, slide.id));
     // Автор поправил слайд сам — прошлая неудачная переделка уже не новость.
@@ -382,9 +387,11 @@ router.patch("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
   // До утверждения слайд подберёт approve, в ошибке — повтор.
   // Замечание к образу едет тем же запросом: отдельный redraw после такого
   // сохранения получил бы 409 — колода уже рисует.
-  if (deck.status === "ready" && patch.imageStatus === "queued") {
-    // Колоду успели занять — правка сохранена, образ дорисует следующий запуск.
-    const queued = await startDrawing(deck.id, slide.id, optionalInstruction(body));
+  if (drawNow) {
+    // Колоду успели занять — правка сохранена, образ можно перерисовать потом.
+    const queued = await startDrawing(deck.id, slide.id, optionalInstruction(body), (tx) =>
+      tx.update(deckSlidesTable).set({ imageStatus: "queued" }).where(eq(deckSlidesTable.id, slide.id)),
+    );
     res.status(queued ? 202 : 200).json({ ok: true });
     return;
   }
@@ -653,27 +660,46 @@ router.post("/decks/:id/retry", async (req, res): Promise<void> => {
  * пустая колода — это удаление презентации, для него своя кнопка.
  */
 router.delete("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
+  await requireArchive();
   const deck = await deckOr404(req, res);
   if (!deck) return;
-  if (deck.status !== "storyboard_ready" && deck.status !== "ready") {
-    res.status(409).json({ message: deck.status === "error" ? RETRY_FIRST : BUSY });
+  if (deck.status === "error") {
+    res.status(409).json({ message: RETRY_FIRST });
     return;
   }
   const slide = await slideOr404(deck, req, res);
   if (!slide) return;
 
-  const others = await db
-    .select({ id: deckSlidesTable.id })
-    .from(deckSlidesTable)
-    .where(and(eq(deckSlidesTable.deckId, deck.id), ne(deckSlidesTable.id, slide.id)))
-    .limit(1);
-  if (others.length === 0) {
+  // Проверка статуса, «не последний ли» и удаление — одной транзакцией под
+  // блокировкой строки колоды: иначе параллельная переделка или утверждение
+  // (queueDeckJob берёт ту же блокировку) работали бы над исчезнувшим слайдом,
+  // а две вкладки могли бы убрать последние два. updated_at — служебная
+  // колонка: лишней версии колоды в архиве не будет.
+  const outcome = await db.transaction(async (tx) => {
+    const [locked] = await tx
+      .update(decksTable)
+      .set({ updatedAt: new Date() })
+      .where(and(eq(decksTable.id, deck.id), inArray(decksTable.status, ["storyboard_ready", "ready"])))
+      .returning({ status: decksTable.status });
+    if (!locked) return "busy" as const;
+    const others = await tx
+      .select({ id: deckSlidesTable.id })
+      .from(deckSlidesTable)
+      .where(and(eq(deckSlidesTable.deckId, deck.id), ne(deckSlidesTable.id, slide.id)))
+      .limit(1);
+    if (others.length === 0) return "last" as const;
+    await tx.delete(deckSlidesTable).where(eq(deckSlidesTable.id, slide.id));
+    return locked.status;
+  });
+  if (outcome === "busy") {
+    res.status(409).json({ message: BUSY });
+    return;
+  }
+  if (outcome === "last") {
     res.status(409).json({ message: "Это единственный слайд — удалите презентацию целиком" });
     return;
   }
-
-  await db.delete(deckSlidesTable).where(eq(deckSlidesTable.id, slide.id));
-  if (deck.status === "ready") await deckToLibrary(deck.id).catch(logLibraryLag(req, deck.id));
+  if (outcome === "ready") await deckToLibrary(deck.id).catch(logLibraryLag(req, deck.id));
   res.json({ ok: true });
 });
 

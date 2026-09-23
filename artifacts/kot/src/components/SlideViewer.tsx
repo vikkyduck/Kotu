@@ -320,13 +320,8 @@ export function SlideViewer({
             className="iconbtn"
             title="Убрать слайд"
             onClick={() =>
-              leave(() => {
-                // Колода после удаления короче: встаём на соседний слайд, а
-                // с последнего — на новый последний.
-                void removeSlide(slide.id).then((ok) => {
-                  if (ok && index >= deck.slides.length - 1) onIndex(Math.max(0, index - 1));
-                });
-              })
+              // После удаления окно встаёт на соседний слайд (номер держит экран).
+              leave(() => void removeSlide(slide.id))
             }
           >
             <Icon name="trash" />

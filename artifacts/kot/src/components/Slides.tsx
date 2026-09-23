@@ -192,6 +192,10 @@ export function Slides() {
     // Имя стиля серии — из списка пакетов; не нашли — строку не показываем.
     const packName = packs.find((p) => p.id === deck.stylePackId)?.name;
     const lastImage = lastImageBySlide(deck.images);
+    // Убрали последний слайд, пока он открыт, — окно остаётся на новом
+    // последнем, а не закрывается и открывается заново.
+    const shownSlide =
+      openSlide === null || deck.slides.length === 0 ? null : Math.min(openSlide, deck.slides.length - 1);
 
     // Что показать под шапкой. Утверждённая колода остаётся колодой, пока
     // правится один слайд и даже когда образы не нарисовались: текст слайдов
@@ -423,10 +427,10 @@ export function Slides() {
 
         {/* Слайд крупно — поверх экрана: правки руками и указание нейронке.
             Индекс, а не id: стрелками автор ходит по колоде, не закрывая окно. */}
-        {openSlide !== null && deck.slides[openSlide] && (
+        {shownSlide !== null && (
           <SlideViewer
             deck={deck}
-            index={openSlide}
+            index={shownSlide}
             onIndex={setOpenSlide}
             onClose={() => setOpenSlide(null)}
             patchSlide={patchSlide}
