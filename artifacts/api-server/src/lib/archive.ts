@@ -1,8 +1,8 @@
-import type { RequestHandler } from "express";
 import { sql, type SQL } from "drizzle-orm";
 import { pool } from "@workspace/db";
 import { ARCHIVE_DIR, DATA_DIRS } from "./paths";
-import { ensureArchiveWith, type SqlRunner } from "./archive-sql";
+import { ensureArchiveWith, findMissingTriggers, type SqlRunner } from "./archive-sql";
+import { createArchiveSupervisor, type ArchiveState } from "./archive-state";
 import { createFileArchive, ArchiveUnavailableError, type FileMeta } from "./archive-files";
 import { logger } from "./logger";
 
@@ -15,16 +15,13 @@ import { logger } from "./logger";
  * только на чтение — очередь задач стоит, изменения и удаления отклоняются
  * (routes/index.ts), а включить архив он пробует снова раз в минуту.
  * deploy.sh такую выкатку бракует.
+ *
+ * «ok» перепроверяется: при старте и в периодической сверке (раз в 6 ч)
+ * процесс смотрит в pg_trigger, на месте ли триггеры всех 10 таблиц, и если
+ * нет — снова только чтение, пока не поставит их (archive-state.ts).
  */
 
-export type ArchiveState = "pending" | "ok" | "off";
-
-let state: ArchiveState = "pending";
-/** Последняя попытка включить архив; её итог — и есть ответ ready(). */
-let attempt: Promise<ArchiveState> | null = null;
-
-/** Пауза между попытками включить архив, пока он выключен. */
-const RETRY_MS = 60_000;
+export type { ArchiveState };
 
 const poolRunner: SqlRunner = {
   async transaction(fn) {
@@ -43,92 +40,20 @@ const poolRunner: SqlRunner = {
   },
 };
 
-async function tryEnsure(): Promise<ArchiveState> {
-  try {
-    const r = await ensureArchiveWith(poolRunner);
-    state = "ok";
-    logger.info(
-      { snapshotted: r.snapshotted, initialRows: r.initialRows },
-      "Архив включён: триггеры на месте",
-    );
-  } catch (err) {
-    state = "off";
-    logger.error(
-      { err },
-      "АРХИВ НЕ ВКЛЮЧИЛСЯ — сервер только на чтение: очередь стоит, изменения отклоняются. Повтор через минуту",
-    );
-  }
-  return state;
-}
+const supervisor = createArchiveSupervisor({
+  ensure: () => ensureArchiveWith(poolRunner),
+  missingTriggers: () => findMissingTriggers((text, params) => pool.query(text, params)),
+  log: logger,
+});
 
-/**
- * Первая попытка включить архив строк. Не бросает: итог — в archiveState()
- * и в логе.
- */
-export function ensureArchive(): Promise<ArchiveState> {
-  attempt ??= tryEnsure();
-  return attempt;
-}
-
-let readyLoop: Promise<void> | null = null;
-
-/**
- * Разрешается, когда архив включён: не вышло с первого раза — пробует раз в
- * минуту, пока не выйдет. Всё, что меняет данные без участия человека
- * (очередь, стартовые сверки), запускается только после него: без
- * триггеров архива перезапись шла бы мимо него.
- */
-export function whenArchiveReady(): Promise<void> {
-  readyLoop ??= new Promise((resolve) => {
-    const check = (s: ArchiveState) => {
-      if (s === "ok") {
-        resolve();
-        return;
-      }
-      setTimeout(() => {
-        attempt = tryEnsure();
-        void attempt.then(check);
-      }, RETRY_MS);
-    };
-    void ensureArchive().then(check);
-  });
-  return readyLoop;
-}
-
-export function archiveState(): ArchiveState {
-  return state;
-}
-
-async function ready(): Promise<boolean> {
-  await ensureArchive();
-  // Идёт повторная попытка — ждём её итога, а не прошлого «off».
-  return (await attempt!) === "ok";
-}
-
-/**
- * Проверка в начале пользовательских удалений: без архива не удаляем
- * ничего, в том числе строки, — иначе они ушли бы мимо триггеров.
- */
-export async function requireArchive(): Promise<void> {
-  if (!(await ready())) throw new ArchiveUnavailableError();
-}
-
-const READ_ONLY = new Set(["GET", "HEAD", "OPTIONS"]);
-
-/**
- * Пока архив не включён, сервер только на чтение: правка расшифровки или
- * главы лекции без триггера затёрла бы прежний текст насовсем. Ставится
- * после входа — сам вход и сброс пароля архива не касаются.
- */
-export const rejectWritesWithoutArchive: RequestHandler = (req, res, next) => {
-  if (READ_ONLY.has(req.method) || state === "ok") {
-    next();
-    return;
-  }
-  req.log.warn({ archive: state }, "Изменение отклонено: архив не включён");
-  const message = "Архив сейчас недоступен, поэтому изменения не сохраняются. Попробуйте позже";
-  res.status(503).json({ message, error: message });
-};
+/** Первая попытка включить архив строк. Не бросает: итог — в archiveState() и в логе. */
+export const ensureArchive = supervisor.ensureArchive;
+/** Разрешается, когда архив включён (повтор раз в минуту). См. archive-state.ts. */
+export const whenArchiveReady = supervisor.whenArchiveReady;
+export const archiveState = supervisor.state;
+export const requireArchive = supervisor.requireArchive;
+export const rejectWritesWithoutArchive = supervisor.rejectWritesWithoutArchive;
+const ready = supervisor.ready;
 
 const files = createFileArchive({
   archiveDir: ARCHIVE_DIR,
@@ -172,6 +97,9 @@ export function archiveInputSql(tbl: string, rowId: number, data: Record<string,
 const SWEEP_EVERY_MS = 6 * 60 * 60 * 1000;
 
 async function sweepOnce(): Promise<void> {
+  // Сначала — на месте ли сами триггеры: без них сверка файлов бессмысленна,
+  // а правки шли бы мимо архива.
+  await supervisor.verify();
   if (!(await ready())) {
     logger.warn("Архив выключен — сверку файлов пропускаю");
     return;
@@ -180,7 +108,7 @@ async function sweepOnce(): Promise<void> {
   if (r.archived > 0 || r.failed > 0) logger.info(r, "Сверка файлов с архивом");
 }
 
-/** Сверка файлов на старте и потом каждые шесть часов. */
+/** Самопроверка триггеров и сверка файлов — на старте и потом каждые шесть часов. */
 export function startFileSweep(): void {
   void sweepOnce().catch((err) => logger.error({ err }, "Сверка файлов с архивом не удалась"));
   setInterval(() => {
