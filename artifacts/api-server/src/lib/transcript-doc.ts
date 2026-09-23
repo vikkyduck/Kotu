@@ -1,8 +1,14 @@
 import { and, eq, isNotNull } from "drizzle-orm";
 import { db, documentsTable, transcriptionsTable, type Transcription } from "@workspace/db";
-import { archiveAndRemove } from "./archive";
 import { maskText, NerUnavailableError } from "./privacy";
-import { dropCopies, MIN_LIBRARY_TEXT, upsertWorkDoc } from "./work-doc";
+import {
+  dropCopies,
+  dropOrphan,
+  MIN_LIBRARY_TEXT,
+  needsCopy,
+  syncQuietly,
+  upsertWorkDoc,
+} from "./work-doc";
 import { logger } from "./logger";
 
 /**
@@ -56,8 +62,9 @@ export async function prepareLibraryCopy(
  *
  * Идемпотентно: повторный вызов обновляет существующий документ и
  * переиндексирует его (правки автора в расшифровке доезжают до библиотеки).
+ * Возвращает id копии или null, если копии нет (текст короткий, запись удалена).
  */
-export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
+export async function syncTranscriptionDoc(t: Transcription): Promise<number | null> {
   const plain = t.segments
     .map((s) => (s.who ? `${s.who}: ${s.text}` : s.text))
     .join("\n\n")
@@ -67,7 +74,7 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
     // Проверка до маскировки: короткий текст незачем гонять через NER.
     await deleteTranscriptionDoc(t.id, t.ownerId);
     logger.info({ transcriptionId: t.id }, "Расшифровка коротка для библиотеки — пропускаю");
-    return;
+    return null;
   }
 
   // Имена скрывали при расшифровке — скрываем и в библиотечной копии: по ней
@@ -80,7 +87,7 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
     .from(transcriptionsTable)
     .where(eq(transcriptionsTable.id, t.id))
     .limit(1);
-  if (!alive) return;
+  if (!alive) return null;
 
   const docId = await upsertWorkDoc({
     ownerId: t.ownerId,
@@ -92,8 +99,8 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
     fileName: `transcript-${t.id}.txt`,
     text,
   });
-  if (docId === null) return;
-  logger.info({ transcriptionId: t.id, docId }, "Расшифровка отправлена в библиотеку");
+  if (docId !== null) logger.info({ transcriptionId: t.id, docId }, "Расшифровка отправлена в библиотеку");
+  return docId;
 }
 
 /** Убирает расшифровку из библиотеки — все копии, с файлами и фрагментами. */
@@ -102,15 +109,15 @@ export const deleteTranscriptionDoc = (transcriptionId: number, ownerId: number)
 
 /**
  * Стартовая сверка, в обе стороны:
- * — готовые расшифровки без библиотечной копии → создать (бэкфилл и
- *   самолечение после сбоев);
+ * — готовые расшифровки без библиотечной копии или с копией в ошибке →
+ *   собрать заново (бэкфилл и самолечение после сбоев);
  * — transcript-документы, чья расшифровка исчезла → убрать (хвосты гонок
  *   удаления). Строка и файл при этом остаются в архиве.
  */
 export async function sweepTranscriptionsToLibrary(): Promise<number> {
   // Сначала уборка сирот — она же страхует гонку «PATCH-sync после DELETE».
   const transcriptDocs = await db
-    .select()
+    .select({ id: documentsTable.id, transcriptionId: documentsTable.transcriptionId })
     .from(documentsTable)
     .where(and(eq(documentsTable.kind, "transcript"), isNotNull(documentsTable.transcriptionId)));
   for (const doc of transcriptDocs) {
@@ -119,19 +126,7 @@ export async function sweepTranscriptionsToLibrary(): Promise<number> {
       .from(transcriptionsTable)
       .where(eq(transcriptionsTable.id, doc.transcriptionId!))
       .limit(1);
-    if (alive) continue;
-    logger.warn({ docId: doc.id }, "Библиотечная копия без расшифровки — убираю в архив");
-    try {
-      await archiveAndRemove(doc.sourcePath, {
-        entityType: "document",
-        entityId: doc.id,
-        mime: doc.mime,
-      });
-    } catch (err) {
-      logger.error({ err, docId: doc.id }, "Копия не заархивировалась — оставил как есть");
-      continue;
-    }
-    await db.delete(documentsTable).where(eq(documentsTable.id, doc.id));
+    if (!alive) await dropOrphan(documentsTable.transcriptionId, doc.transcriptionId!, doc.id);
   }
 
   const rows = await db
@@ -140,18 +135,8 @@ export async function sweepTranscriptionsToLibrary(): Promise<number> {
     .where(eq(transcriptionsTable.status, "done"));
   let synced = 0;
   for (const t of rows) {
-    const [doc] = await db
-      .select({ id: documentsTable.id })
-      .from(documentsTable)
-      .where(eq(documentsTable.transcriptionId, t.id))
-      .limit(1);
-    if (doc) continue;
-    try {
-      await syncTranscriptionDoc(t);
-      synced += 1;
-    } catch (err) {
-      logger.error({ err, transcriptionId: t.id }, "Не смог отправить расшифровку в библиотеку");
-    }
+    if (!(await needsCopy(documentsTable.transcriptionId, t.id))) continue;
+    if (await syncQuietly(syncTranscriptionDoc(t), "transcription", t.id)) synced += 1;
   }
   return synced;
 }

@@ -12,6 +12,7 @@ import {
 } from "@workspace/db";
 import { LIBRARY_DIR } from "./paths";
 import { archiveAndRemove, writeDataFile } from "./archive";
+import type { IngestPayload } from "./handlers/ingest";
 import { enqueue } from "./jobs";
 import { logger } from "./logger";
 
@@ -33,6 +34,21 @@ import { logger } from "./logger";
 
 /** Меньше этого в поиске только мешает: ни цитат, ни смысла. */
 export const MIN_LIBRARY_TEXT = 200;
+
+/**
+ * Синхронизация копии «лучше не удалась, чем уронила» работу: сбой только в
+ * журнал, одной строкой на все виды — копию догонит стартовая сверка.
+ */
+export const syncQuietly = <T>(
+  p: Promise<T>,
+  what: "lecture" | "deck" | "transcription",
+  id: number,
+  log: { error: (o: object, m: string) => void } = logger,
+): Promise<T | undefined> =>
+  p.catch((err: unknown) => {
+    log.error({ err, what, id }, "Копия работы не обновилась в библиотеке");
+    return undefined;
+  });
 
 /** Колонка-ссылка копии на свою работу — по ней стоит уникальный индекс. */
 type LinkColumn =
@@ -98,6 +114,7 @@ export async function upsertWorkDoc(opts: {
       .update(documentsTable)
       .set({
         title: opts.title,
+        folderId: opts.folderId,
         sourcePath: filePath,
         status: "parsing",
         statusMessage: "В очереди…",
@@ -124,7 +141,7 @@ export async function upsertWorkDoc(opts: {
       sourcePath: filePath,
       mime: "text/plain",
       filename: opts.fileName,
-    });
+    } satisfies IngestPayload);
   }
   return docId;
 }
@@ -165,10 +182,15 @@ export async function lectureToLibrary(lectureId: number): Promise<number | null
   return docId;
 }
 
-/** Текст готовой презентации: то, что на слайдах, плюс заметки докладчику. */
+/**
+ * Текст готовой презентации: то, что на слайдах, плюс заметки докладчику.
+ * Только готовой: правка слайда и переделка бывают и у неутверждённой
+ * раскадровки, а черновику в поиске не место — правило здесь, а не у
+ * каждого вызывающего.
+ */
 export async function deckToLibrary(deckId: number): Promise<number | null> {
   const [deck] = await db.select().from(decksTable).where(eq(decksTable.id, deckId)).limit(1);
-  if (!deck) return null;
+  if (!deck || deck.status !== "ready") return null;
 
   const slides = await db
     .select()
@@ -252,9 +274,33 @@ export async function sweepStuckDeckImages(): Promise<number> {
 }
 
 /**
- * Стартовая сверка для работ, в обе стороны: готовое без копии — завести
- * (бэкфилл и самолечение после сбоев), копия без оригинала — убрать (строка
- * и файл остаются в архиве).
+ * Сирота сверки — копия, чей оригинал исчез: в архив через dropCopies.
+ * Сбой одной копии сверку не останавливает — копия остаётся как есть.
+ */
+export async function dropOrphan(column: LinkColumn, id: number, docId: number): Promise<void> {
+  logger.warn({ docId }, "Копия без оригинала — убираю в архив");
+  await dropCopies(column, id).catch((err: unknown) =>
+    logger.error({ err, docId }, "Копия не заархивировалась — оставил как есть"),
+  );
+}
+
+/**
+ * Нужно ли сверке (пере)собрать копию: её нет или её разбор сдался (скажем,
+ * долго лежал сервис векторов) — иначе копия так и осталась бы в ошибке.
+ */
+export async function needsCopy(column: LinkColumn, id: number): Promise<boolean> {
+  const [doc] = await db
+    .select({ status: documentsTable.status })
+    .from(documentsTable)
+    .where(eq(column, id))
+    .limit(1);
+  return !doc || doc.status === "error";
+}
+
+/**
+ * Стартовая сверка для работ, в обе стороны: готовое без копии или с копией
+ * в ошибке — собрать заново (бэкфилл и самолечение после сбоев), копия без
+ * оригинала — убрать (строка и файл остаются в архиве).
  */
 export async function sweepWorkToLibrary(): Promise<number> {
   let synced = 0;
@@ -262,39 +308,26 @@ export async function sweepWorkToLibrary(): Promise<number> {
   const copies = await db
     .select({
       id: documentsTable.id,
-      sourcePath: documentsTable.sourcePath,
-      mime: documentsTable.mime,
       lectureId: documentsTable.lectureId,
       deckId: documentsTable.deckId,
     })
     .from(documentsTable);
   for (const copy of copies) {
-    if (copy.lectureId === null && copy.deckId === null) continue;
-    const alive =
-      copy.lectureId !== null
-        ? await db
-            .select({ id: lecturesTable.id })
-            .from(lecturesTable)
-            .where(eq(lecturesTable.id, copy.lectureId))
-            .limit(1)
-        : await db
-            .select({ id: decksTable.id })
-            .from(decksTable)
-            .where(eq(decksTable.id, copy.deckId!))
-            .limit(1);
-    if (alive.length > 0) continue;
-    logger.warn({ docId: copy.id }, "Копия работы без оригинала — убираю в архив");
-    try {
-      await archiveAndRemove(copy.sourcePath, {
-        entityType: "document",
-        entityId: copy.id,
-        mime: copy.mime,
-      });
-    } catch (err) {
-      logger.error({ err, docId: copy.id }, "Копия не заархивировалась — оставил как есть");
-      continue;
+    if (copy.lectureId !== null) {
+      const [alive] = await db
+        .select({ id: lecturesTable.id })
+        .from(lecturesTable)
+        .where(eq(lecturesTable.id, copy.lectureId))
+        .limit(1);
+      if (!alive) await dropOrphan(documentsTable.lectureId, copy.lectureId, copy.id);
+    } else if (copy.deckId !== null) {
+      const [alive] = await db
+        .select({ id: decksTable.id })
+        .from(decksTable)
+        .where(eq(decksTable.id, copy.deckId))
+        .limit(1);
+      if (!alive) await dropOrphan(documentsTable.deckId, copy.deckId, copy.id);
     }
-    await db.delete(documentsTable).where(eq(documentsTable.id, copy.id));
   }
 
   const readyLectures = await db
@@ -302,17 +335,8 @@ export async function sweepWorkToLibrary(): Promise<number> {
     .from(lecturesTable)
     .where(eq(lecturesTable.status, "ready"));
   for (const l of readyLectures) {
-    const [doc] = await db
-      .select({ id: documentsTable.id })
-      .from(documentsTable)
-      .where(eq(documentsTable.lectureId, l.id))
-      .limit(1);
-    if (doc) continue;
-    try {
-      if (await lectureToLibrary(l.id)) synced += 1;
-    } catch (err) {
-      logger.error({ err, lectureId: l.id }, "Не смог отправить лекцию в библиотеку");
-    }
+    if (!(await needsCopy(documentsTable.lectureId, l.id))) continue;
+    if (await syncQuietly(lectureToLibrary(l.id), "lecture", l.id)) synced += 1;
   }
 
   const readyDecks = await db
@@ -320,17 +344,8 @@ export async function sweepWorkToLibrary(): Promise<number> {
     .from(decksTable)
     .where(eq(decksTable.status, "ready"));
   for (const k of readyDecks) {
-    const [doc] = await db
-      .select({ id: documentsTable.id })
-      .from(documentsTable)
-      .where(eq(documentsTable.deckId, k.id))
-      .limit(1);
-    if (doc) continue;
-    try {
-      if (await deckToLibrary(k.id)) synced += 1;
-    } catch (err) {
-      logger.error({ err, deckId: k.id }, "Не смог отправить презентацию в библиотеку");
-    }
+    if (!(await needsCopy(documentsTable.deckId, k.id))) continue;
+    if (await syncQuietly(deckToLibrary(k.id), "deck", k.id)) synced += 1;
   }
 
   return synced;
