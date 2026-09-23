@@ -41,5 +41,7 @@ export function documentFileHeaders(
     "Content-Type": inlineType ?? "application/octet-stream",
     "Content-Disposition": inlineType ? disposition.replace(/^attachment/, "inline") : disposition,
     "X-Content-Type-Options": "nosniff",
+    // В библиотеке и копии расшифровок — чужие тексты: браузер их не кэширует.
+    "Cache-Control": "private, no-store",
   };
 }
