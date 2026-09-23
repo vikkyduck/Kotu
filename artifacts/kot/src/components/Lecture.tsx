@@ -19,6 +19,7 @@ interface Doc {
   title: string;
   kind: string;
   status: DocumentStatus;
+  transcriptionId: number | null;
 }
 
 /** Подпись у материала — только у своих работ: они должны быть отличимы от книги. */
@@ -79,6 +80,8 @@ export function Lecture() {
   /** null — список ещё не пришёл: «пусто» до ответа было бы неправдой. */
   const [docs, setDocs] = useState<Doc[] | null>(null);
   const [docsFailed, setDocsFailed] = useState(false);
+  /** Имена записей: у расшифровки в библиотеке обезличенная копия — в выборе нужно имя записи. */
+  const [records, setRecords] = useState<{ id: number; title: string }[]>([]);
   const openId = activeLectureId;
   const openRef = useRef(openId);
   openRef.current = openId;
@@ -122,6 +125,13 @@ export function Lecture() {
   useUnsavedWarning(unsaved || (screen === 's-lecture' && openId === null && topic.trim() !== ''));
 
   const loadDocs = useCallback(async () => {
+    // Тихий запрос: без имён записей остаются заголовки копий.
+    void fetch('/api/transcriptions')
+      .then((r) => (r.ok ? (r.json() as Promise<{ id: number; title: string }[]>) : null))
+      .then((rows) => {
+        if (rows) setRecords(rows);
+      })
+      .catch(() => {});
     try {
       const res = await fetch('/api/documents');
       if (!res.ok) throw new Error();
@@ -781,7 +791,7 @@ export function Lecture() {
                       setPicked((p) => (p.includes(d.id) ? p.filter((x) => x !== d.id) : [...p, d.id]))
                     }
                   >
-                    {d.title}
+                    {records.find((t) => t.id === d.transcriptionId)?.title ?? d.title}
                     {OWN_WORK.includes(docKind(d.kind)) ? ` · ${KIND_LABEL[docKind(d.kind)]}` : ''}
                   </button>
                 ))}
