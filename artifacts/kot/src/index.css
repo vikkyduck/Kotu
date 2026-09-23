@@ -232,9 +232,6 @@ h1.hello{font-family:var(--display);font-size:34px;font-weight:800;letter-spacin
 .resume .chev{color:var(--muted);opacity:.55}
 .resume .chev.sel-mark{color:var(--accent-strong);opacity:1}
 .resume .chev .ic-svg{width:17px;height:17px}
-.resume .r.confirming{cursor:default;background:var(--danger-soft)}
-.resume .r.disabled{opacity:.5;cursor:default}
-.resume .r.disabled:hover{background:transparent}
 .resume .r.sel-lec:hover{background:var(--accent-soft)}
 
 /* ── Панель ──────────────────────────────────────────────────────────── */
@@ -259,7 +256,7 @@ h1.hello{font-family:var(--display);font-size:34px;font-weight:800;letter-spacin
 .btn.ghost:hover{color:var(--accent-strong);background:transparent;border-bottom-color:var(--accent-strong)}
 .btn.danger{color:var(--danger-strong);border-color:transparent;background:transparent}
 .btn.danger:hover{background:var(--danger-soft);border-color:transparent}
-.btn.disabled,.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn:disabled{opacity:.45;cursor:not-allowed}
 .btn.link-danger{width:100%;margin-top:10px;border-color:transparent;background:transparent;
   color:var(--danger-strong);font-size:15px;padding:10px}
 .btn.link-danger:hover{background:var(--danger-soft)}
