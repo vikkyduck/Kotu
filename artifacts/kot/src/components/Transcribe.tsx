@@ -8,7 +8,7 @@ import {
 import type { Document } from '@workspace/db/schema';
 import { useApp } from '@/hooks/use-app';
 import { useUnsavedWarning } from '@/hooks/use-draft';
-import { failText } from '@/lib/http';
+import { send } from '@/lib/http';
 import { Icon } from '@/lib/icons';
 import { Celebrate } from '@/lib/celebrate';
 
@@ -117,7 +117,7 @@ export function Transcribe() {
     setError(null);
     setFile(f);
     setView('tcReady');
-    setSub('Всё настроено бережно. Проверьте — и начнём.');
+    setSub(null);
   };
 
   const onDrop = (e: React.DragEvent) => {
@@ -139,14 +139,16 @@ export function Transcribe() {
       form.append('hideNames', opts.names === 'on' ? 'true' : 'false');
       form.append('markSpeakers', opts.spk === 'on' ? 'true' : 'false');
 
-      const res = await fetch('/api/transcriptions/upload', { method: 'POST', body: form });
+      const r = await send('/api/transcriptions/upload', { method: 'POST', body: form }, 'Не удалось загрузить запись. Попробуйте ещё раз.');
+      if (!r.ok) throw new Error(r.message);
 
-      if (!res.ok) throw new Error(await failText(res, 'Не удалось загрузить запись. Попробуйте ещё раз.'));
-
-      const created = (await res.json()) as Transcription;
+      const created = (await r.res.json()) as Transcription;
       setUploading(false);
       // Ушла с экрана, пока шла передача, — не выдёргиваем, а сообщаем.
+      // Библиотеке — сигнал перечитать списки: новой записи в «сейчас в работе»
+      // иначе не будет, пока не уйти с главной и не вернуться.
       if (here.current.screen !== 's-transcribe' || here.current.activeTranscriptionId != null) {
+        window.dispatchEvent(new Event('kot:library'));
         toast('Запись загружена — расшифровываю');
         return;
       }
@@ -218,7 +220,7 @@ export function Transcribe() {
       <Stepper view={stepperView} />
 
       {error && !isActive && (
-        <p className="tnote" style={{ color: 'var(--danger-strong)' }}>
+        <p className="tnote bad">
           <Icon name="info" /> {error}
         </p>
       )}
@@ -239,7 +241,15 @@ export function Transcribe() {
           <div
             className={`drop ${dragOver ? 'over' : ''}`}
             id="dropZone"
+            role="button"
+            tabIndex={0}
             onClick={() => fileInputRef.current?.click()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={onDrop}
@@ -307,9 +317,6 @@ export function Transcribe() {
           </div>
 
           <button className="btn primary big" onClick={runTranscribe}>Расшифровать запись <Icon name="arrow" /></button>
-          <p className="soon-note" style={{ margin: '12px 0 0' }}>
-            Распознавание занимает немного времени. Длинные записи я разберу по частям — можно не ждать у экрана.
-          </p>
         </div>
       )}
 
@@ -317,9 +324,11 @@ export function Transcribe() {
         <div id="tcProc">
           <div className="panel proc">
             <div className="orb"><span className="core"></span></div>
-            <p className="pstat" id="procStat">{procMessage}</p>
+            {/* Пока запись только открывается, данных нет — ни статуса, ни
+                «я продолжу»: у давно готовой записи это выглядело бы как новая работа. */}
+            {(sending || active) && <p className="pstat" id="procStat">{procMessage}</p>}
             <div className="pbar"><i id="procBar" style={{ width: `${procProgress}%` }}></i></div>
-            {!sending && (
+            {active && (
               <p className="preassure">Можно закрыть страницу — я продолжу и соберу единый текст, он будет ждать вас здесь.</p>
             )}
           </div>
@@ -338,7 +347,7 @@ export function Transcribe() {
           <h3 className="errttl">Не удалось открыть запись</h3>
           <div className="btnrow">
             <button className="btn primary" style={{ flex: 1 }} onClick={() => void reloadActive()}>
-              Обновить
+              Попробовать ещё раз
             </button>
           </div>
         </div>
@@ -358,7 +367,7 @@ export function Transcribe() {
               disabled={retrying || deleting}
               onClick={() => void retry()}
             >
-              Попробовать снова <Icon name="arrow" />
+              {retrying ? 'Запускаю…' : 'Попробовать ещё раз'} <Icon name="arrow" />
             </button>
             <button
               className="btn danger"
@@ -456,17 +465,18 @@ function ResultView({
       // перерисует строки его копией, и правка исчезнет с экрана.
       void save(unsaved ? { title, segments } : { title }).then((err) => {
         if (err) toast(err);
-        else setUnsaved(false);
+        else setUnsaved(null);
       });
     }, data.title);
   };
 
-  // Правка, которую сервер не принял (сессия истекла, нет сети). Не тостом:
-  // он гаснет за вход поверх приложения, а правка на экране выглядит целой.
-  const [unsaved, setUnsaved] = useState(false);
+  // Правка, которую сервер не принял, — с его причиной (нет сети, архив
+  // недоступен, «обновите страницу»). Не тостом: он гаснет за вход поверх
+  // приложения, а правка на экране выглядит целой.
+  const [unsaved, setUnsaved] = useState<string | null>(null);
 
   const saveSegments = (next: TranscriptSegment[]) => {
-    void save({ segments: next }).then((err) => setUnsaved(err !== null));
+    void save({ segments: next }).then(setUnsaved);
   };
 
   const saveSegment = (index: number, text: string) => {
@@ -487,12 +497,16 @@ function ResultView({
       .map((s) => (s.who ? `${s.who}: ${reveal(s.text)}` : reveal(s.text)))
       .join('\n\n');
     const blob = new Blob([body], { type: 'text/plain;charset=utf-8' });
+    // Как downloadFile в lib/http: ссылка в документе и отзыв с задержкой —
+    // немедленный revoke в Safari срывает скачивание.
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `${data.title || 'расшифровка'}.txt`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
     toast('Текст сохранён в файл');
   };
 
@@ -507,10 +521,10 @@ function ResultView({
         <p className="tnote bad">
           <Icon name="info" />
           <span>
-            Правка не сохранилась —{' '}
-            <span className="inline-link" onClick={() => saveSegments(segments)}>
+            {unsaved} —{' '}
+            <button type="button" className="inline-link" onClick={() => saveSegments(segments)}>
               сохранить ещё раз
-            </span>
+            </button>
           </span>
         </p>
       ) : (
@@ -575,6 +589,10 @@ function useLibraryCopy(transcriptionId: number, updatedAt: string): number | nu
     let stop = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let misses = 0;
+    // Копия не разобралась (сервис векторов не ответил) — один повтор разбора:
+    // иначе у готовой записи навсегда нет «лекции» и «презентации». Снова
+    // ошибка — перестаём, как раньше; 409 «уже в работе» — просто смотрим дальше.
+    let retried = false;
     setDocId(null);
     const look = async () => {
       try {
@@ -583,6 +601,12 @@ function useLibraryCopy(transcriptionId: number, updatedAt: string): number | nu
         const docs = (await res.json()) as Pick<Document, 'id' | 'transcriptionId' | 'status'>[];
         const doc = docs.find((d) => d.transcriptionId === transcriptionId);
         if (stop) return;
+        if (doc?.status === 'error' && !retried) {
+          retried = true;
+          await fetch(`/api/documents/${doc.id}/retry`, { method: 'POST' });
+          if (!stop) timer = setTimeout(look, COPY_POLL_MS);
+          return;
+        }
         if (doc?.status === 'ready') setDocId(doc.id);
         else if (doc ? doc.status !== 'error' : ++misses < COPY_LOOKS) timer = setTimeout(look, COPY_POLL_MS);
       } catch {
