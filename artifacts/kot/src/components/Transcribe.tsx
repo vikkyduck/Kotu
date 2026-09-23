@@ -262,7 +262,7 @@ export function Transcribe() {
                 <b>Помечать говорящих</b>
                 <p id="txtSpk">
                   {opts.spk === 'on'
-                    ? 'Отмечу, где говорите вы, а где собеседник.'
+                    ? 'Помечу реплики: Speaker 1, Speaker 2…'
                     : 'Соберу сплошной текст без разметки реплик.'}
                 </p>
               </div>
@@ -529,6 +529,17 @@ function parseTokens(text: string): Token[] {
   return tokens;
 }
 
+/**
+ * Цвет пометки говорящего: чётные Speaker — вторым цветом, чтобы соседние
+ * реплики разных людей различались. Старые записи с «Вы / Собеседник»
+ * выглядят как раньше.
+ */
+function speakerTone(who: string): string {
+  if (who === 'Вы') return '';
+  const n = Number(who.match(/\d+/)?.[0]);
+  return Number.isInteger(n) && n % 2 === 1 ? '' : 'b';
+}
+
 function TranscriptLine({
   seg,
   index,
@@ -600,7 +611,7 @@ function TranscriptLine({
   return (
     <div className="tline">
       {showWho && seg.who && (
-        <div className={`who ${seg.who !== 'Вы' ? 'b' : ''}`}>{seg.who}</div>
+        <div className={`who ${speakerTone(seg.who)}`}>{seg.who}</div>
       )}
       <div
         ref={ref}

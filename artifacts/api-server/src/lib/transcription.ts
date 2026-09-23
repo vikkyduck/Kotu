@@ -168,7 +168,8 @@ export async function transcribeLongAudio(
 
     let segs: TranscriptSegment[];
     try {
-      segs = await structureTranscript(rawText, opts);
+      // Уже собранное — чтобы кусок продолжил нумерацию Speaker, а не начал заново.
+      segs = await structureTranscript(rawText, opts, all);
     } catch (err) {
       throw new ChunkError(i + 1, total, "оформить", err);
     }
@@ -181,6 +182,33 @@ export async function transcribeLongAudio(
 
   await onProgress?.({ progress: 96, message: "Сохраняю текст…" });
   return all;
+}
+
+/**
+ * Длинная запись оформляется кусками по 10 минут, и без подсказки каждый кусок
+ * нумеровал бы говорящих заново: Speaker 1 в начале и в середине оказались бы
+ * разными людьми. Поэтому следующему куску говорим, какие Speaker уже были и
+ * кто говорил последним. Без скрытия имён — ещё и концы двух последних реплик;
+ * со скрытием их текст не отправляем: в нём уже настоящие имена.
+ */
+function speakerContext(previous: TranscriptSegment[], hideNames: boolean): string | null {
+  const labeled = previous.filter((s) => /^Speaker \d+$/.test(s.who));
+  if (labeled.length === 0) return null;
+  const seen = [...new Set(labeled.map((s) => s.who))];
+  const lines = [
+    `Это продолжение записи. Уже встречались: ${seen.join(", ")}; последним говорил ${labeled[labeled.length - 1]!.who}. Продолжай ту же нумерацию: тот же человек — тот же номер, новый — следующий по порядку. Если в этой части говорит один человек — всё равно помечай его.`,
+  ];
+  if (!hideNames) {
+    lines.push("Конец предыдущей части — только для справки, в ответ не включай:");
+    for (const s of labeled.slice(-2)) lines.push(`${s.who}: …${s.text.slice(-300)}`);
+  }
+  return lines.join("\n");
+}
+
+/** «Спикер 2», «speaker2» и т. п. — к одному виду «Speaker 2»; прочее как есть. */
+function normalizeSpeaker(who: string): string {
+  const m = who.trim().match(/^(?:speaker|спикер)\s*(\d+)$/i);
+  return m ? `Speaker ${m[1]}` : who.trim();
 }
 
 interface StructureOptions {
@@ -205,6 +233,7 @@ interface StructureOptions {
 export async function structureTranscript(
   rawText: string,
   { hideNames, markSpeakers }: StructureOptions,
+  previous: TranscriptSegment[] = [],
 ): Promise<TranscriptSegment[]> {
   const trimmed = rawText.trim();
   if (trimmed === "") {
@@ -220,14 +249,18 @@ export async function structureTranscript(
   const reveal = (text: string) => (hideNames ? unmaskText(text, nameMap) : text);
 
   const rules: string[] = [
-    "Ты помогаешь психологу аккуратно оформить расшифровку аудиозаписи на русском языке.",
+    "Ты аккуратно оформляешь расшифровку аудиозаписи на русском языке — лекции, воркшопа или беседы.",
     "Не выдумывай и не добавляй слов, которых нет в записи. Только аккуратно оформи уже сказанное: расставь знаки препинания, раздели на осмысленные реплики и абзацы, убери слова-паразиты только если это явно мусор распознавания.",
   ];
 
   if (markSpeakers) {
+    // Пометки «Speaker 1, Speaker 2…» — решение владелицы 23.09.2026: на
+    // платформе лекции и воркшопы, «Вы / Собеседник» из сеансов тут не к месту.
     rules.push(
-      'Определи, где говорит ведущий/психолог, а где собеседник. Для реплик ведущего ставь "who": "Вы", для реплик второго человека — "who": "Собеседник". Если говорящий один (например это лекция), оставляй "who": "" для всех реплик.',
+      'Раздели текст на реплики разных говорящих и пометь их по порядку первого появления: "who": "Speaker 1", "Speaker 2", "Speaker 3" и так далее. Один и тот же человек — всегда один и тот же номер. Если говорит один человек (например, лекция) и ниже не сказано продолжать нумерацию — оставляй "who": "" у всех реплик.',
     );
+    const context = speakerContext(previous, hideNames);
+    if (context) rules.push(context);
   } else {
     rules.push('Не помечай говорящих: у каждой реплики "who" должно быть пустой строкой "".');
   }
@@ -265,7 +298,7 @@ export async function structureTranscript(
         const seg = s as Record<string, unknown>;
         const text = typeof seg.text === "string" ? seg.text : "";
         return {
-          who: typeof seg.who === "string" ? seg.who : "",
+          who: typeof seg.who === "string" ? normalizeSpeaker(seg.who) : "",
           // Возвращаем настоящие имена на место меток — уже на нашем сервере.
           text: reveal(text),
         };
