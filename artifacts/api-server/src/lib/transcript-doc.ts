@@ -95,7 +95,6 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<number | n
     kind: "transcript",
     link: { column: documentsTable.transcriptionId, id: t.id },
     values: { transcriptionId: t.id },
-    folderId: null,
     fileName: `transcript-${t.id}.txt`,
     text,
   });
