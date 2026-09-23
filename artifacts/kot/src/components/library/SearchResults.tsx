@@ -33,7 +33,17 @@ export function SearchResults({ hits, searching, error, act }: Props) {
                 {h.lectureId || h.deckId || h.transcriptionId ? (
                   <b className="doc-title">{h.title}</b>
                 ) : (
-                  <b className="doc-title doc-link" onClick={() => act.openFile(`/api/documents/${h.documentId}/file`)}>
+                  <b
+                    className="doc-title doc-link"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => act.openFile(`/api/documents/${h.documentId}/file`)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter' && e.key !== ' ') return;
+                      e.preventDefault();
+                      act.openFile(`/api/documents/${h.documentId}/file`);
+                    }}
+                  >
                     {h.title}
                   </b>
                 )}

@@ -4,6 +4,8 @@ import {
   buildWorking,
   countLabel,
   isBusy,
+  plural,
+  titleOf,
   type Doc,
   type DeckRow,
   type LectureRow,
@@ -63,6 +65,7 @@ const deck = (over: Partial<DeckRow> = {}): DeckRow => ({
   folderId: null,
   status: 'ready',
   statusMessage: '',
+  storyboardApproved: true,
   createdAt: '2026-07-29T10:00:00Z',
   ...over,
 });
@@ -89,11 +92,30 @@ describe('что лежит в библиотеке', () => {
   test('готовая работа в библиотеке, незаконченная — в работе', () => {
     const d = data({
       lectures: [lecture({ id: 1 }), lecture({ id: 2, status: 'writing' })],
-      decks: [deck({ id: 1 }), deck({ id: 2, status: 'drawing' })],
+      decks: [deck({ id: 1 }), deck({ id: 2, status: 'drawing', storyboardApproved: false })],
     });
 
     expect(buildItems(d, act).map((i) => i.key)).toEqual(['deck:1', 'lecture:1']);
     expect(buildWorking(d, act).map((i) => i.key)).toEqual(['deck:2', 'lecture:2']);
+  });
+
+  test('утверждённая презентация на перерисовке образа остаётся в своей папке', () => {
+    const d = data({
+      decks: [
+        deck({ id: 1, folderId: 7, status: 'drawing', statusMessage: 'Рисую образ 1 из 1…' }),
+        deck({ id: 2, folderId: 7, status: 'error', createdAt: '2026-07-01T10:00:00Z' }),
+      ],
+    });
+
+    const items = buildItems(d, act);
+    expect(items.map((i) => [i.key, i.folderId, i.tone, i.meta])).toEqual([
+      ['deck:1', 7, 'busy', 'Рисую образ 1 из 1…'],
+      ['deck:2', 7, 'bad', 'не удалось — откройте, чтобы повторить'],
+    ]);
+    // Одна колода — одна карточка: наверху, в «в работе», её нет.
+    expect(buildWorking(d, act)).toEqual([]);
+    // А опрос списка идёт: колода рисуется.
+    expect(isBusy(d)).toBe(true);
   });
 
   test('поисковая копия своей работы отдельной карточкой не показывается', () => {
@@ -158,7 +180,9 @@ describe('что лежит в библиотеке', () => {
 describe('подписи под названием', () => {
   test('у книги — объём и разбор', () => {
     const [item] = buildItems(data({ docs: [doc()] }), act);
-    expect(item?.meta).toBe('книга · 412 с. · 861 фрагментов');
+    expect(item?.meta).toBe('книга · 412 с. · 861 фрагмент');
+    const [few] = buildItems(data({ docs: [doc({ chunkCount: 3, pages: null })] }), act);
+    expect(few?.meta).toBe('книга · 3 фрагмента');
   });
 
   test('у расшифровки — только вид, без счёта фрагментов', () => {
@@ -184,9 +208,21 @@ describe('подписи под названием', () => {
     expect(item?.tone).toBe('bad');
   });
 
+  test('упавшая работа подписана одинаково — запись, лекция, презентация', () => {
+    const items = buildWorking(
+      data({
+        transcriptions: [transcription({ status: 'error' })],
+        lectures: [lecture({ status: 'error' })],
+        decks: [deck({ status: 'error', storyboardApproved: false })],
+      }),
+      act,
+    );
+    expect(new Set(items.map((i) => i.meta))).toEqual(new Set(['не удалось — откройте, чтобы повторить']));
+  });
+
   test('работа, которая ждёт решения автора, так и говорит', () => {
     const items = buildWorking(
-      data({ lectures: [lecture({ status: 'plan_ready' })], decks: [deck({ status: 'storyboard_ready' })] }),
+      data({ lectures: [lecture({ status: 'plan_ready' })], decks: [deck({ status: 'storyboard_ready', storyboardApproved: false })] }),
       act,
     );
     expect(items.map((i) => i.meta)).toEqual([
@@ -244,6 +280,19 @@ describe('что можно сделать с материалом', () => {
     expect(act.rename).toHaveBeenCalledWith('/api/transcriptions/3', 'Семинар, вторник');
   });
 
+  test('незаконченную лекцию и презентацию можно переименовать, не дожидаясь конца', () => {
+    const items = buildWorking(
+      data({
+        lectures: [lecture({ id: 2, status: 'plan_ready', title: 'О горе и' })],
+        decks: [deck({ id: 3, status: 'storyboard_ready', storyboardApproved: false, title: 'Вставленный текст' })],
+      }),
+      act,
+    );
+    for (const i of items) i.rename?.();
+    expect(act.rename).toHaveBeenCalledWith('/api/lectures/2', 'О горе и');
+    expect(act.rename).toHaveBeenCalledWith('/api/decks/3', 'Вставленный текст');
+  });
+
   test('незаконченную лекцию можно убрать прямо из «в работе»', () => {
     const [item] = buildWorking(data({ lectures: [lecture({ id: 2, status: 'error' })] }), act);
     item?.del?.();
@@ -268,7 +317,7 @@ describe('живой список', () => {
   test('когда всё готово — перестаёт', () => {
     expect(isBusy(data({ docs: [doc()], lectures: [lecture()], decks: [deck()] }))).toBe(false);
     // Запись, которая ждёт решения автора, не «делается»: сервер не занят.
-    expect(isBusy(data({ decks: [deck({ status: 'storyboard_ready' })] }))).toBe(false);
+    expect(isBusy(data({ decks: [deck({ status: 'storyboard_ready', storyboardApproved: false })] }))).toBe(false);
   });
 });
 
@@ -279,5 +328,25 @@ describe('счёт материалов', () => {
     expect(countLabel(3)).toBe('3 материала');
     expect(countLabel(11)).toBe('11 материалов');
     expect(countLabel(21)).toBe('21 материал');
+    expect(plural(0, 'фрагмент', 'фрагмента', 'фрагментов')).toBe('0 фрагментов');
+    expect(plural(112, 'фрагмент', 'фрагмента', 'фрагментов')).toBe('112 фрагментов');
+    expect(plural(1002, 'фрагмент', 'фрагмента', 'фрагментов')).toBe('1002 фрагмента');
+  });
+});
+
+describe('имя материала на экране', () => {
+  const records = [transcription({ id: 3, title: 'Анна, сеанс 12' })];
+
+  test('копия расшифровки — под именем записи, а не нейтральным', () => {
+    expect(titleOf({ title: 'Расшифровка от 23 сентября 2026', transcriptionId: 3 }, records)).toBe(
+      'Анна, сеанс 12',
+    );
+  });
+
+  test('записи нет в списке или это не расшифровка — имя как есть', () => {
+    expect(titleOf({ title: 'Расшифровка от 23 сентября 2026', transcriptionId: 4 }, records)).toBe(
+      'Расшифровка от 23 сентября 2026',
+    );
+    expect(titleOf({ title: 'Мак-Вильямс', transcriptionId: null }, records)).toBe('Мак-Вильямс');
   });
 });

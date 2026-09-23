@@ -10,6 +10,7 @@ import {
   buildItems,
   buildWorking,
   countLabel,
+  titleOf,
   type Folder,
   type Item,
   type ItemActions,
@@ -65,6 +66,12 @@ export function Library() {
   const [query, setQuery] = useState('');
   const { hits, searching, error: searchError } = useLibrarySearch(query);
   const fileInput = useRef<HTMLInputElement>(null);
+  /**
+   * Ручки, по которым запрос уже ушёл. Второй щелчок по «Точно удалить?» или
+   * по названию для повтора — не второй запрос: он вернул бы 404 или 409, и
+   * тост с ошибкой лёг бы поверх удачного.
+   */
+  const pending = useRef(new Set<string>());
 
   // Открытую папку при уходе не закрываем: из материала возвращаются туда,
   // откуда пришли. В корень ведёт крошка «Библиотека».
@@ -86,7 +93,9 @@ export function Library() {
   const upload = async (files: FileList | File[], folderId?: number | null) => {
     const list = Array.from(files);
     if (list.length === 0) return;
-    setUploading(list.map((f) => f.name));
+    // Вторую пачку могут бросить, пока грузится первая: список общий, поэтому
+    // дописываем в него и убираем по одному файлу, а не заменяем целиком.
+    setUploading((u) => [...u, ...list.map((f) => f.name)]);
 
     for (const file of list) {
       const form = new FormData();
@@ -95,9 +104,13 @@ export function Library() {
       if (folderId != null) form.append('folderId', String(folderId));
       const r = await send('/api/documents', { method: 'POST', body: form }, `Не удалось загрузить «${file.name}»`);
       if (!r.ok) toast(r.message);
+      // Ровно одно вхождение: два одноимённых файла — две строки.
+      setUploading((u) => {
+        const i = u.indexOf(file.name);
+        return i < 0 ? u : [...u.slice(0, i), ...u.slice(i + 1)];
+      });
     }
 
-    setUploading([]);
     await reload();
   };
 
@@ -122,15 +135,27 @@ export function Library() {
     return true;
   };
 
-  const removeAt = async (url: string, done: string) => {
-    const r = await send(url, { method: 'DELETE' }, 'Не удалось удалить');
-    if (!r.ok) {
-      toast(r.message);
-      return;
+  /** Запрос по ручке, пока предыдущий по ней же не закончился, не отправляем. */
+  const once = async (url: string, run: () => Promise<void>) => {
+    if (pending.current.has(url)) return;
+    pending.current.add(url);
+    try {
+      await run();
+    } finally {
+      pending.current.delete(url);
     }
-    toast(done);
-    await reload();
   };
+
+  const removeAt = (url: string, done: string) =>
+    once(url, async () => {
+      const r = await send(url, { method: 'DELETE' }, 'Не удалось удалить');
+      if (!r.ok) {
+        toast(r.message);
+        return;
+      }
+      toast(done);
+      await reload();
+    });
 
   /** Переименование чего угодно: окно открывается с прежним именем. */
   const renameAt = (url: string, current: string, field: 'title' | 'name' = 'title') => {
@@ -148,11 +173,12 @@ export function Library() {
     );
   };
 
-  const retryAt = async (url: string) => {
-    const r = await send(url, { method: 'POST' }, 'Не удалось запустить заново');
-    if (r.ok) await reload();
-    else toast(r.message);
-  };
+  const retryAt = (url: string) =>
+    once(url, async () => {
+      const r = await send(url, { method: 'POST' }, 'Не удалось запустить заново');
+      if (r.ok) await reload();
+      else toast(r.message);
+    });
 
   /** item — если папку создают из меню «переложить»: материал сразу ложится в неё. */
   const createFolder = (item?: Item) => {
@@ -270,7 +296,11 @@ export function Library() {
         e.preventDefault();
         setDragging(true);
       }}
-      onDragLeave={() => setDragging(false)}
+      onDragLeave={(e) => {
+        // Уход к дочернему элементу — не уход из зоны: иначе подсветка мигает.
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setDragging(false);
+      }}
       onDrop={(e) => {
         e.preventDefault();
         // Зона может лежать внутри «вне папок» — та тоже приняла бы файл.
@@ -340,19 +370,7 @@ export function Library() {
         {dropzone(openFolder.id)}
         {uploadingNote}
 
-        {visible.length > 0 ? (
-          <div className="doc-list">{cards(visible)}</div>
-        ) : (
-          <div className="emptybox">
-            <p className="start-hint">
-              В папке пока пусто. Перетащите сюда книгу, лекцию или презентацию — из
-              компьютера или из библиотеки.
-            </p>
-            <button className="btn primary" onClick={() => fileInput.current?.click()}>
-              Выбрать файл <Icon name="arrow" />
-            </button>
-          </div>
-        )}
+        {visible.length > 0 && <div className="doc-list">{cards(visible)}</div>}
 
         <button
           className="btn danger folder-remove"
@@ -428,7 +446,12 @@ export function Library() {
 
       {filePicker(null)}
       {searchOpen && (
-        <SearchResults hits={hits} searching={searching} error={searchError} act={act} />
+        <SearchResults
+          hits={hits?.map((h) => ({ ...h, title: titleOf(h, data.transcriptions) })) ?? null}
+          searching={searching}
+          error={searchError}
+          act={act}
+        />
       )}
 
       {!loaded &&
@@ -465,18 +488,13 @@ export function Library() {
             className={`root-docs ${dropTarget === 'root' ? 'drop-over' : ''}`}
             {...dropZone('root', setDropTarget, (e) => onDropTo(e, null))}
           >
-            {folders.length > 0 && <div className="label">Вне папок</div>}
+            {folders.length > 0 && visible.length > 0 && <div className="label">Вне папок</div>}
             {visible.length > 0 ? (
               <div className="doc-list">{cards(visible)}</div>
             ) : items.length === 0 ? (
               // Материалов ещё нет — только работа в процессе или пустые папки.
               startZone
-            ) : (
-              // Пустая зона остаётся целью: сюда возвращают материал из папки.
-              <p className="doc-meta root-empty">
-                Всё разложено по папкам. Перетащите сюда материал, чтобы вынуть его.
-              </p>
-            )}
+            ) : null}
           </div>
         </>
       )}

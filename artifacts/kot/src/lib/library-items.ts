@@ -1,4 +1,6 @@
 import type { DeckSeed, LectureSeed } from '@/hooks/use-app';
+import type { DeckStatus, DocumentStatus, LectureStatus, TranscriptionStatus } from '@workspace/db/schema';
+import { deckWorking } from '@/lib/deck';
 
 /**
  * Что показывает библиотека и в каком виде.
@@ -20,7 +22,7 @@ export interface Doc {
   lectureId: number | null;
   pages: number | null;
   chunkCount: number;
-  status: 'uploaded' | 'parsing' | 'ready' | 'error';
+  status: DocumentStatus;
   statusMessage: string;
   error: string | null;
   createdAt: string;
@@ -35,7 +37,7 @@ export interface LectureRow {
   id: number;
   title: string;
   folderId: number | null;
-  status: 'planning' | 'plan_ready' | 'writing' | 'ready' | 'error';
+  status: LectureStatus;
   statusMessage: string;
   createdAt: string;
 }
@@ -44,15 +46,20 @@ export interface DeckRow {
   id: number;
   title: string;
   folderId: number | null;
-  status: 'storyboarding' | 'storyboard_ready' | 'drawing' | 'ready' | 'error';
+  status: DeckStatus;
   statusMessage: string;
+  /**
+   * Раскадровка утверждена — колода уже материал: лежит в своей папке и
+   * тогда, когда перерисовывается образ или переделывается словами.
+   */
+  storyboardApproved: boolean;
   createdAt: string;
 }
 
 export interface TranscriptionRow {
   id: number;
   title: string;
-  status: string;
+  status: TranscriptionStatus;
   statusMessage: string;
   progress: number;
   createdAt: string;
@@ -121,15 +128,40 @@ export function docKind(kind: string): ItemKind {
   return (KINDS as readonly string[]).includes(kind) ? (kind as ItemKind) : 'book';
 }
 
-/** «3 материала» — с правильным окончанием, иначе интерфейс выглядит машинным. */
-export function countLabel(n: number): string {
-  if (n === 0) return 'пусто';
+/** «3 материала», «861 фрагмент» — с правильным окончанием, иначе интерфейс выглядит машинным. */
+export function plural(n: number, one: string, few: string, many: string): string {
   const last = n % 10;
   const teen = n % 100 >= 11 && n % 100 <= 14;
-  if (!teen && last === 1) return `${n} материал`;
-  if (!teen && last >= 2 && last <= 4) return `${n} материала`;
-  return `${n} материалов`;
+  if (!teen && last === 1) return `${n} ${one}`;
+  if (!teen && last >= 2 && last <= 4) return `${n} ${few}`;
+  return `${n} ${many}`;
 }
+
+export function countLabel(n: number): string {
+  if (n === 0) return 'пусто';
+  return plural(n, 'материал', 'материала', 'материалов');
+}
+
+/**
+ * Как называть материал на экране. У копии расшифровки своё имя нейтральное
+ * («Расшифровка от …» — оно уходит в модели), а автору показываем настоящее —
+ * имя самой записи. Одно правило для библиотеки, поиска и форм лекции и
+ * презентации: иначе одна вещь в разных местах называется по-разному.
+ */
+export function titleOf(
+  doc: { title: string; transcriptionId: number | null },
+  transcriptions: readonly { id: number; title: string }[],
+): string {
+  if (doc.transcriptionId === null) return doc.title;
+  return transcriptions.find((t) => t.id === doc.transcriptionId)?.title ?? doc.title;
+}
+
+/** Лекция пишется или составляется план — править и выгружать пока нельзя. */
+export const lectureWorking = (status: LectureStatus): boolean =>
+  status === 'planning' || status === 'writing';
+
+/** Одна подпись упавшей работы — и у записи, и у лекции, и у презентации. */
+const FAILED = 'не удалось — откройте, чтобы повторить';
 
 /** Всё, что экран получает с сервера. */
 export interface LibraryData {
@@ -169,18 +201,15 @@ export function buildItems(data: LibraryData, act: ItemActions): Item[] {
     .map<Item>((d) => {
       const kind = docKind(d.kind);
       const api = `/api/documents/${d.id}`;
-      // У копии расшифровки своё имя нейтральное (оно уходит в модели), а
-      // автору показываем и переименовываем настоящее — имя самой записи.
-      const record =
-        d.transcriptionId !== null ? transcriptions.find((t) => t.id === d.transcriptionId) : undefined;
-      const title = record?.title ?? d.title;
+      // Показываем и переименовываем настоящее имя, а не нейтральное копии.
+      const title = titleOf(d, transcriptions);
       const meta =
         d.status === 'ready'
           ? // У расшифровки счёт фрагментов ничего не говорит автору — только
             // вид. У книги наоборот: объём и разбор по делу.
             kind === 'transcript'
             ? KIND_LABEL[kind]
-            : `${KIND_LABEL[kind]}${d.pages ? ` · ${d.pages} с.` : ''} · ${d.chunkCount} фрагментов`
+            : `${KIND_LABEL[kind]}${d.pages ? ` · ${d.pages} с.` : ''} · ${plural(d.chunkCount, 'фрагмент', 'фрагмента', 'фрагментов')}`
           : d.status === 'error'
             ? (d.error ?? 'не удалось разобрать')
             : d.statusMessage || 'В очереди…';
@@ -266,18 +295,25 @@ export function buildItems(data: LibraryData, act: ItemActions): Item[] {
       makeLecture: copyOf((d) => d.lectureId === l.id),
     }));
 
+  // Утверждённая колода — уже материал, даже пока перерисовывается образ:
+  // иначе на эту минуту она пропадала бы из своей папки.
   const fromDecks = decks
-    .filter((k) => k.status === 'ready')
+    .filter((k) => k.storyboardApproved)
     .map<Item>((k) => ({
       key: `deck:${k.id}`,
       kind: 'deck',
       id: k.id,
       title: k.title,
       folderId: k.folderId,
-      meta: searchable((d) => d.deckId === k.id)
-        ? 'презентация · текст в поиске'
-        : 'презентация · готова',
-      tone: '',
+      meta:
+        k.status === 'ready'
+          ? searchable((d) => d.deckId === k.id)
+            ? 'презентация · текст в поиске'
+            : 'презентация · готова'
+          : k.status === 'error'
+            ? FAILED
+            : k.statusMessage || 'собираю…',
+      tone: k.status === 'error' ? 'bad' : k.status === 'ready' ? '' : 'busy',
       createdAt: k.createdAt,
       api: `/api/decks/${k.id}`,
       open: () => act.openDeck(k.id),
@@ -301,10 +337,7 @@ export function buildWorking(data: LibraryData, act: ItemActions): Item[] {
       id: t.id,
       title: t.title,
       folderId: null,
-      meta:
-        t.status === 'error'
-          ? 'не удалось — откройте, чтобы повторить'
-          : t.statusMessage || 'расшифровываю…',
+      meta: t.status === 'error' ? FAILED : t.statusMessage || 'расшифровываю…',
       tone: t.status === 'error' ? 'bad' : 'busy',
       createdAt: t.createdAt,
       open: () => act.openTranscription(t.id),
@@ -322,17 +355,19 @@ export function buildWorking(data: LibraryData, act: ItemActions): Item[] {
         l.status === 'plan_ready'
           ? 'план ждёт вашего решения'
           : l.status === 'error'
-            ? 'ошибка — откройте, чтобы повторить'
+            ? FAILED
             : l.statusMessage || 'пишу…',
       tone: l.status === 'error' ? 'bad' : 'busy',
       createdAt: l.createdAt,
       open: () => act.openLecture(l.id),
+      // Имя из темы — обрезок; исправить его можно, не дожидаясь конца работы.
+      rename: () => act.rename(`/api/lectures/${l.id}`, l.title),
       // План не понравился или лекция упала — убрать её можно прямо отсюда.
       del: () => act.remove(`/api/lectures/${l.id}`, 'Лекция удалена'),
     }));
 
   const fromDecks = decks
-    .filter((k) => k.status !== 'ready')
+    .filter((k) => !k.storyboardApproved)
     .map<Item>((k) => ({
       key: `deck:${k.id}`,
       kind: 'deck',
@@ -343,11 +378,12 @@ export function buildWorking(data: LibraryData, act: ItemActions): Item[] {
         k.status === 'storyboard_ready'
           ? 'раскадровка ждёт вашего решения'
           : k.status === 'error'
-            ? 'ошибка — откройте, чтобы повторить'
+            ? FAILED
             : k.statusMessage || 'собираю…',
       tone: k.status === 'error' ? 'bad' : 'busy',
       createdAt: k.createdAt,
       open: () => act.openDeck(k.id),
+      rename: () => act.rename(`/api/decks/${k.id}`, k.title),
       del: () => act.remove(`/api/decks/${k.id}`, 'Презентация удалена'),
     }));
 
@@ -358,8 +394,8 @@ export function buildWorking(data: LibraryData, act: ItemActions): Item[] {
 export function isBusy(data: LibraryData): boolean {
   return (
     data.docs.some((d) => d.status === 'parsing' || d.status === 'uploaded') ||
-    data.lectures.some((l) => l.status === 'planning' || l.status === 'writing') ||
-    data.decks.some((k) => k.status === 'storyboarding' || k.status === 'drawing') ||
+    data.lectures.some((l) => lectureWorking(l.status)) ||
+    data.decks.some((k) => deckWorking(k.status)) ||
     data.transcriptions.some((t) => t.status === 'processing')
   );
 }
