@@ -1,4 +1,8 @@
 import { useState, useEffect, type FormEvent } from 'react';
+import { json, send } from '@/lib/http';
+
+/** Сервер не ответил толком (перезапуск, обрыв сети) — спросим снова. */
+const RETRY_MS = 2000;
 
 interface ResetPasswordProps {
   token: string;
@@ -12,16 +16,29 @@ export function ResetPassword({ token, onDone }: ResetPasswordProps) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // «Ссылка не работает» — только по ответу сервера. Сбой связи ссылку не
+  // портит: иначе она запросила бы новую и упёрлась в лимит писем.
   useEffect(() => {
-    void (async () => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
       try {
         const res = await fetch(`/api/auth/reset/check?token=${encodeURIComponent(token)}`);
-        const data = await res.json();
-        setState(data.valid ? 'valid' : 'invalid');
+        if (res.ok) {
+          const data = (await res.json()) as { valid?: boolean };
+          if (alive) setState(data.valid ? 'valid' : 'invalid');
+          return;
+        }
       } catch {
-        setState('invalid');
+        /* спросим ещё раз */
       }
-    })();
+      if (alive) timer = setTimeout(() => void check(), RETRY_MS);
+    };
+    void check();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
   }, [token]);
 
   const submit = async (e: FormEvent) => {
@@ -38,23 +55,10 @@ export function ResetPassword({ token, onDone }: ResetPasswordProps) {
     }
 
     setBusy(true);
-    try {
-      const res = await fetch('/api/auth/reset', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, password }),
-      });
-      if (res.ok) {
-        setState('done');
-        return;
-      }
-      const data = await res.json().catch(() => ({}));
-      setError(data.message ?? 'Не удалось задать пароль');
-    } catch {
-      setError('Нет связи с сервером');
-    } finally {
-      setBusy(false);
-    }
+    const r = await send('/api/auth/reset', json('POST', { token, password }), 'Не удалось задать пароль');
+    setBusy(false);
+    if (r.ok) setState('done');
+    else setError(r.message);
   };
 
   if (state === 'checking') return null;
