@@ -105,19 +105,20 @@ export function Lecture() {
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
   const [draftFrom, setDraftFrom] = useState('');
+  /** Чья глава в правке: лекцию удалили — её правка уходит вместе с ней. */
+  const editOf = useRef<number | null>(null);
   /** Правка блока плана: индекс и черновики заголовка с тезисом. */
   const [planEdit, setPlanEdit] = useState<number | null>(null);
   const [planHead, setPlanHead] = useState('');
   const [planAbstract, setPlanAbstract] = useState('');
+  const [planFrom, setPlanFrom] = useState({ heading: '', abstract: '' });
   /** Чья правка плана открыта: вернулась к той же лекции — правка цела. */
   const planOf = useRef<number | null>(null);
 
-  // Правка блока без изменений — не повод спрашивать; лекция не загружена —
-  // сравнить не с чем, считаем правку живой.
-  const planBlock = planEdit !== null ? lecture?.plan?.[planEdit] : undefined;
+  // Правка без изменений — не повод спрашивать.
   const unsaved =
     (editing !== null && draft !== draftFrom) ||
-    (planEdit !== null && (!planBlock || planHead !== planBlock.heading || planAbstract !== planBlock.abstract));
+    (planEdit !== null && (planHead !== planFrom.heading || planAbstract !== planFrom.abstract));
   useUnsavedWarning(unsaved || (screen === 's-lecture' && openId === null && topic.trim() !== ''));
 
   const loadDocs = useCallback(async () => {
@@ -131,6 +132,12 @@ export function Lecture() {
       // Прежний список (если был) остаётся: сбой — не повод объявить библиотеку пустой.
       setDocsFailed(true);
     }
+  }, []);
+
+  /** Лекции больше нет — её открытые правки сохранять некуда. */
+  const dropEdits = useCallback((id: number) => {
+    if (editOf.current === id) setEditing(null);
+    if (planOf.current === id) setPlanEdit(null);
   }, []);
 
   const loadOne = useCallback(async (id: number) => {
@@ -147,6 +154,7 @@ export function Lecture() {
       // Лекцию удалили (другая вкладка, старая ссылка, «назад») — не
       // показывать же под её адресом форму новой.
       toast('Лекция не найдена');
+      dropEdits(id);
       leaveMissing();
       return;
     }
@@ -158,7 +166,7 @@ export function Lecture() {
     if (id !== openRef.current) return;
     setLecture(data);
     setFailed(null);
-  }, [toast, leaveMissing]);
+  }, [toast, leaveMissing, dropEdits]);
 
   useEffect(() => {
     if (screen !== 's-lecture') return;
@@ -269,6 +277,7 @@ export function Lecture() {
       return;
     }
     toast('Лекция удалена');
+    dropEdits(lecture.id);
     go('s-home');
   };
 
@@ -446,6 +455,7 @@ export function Lecture() {
                         setPlanEdit(i);
                         setPlanHead(p.heading);
                         setPlanAbstract(p.abstract);
+                        setPlanFrom({ heading: p.heading, abstract: p.abstract });
                       }}
                     >
                       <Icon name="edit" />
@@ -562,6 +572,7 @@ export function Lecture() {
                             className="btn ghost"
                             onClick={() => {
                               setEditing(s.id);
+                              editOf.current = lecture.id;
                               setDraft(s.text);
                               setDraftFrom(s.text);
                             }}
