@@ -1,5 +1,5 @@
 import { test, describe, expect } from "vitest";
-import { sanitizeSlideContent } from "./slide-content";
+import { fieldsLine, sanitizeSlideContent, settleContent } from "./slide-content";
 
 /**
  * Содержимое слайда приходит из двух ненадёжных мест: от модели и из правок
@@ -69,5 +69,22 @@ describe("приведение слайда к строгой форме", () =>
     expect(sanitizeSlideContent(null)).toEqual({});
     expect(sanitizeSlideContent("строка")).toEqual({});
     expect(sanitizeSlideContent([1, 2, 3])).toEqual({});
+  });
+
+  test("текст не в том поле макета переезжает в видимое, исходное остаётся", () => {
+    expect(settleContent("quote", { title: "Слова" })).toEqual({ title: "Слова", quote: "Слова" });
+    expect(settleContent("clinical", { subtitle: "Абзац" })).toEqual({ subtitle: "Абзац", bullets: ["Абзац"] });
+    expect(settleContent("final", { quote: "Вывод" })).toEqual({ quote: "Вывод", title: "Вывод" });
+  });
+
+  test("поле макета заполнено — ничего не переезжает", () => {
+    const c = { quote: "Цитата", title: "Заголовок" };
+    expect(settleContent("quote", c)).toBe(c);
+    expect(settleContent("theory", { subtitle: "x" })).toEqual({ subtitle: "x" });
+  });
+
+  test("строка полей для модели — из общей таблицы, с подсказками", () => {
+    expect(fieldsLine("quote")).toBe("quote (до 35 слов), attribution");
+    expect(fieldsLine("comparison")).toBe("title, cards[] (ровно две карточки {title, body})");
   });
 });
