@@ -6,7 +6,7 @@
 # узнавать разницу в день аварии поздно. Скрипт ничего не трогает в рабочей
 # базе: он создаёт временную kotu_restore_check и удаляет её в конце.
 #
-# Запускать на сервере: bash ops/restore-check.sh
+# Запуск с компьютера:  ssh root@5.129.198.180 bash -s < ~/kotu/ops/restore-check.sh
 set -euo pipefail
 DB_DIR=/opt/backups/db
 TEST_DB=kotu_restore_check
