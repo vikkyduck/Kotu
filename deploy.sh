@@ -181,7 +181,9 @@ if [ -n "$bad" ]; then
   exit 1
 fi
 echo "   владелец таблиц данных и архива: $app_user"
+# client_min_messages: «schema already exists» на каждом деплое — не ошибка.
 sudo -u postgres psql -d kotu -v ON_ERROR_STOP=1 -q \
+  -c "SET client_min_messages = warning" \
   -c "CREATE SCHEMA IF NOT EXISTS archive AUTHORIZATION \"$app_user\"" \
   -c "ALTER SCHEMA archive OWNER TO \"$app_user\""
 echo "   схема archive: владелец $app_user"
