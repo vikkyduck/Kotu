@@ -15,8 +15,8 @@ set -euo pipefail
 SERVER="${SERVER_USER:-root}@${SERVER_HOST:-СТАРЫЙ}"
 
 echo "Шаг 1 из 2. Почтовый АДРЕС, с которого будут уходить письма."
-read -rp "Адрес отправителя [owner@example.ru]: " FROM
-FROM="${FROM:-owner@example.ru}"
+read -rp "Адрес отправителя [noreply@example.ru]: " FROM
+FROM="${FROM:-noreply@example.ru}"
 
 # Ловим самую вероятную ошибку: в это поле вставляют пароль вместо адреса.
 # Пароль, попавший в видимое поле, остаётся в истории терминала и на экране.
@@ -50,6 +50,7 @@ echo "==> Проверяю авторизацию на smtp.yandex.ru"
 
 printf '%s' "$PASS" | ssh "$SERVER" "
   set -uo pipefail
+  umask 077
   PASS=\$(cat)
   FROM='$FROM'
 
