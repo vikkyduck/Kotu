@@ -26,7 +26,9 @@ echo
 
 printf '%s' "$PASS" | ssh "$SERVER" "
   set -euo pipefail
-  # scrypt из встроенного node:crypto; пароль читается со stdin и не попадает в argv
+  # scrypt из встроенного node:crypto; пароль читается со stdin и не попадает в argv.
+  # Формат хеша повторён из artifacts/api-server/src/lib/auth.ts — менять вместе
+  # (смена ломает и старые хеши)
   HASH=\$(node -e '
     const { randomBytes, scryptSync } = require(\"node:crypto\");
     let pw = \"\";
