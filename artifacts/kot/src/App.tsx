@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { AppProvider } from '@/hooks/use-app';
 import { Login } from '@/components/Login';
 import { ResetPassword } from '@/components/ResetPassword';
@@ -30,9 +30,13 @@ function AppContent() {
   );
 }
 
+/** Пока сервер не ответил ни «да», ни «нет» (перезапуск, обрыв сети) — спрашиваем снова. */
+const RETRY_MS = 2000;
+
 /**
  * Пускает в приложение только после входа. Пока идёт проверка сессии —
  * пустой экран: мигать формой входа перед уже залогиненным человеком незачем.
+ * Форма входа — только на явное 401: сбой сервера сессию не отменяет.
  */
 function AuthGate() {
   const [state, setState] = useState<'checking' | 'in' | 'out'>('checking');
@@ -42,18 +46,54 @@ function AuthGate() {
     new URLSearchParams(window.location.search).get('reset'),
   );
 
-  const check = useCallback(async () => {
-    try {
-      const res = await fetch('/api/me');
-      setState(res.ok ? 'in' : 'out');
-    } catch {
-      setState('out');
-    }
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      try {
+        const res = await fetch('/api/me');
+        if (res.ok || res.status === 401) {
+          if (alive) setState(res.ok ? 'in' : 'out');
+          return;
+        }
+      } catch {
+        /* сети нет — спросим ещё раз */
+      }
+      if (alive) timer = setTimeout(() => void check(), RETRY_MS);
+    };
+    void check();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
   }, []);
 
+  // Сессия кончилась посреди работы (30 дней прошло, пароль сменили на
+  // другом устройстве) — любой запрос к API получит 401, и вместо «не удалось»
+  // на каждой кнопке показываем вход. Экран, на котором она была, сохранится:
+  // навигация живёт в AppProvider, выше этого компонента. Под /api/auth/ 401
+  // значит другое — «неверный пароль», — его разбирают сами формы.
   useEffect(() => {
-    void check();
-  }, [check]);
+    const original = window.fetch;
+    window.fetch = async (input, init) => {
+      const res = await original.call(window, input, init);
+      if (res.status === 401) {
+        const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        const url = new URL(raw, window.location.href);
+        if (
+          url.origin === window.location.origin &&
+          url.pathname.startsWith('/api/') &&
+          !url.pathname.startsWith('/api/auth/')
+        ) {
+          setState('out');
+        }
+      }
+      return res;
+    };
+    return () => {
+      window.fetch = original;
+    };
+  }, []);
 
   if (resetToken) {
     return (

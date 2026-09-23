@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useApp } from '@/hooks/use-app';
 import { Icon } from '@/lib/icons';
+import { json, send } from '@/lib/http';
 
 interface Me {
   name: string;
@@ -53,27 +54,17 @@ export function Profile() {
     }
 
     setBusy(true);
-    try {
-      const res = await fetch('/api/auth/password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ current, next }),
-      });
-      if (res.ok) {
-        setShowForm(false);
-        setCurrent('');
-        setNext('');
-        setRepeat('');
-        toast('Пароль изменён. На других устройствах нужно войти заново.');
-        return;
-      }
-      const data = await res.json().catch(() => ({}));
-      setError(data.message ?? 'Не удалось сменить пароль');
-    } catch {
-      setError('Нет связи с сервером');
-    } finally {
-      setBusy(false);
+    const r = await send('/api/auth/password', json('POST', { current, next }), 'Не удалось сменить пароль');
+    setBusy(false);
+    if (!r.ok) {
+      setError(r.message);
+      return;
     }
+    setShowForm(false);
+    setCurrent('');
+    setNext('');
+    setRepeat('');
+    toast('Пароль изменён. На других устройствах нужно войти заново.');
   };
 
   const logout = async () => {
