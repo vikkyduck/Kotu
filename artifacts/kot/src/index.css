@@ -485,11 +485,6 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
   border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-sm);
   color:var(--ink);font-family:inherit;text-align:left}
 .doc-card.error{border-left:2px solid var(--danger)}
-.doc-card.parsing,.doc-card.uploaded{border-left:2px solid var(--amber)}
-.doc-card.ready{border-left:2px solid var(--line)}
-button.doc-card{cursor:pointer;width:100%;font-size:inherit;
-  transition:border-color var(--fast) ease,background var(--fast) ease}
-button.doc-card:hover{border-color:var(--accent-strong)}
 .doc-ico{display:flex;align-items:center;justify-content:center;width:36px;height:36px;flex-shrink:0;
   border:1px solid var(--line);border-radius:var(--r-sm);color:var(--ink-2)}
 .doc-ico .ic-svg{width:17px;height:17px}
@@ -553,9 +548,6 @@ button.doc-card:hover{border-color:var(--accent-strong)}
   .done-head h3{font-size:21px}
   .sgrid{gap:11px}
   .dropzone{padding:16px;gap:11px}
-  .dz-text b{font-size:15px}
-  .doc-card{padding:12px 13px;gap:11px}
-  .doc-title{font-size:17px}
   .lec-head{font-size:19px}
   .lec-para{font-size:15px;line-height:1.68}
 }
@@ -683,7 +675,6 @@ button.doc-card:hover{border-color:var(--accent-strong)}
 /* Заголовок открытой папки: имя и тихое действие рядом */
 .folder-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
 .folder-remove{margin-top:var(--sp-4);width:100%}
-.root-empty{padding:14px 2px;margin:0}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Mobile-first: базовые размеры — под палец, а не под курсор.
@@ -734,7 +725,6 @@ input.field,textarea.topic,.sheet textarea{font-size:17px}
   .doc-ico{width:32px;height:32px}
   .doc-ico .ic-svg{width:15px;height:15px}
   .doc-move,.doc-del{padding-inline:8px}
-  .doc-del{font-size:13px}
   .doc-title{white-space:normal;overflow:visible}
 }
 /* На тач-экране грипа нет смысла показывать: перетаскивания там не бывает,
