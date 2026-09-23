@@ -256,6 +256,25 @@ router.patch("/decks/:id", async (req, res): Promise<void> => {
   res.json({ ok: true });
 });
 
+/** Замечание автора к образу; пустое — «просто ещё раз». */
+function optionalInstruction(body: unknown): string | undefined {
+  const raw = (body as { instruction?: unknown } | null)?.instruction;
+  return typeof raw === "string" && raw.trim() !== "" ? raw.trim().slice(0, 2000) : undefined;
+}
+
+/** Нарисовать образ одного слайда готовой колоды. Сначала задача, потом статус. */
+async function startDrawing(deckId: number, slideId: number, instruction: string | undefined): Promise<void> {
+  await enqueue(
+    "deck.illustrate",
+    deckId,
+    instruction ? { slideIds: [slideId], instruction } : { slideIds: [slideId] },
+  );
+  await db
+    .update(decksTable)
+    .set({ status: "drawing", statusMessage: "В очереди…", error: null })
+    .where(eq(decksTable.id, deckId));
+}
+
 /** Правка слайда автором — только пока конвейер не работает над колодой. */
 router.patch("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
   const deck = await deckOr404(req, res);
@@ -320,13 +339,10 @@ router.patch("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
   // перерисовку: иначе «queued» на готовой колоде никто бы не подобрал.
   // Готовую картинку это не трогает: при imageId статус не меняется выше.
   // До утверждения слайд подберёт approve, в ошибке — повтор.
-  // Сначала задача, потом статус.
+  // Замечание к образу едет тем же запросом: отдельный redraw после такого
+  // сохранения получил бы 409 — колода уже рисует.
   if (deck.status === "ready" && patch.imageStatus === "queued") {
-    await enqueue("deck.illustrate", deck.id, { slideIds: [slide.id] });
-    await db
-      .update(decksTable)
-      .set({ status: "drawing", statusMessage: "В очереди…", error: null })
-      .where(eq(decksTable.id, deck.id));
+    await startDrawing(deck.id, slide.id, optionalInstruction(body));
     res.status(202).json({ ok: true });
     return;
   }
@@ -426,24 +442,11 @@ router.post("/decks/:id/slides/:sid/redraw", async (req, res): Promise<void> => 
     return;
   }
 
-  const instruction =
-    typeof req.body?.instruction === "string" && req.body.instruction.trim() !== ""
-      ? req.body.instruction.trim().slice(0, 2000)
-      : undefined;
-
   await db
     .update(deckSlidesTable)
     .set({ imageStatus: "queued" })
     .where(eq(deckSlidesTable.id, slide.id));
-  await enqueue(
-    "deck.illustrate",
-    deck.id,
-    instruction ? { slideIds: [slide.id], instruction } : { slideIds: [slide.id] },
-  );
-  await db
-    .update(decksTable)
-    .set({ status: "drawing", statusMessage: "В очереди…", error: null })
-    .where(eq(decksTable.id, deck.id));
+  await startDrawing(deck.id, slide.id, optionalInstruction(req.body));
   res.status(202).json({ ok: true });
 });
 
