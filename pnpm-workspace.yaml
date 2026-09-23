@@ -14,9 +14,9 @@
 #
 # If you absolutely need to install a package before the 1-day window has
 # passed (e.g. an urgent security bugfix), you can add it to the
-# `minimumReleaseAgeExclude` allowlist below. Only consider doing this for
+# `minimumReleaseAgeExclude` allowlist. Only consider doing this for
 # packages released by trusted organizations with an impeccable security
-# posture (e.g. Replit packsges, react from Meta, typescript from Microsoft). Even then,
+# posture (e.g. react from Meta, typescript from Microsoft). Even then,
 # remove the exclusion once the 1-day window has passed.
 #
 # Example:
@@ -27,17 +27,9 @@
 # ============================================================================
 minimumReleaseAge: 1440
 
-minimumReleaseAgeExclude:
-  # Exclude @replit scoped packages from the minimum release age check.
-  # These are published by Replit and trusted — the supply-chain attack vector
-  # this setting guards against does not apply to our own packages.
-  - '@replit/*'
-  - stripe-replit-sync
-
 packages:
   - artifacts/*
   - lib/*
-  - lib/integrations/*
   - scripts
 
 catalog:
