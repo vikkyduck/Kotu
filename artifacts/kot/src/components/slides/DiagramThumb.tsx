@@ -1,3 +1,4 @@
+import { SLIDE_SPEC } from '@workspace/db/slides';
 import type { DiagramSpec } from '@/lib/deck';
 
 /**
@@ -29,8 +30,8 @@ export function DiagramThumb({ spec }: { spec: DiagramSpec }) {
       </svg>
     );
   }
-  // Колонны: как в экспорте, больше четырёх рядом не ставим.
-  const cols = spec.items.slice(0, 4);
+  // Колонны: как в экспорте и на пластине, больше maxItems рядом не ставим.
+  const cols = spec.items.slice(0, SLIDE_SPEC.diagram.maxItems);
   const gap = 12;
   const w = (320 - pad * 2 - gap * (cols.length - 1)) / cols.length;
   return (

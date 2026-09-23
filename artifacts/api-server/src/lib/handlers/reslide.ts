@@ -7,6 +7,11 @@ import {
   type DeckStatus,
   type SlideContent,
 } from "@workspace/db";
+import {
+  FIELDS_BY_LAYOUT,
+  type SlideField,
+  type SlideLayout,
+} from "@workspace/db/slides";
 import { askJson } from "../claude";
 import { sanitizeSlideContent } from "../slide-content";
 import { registerHandler } from "../jobs";
@@ -42,17 +47,28 @@ function readPayload(raw: unknown): ReslidePayload {
   return { slideId, instruction, back };
 }
 
-/** Какие поля осмысленны на этом макете — чтобы модель не выдумывала лишних. */
-const FIELDS: Record<string, string> = {
-  cover: "eyebrow, title, subtitle",
-  divider: "eyebrow, title",
-  theory: "title, bullets[] (3–5 коротких), question, plate",
-  quote: "quote (до 35 слов), attribution",
-  clinical: "title, bullets[] (абзацы фрагмента), question",
-  comparison: "title, cards[] — ровно две карточки {title, body}",
-  final: "title, subtitle",
-  diagram: "title",
+/**
+ * Подсказки модели к полям — сами поля берутся из общей таблицы
+ * FIELDS_BY_LAYOUT, по которой автор правит слайд руками.
+ */
+const HINTS: Partial<Record<SlideLayout, Partial<Record<SlideField, string>>>> = {
+  theory: { bullets: "3–5 коротких" },
+  quote: { quote: "до 35 слов" },
+  clinical: { bullets: "абзацы фрагмента" },
+  comparison: { cards: "ровно две карточки {title, body}" },
 };
+
+/** Какие поля осмысленны на этом макете — чтобы модель не выдумывала лишних. */
+function fieldsLine(layout: SlideLayout): string {
+  const fields = FIELDS_BY_LAYOUT[layout] ?? ["title", "bullets"];
+  return fields
+    .map((f) => {
+      const name = f === "bullets" || f === "cards" ? `${f}[]` : f;
+      const hint = HINTS[layout]?.[f];
+      return hint ? `${name} (${hint})` : name;
+    })
+    .join(", ");
+}
 
 async function run(job: Job): Promise<void> {
   const deckId = job.entityId;
@@ -85,7 +101,7 @@ async function run(job: Job): Promise<void> {
     "— Слайд держит одну мысль. Тезисы короткие: это опора для речи, а не текст для чтения вслух.",
     "— Основного текста не больше 6–8 строк.",
     "— notes — заметки докладчику: то, что автор скажет голосом.",
-    `— Функция слайда: ${slide.layout}. Осмысленные поля: ${FIELDS[slide.layout] ?? "title, bullets[]"}.`,
+    `— Функция слайда: ${slide.layout}. Осмысленные поля: ${fieldsLine(slide.layout)}.`,
     "— Функцию слайда не меняй: её меняет автор руками.",
     "— Поле, которого автор не касался, оставь прежним, слово в слово.",
     "",
@@ -122,7 +138,9 @@ async function run(job: Job): Promise<void> {
     .where(eq(decksTable.id, deckId));
 
   // Текст изменился — копия в поиске не должна отставать.
-  await deckToLibrary(deckId).catch(() => undefined);
+  await deckToLibrary(deckId).catch((err) =>
+    logger.error({ err, deckId }, "Не смог обновить копию презентации в библиотеке"),
+  );
 
   logger.info({ deckId, slideId: slide.id }, "Слайд переделан по указанию автора");
 }

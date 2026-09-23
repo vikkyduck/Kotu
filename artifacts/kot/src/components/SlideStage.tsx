@@ -8,45 +8,25 @@
  * текст здесь переносится по правилам браузера, в экспорте по правилам pdfkit.
  */
 import type { CSSProperties } from 'react';
-import { SLIDE_TYPE as T, SLIDE_SPEC, SHEET } from '@workspace/db/slides';
-
-export interface StageContent {
-  eyebrow?: string;
-  title?: string;
-  subtitle?: string;
-  bullets?: string[];
-  cards?: { title: string; body: string }[];
-  quote?: string;
-  attribution?: string;
-  question?: string;
-  plate?: string;
-}
-
-export interface StageDiagram {
-  kind: 'flow' | 'pillars';
-  items: { label: string; sub?: string }[];
-}
+import {
+  SLIDE_TYPE as T,
+  SLIDE_SPEC,
+  SHEET,
+  BRAND_PALETTE,
+  SLIDE_TEXT as TEXT,
+  SLIDE_SEAM as SEAM,
+  MAX_CARDS,
+  layoutHasImage,
+  type BrandColor,
+  type DiagramSpec,
+  type SlideContent,
+} from '@workspace/db/slides';
 
 export interface StageSlide {
   layout: string;
-  content: StageContent;
+  content: SlideContent;
   imageSide: 'left' | 'right';
 }
-
-/** Палитра брендбука «Архивный сон» — на случай, когда пакет её не задал. */
-const FALLBACK: Record<string, string> = {
-  archiveBlack: '#1D1E24',
-  deepIndigo: '#232638',
-  agedPaper: '#D8C7A7',
-  deepSepia: '#C4AD87',
-  etchingInk: '#302B27',
-  burntUmber: '#7B432F',
-  museumIndigo: '#677184',
-};
-
-/** Цвет букв: один на всю колоду и чисто белый (см. lib/pptx.ts). */
-const TEXT = '#FFFFFF';
-const SEAM = '#65594E';
 
 /** Кегль из пунктов общей таблицы в доли ширины пластины. */
 const pt = (size: number) => `${(size / SHEET.width) * 100}cqw`;
@@ -59,18 +39,24 @@ interface Props {
   /** Номер слайда с нуля — для арабского фолио на обложке и финале. */
   index: number;
   imageUrl: string | null;
-  diagram?: StageDiagram | null;
+  diagram?: DiagramSpec | null;
   palette?: Record<string, string> | null;
 }
 
 export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) {
-  const color = (name: string): string => {
-    const v = palette?.[name] ?? FALLBACK[name] ?? '#1D1E24';
+  const color = (name: BrandColor): string => {
+    const v = palette?.[name] ?? BRAND_PALETTE[name];
     return v.startsWith('#') ? v : `#${v}`;
   };
+  // Фон листа и музейное поле (--m для .stg-pad и .stg-folio) — у всех макетов одни.
+  const sheet = {
+    background: color('archiveBlack'),
+    '--m': pt(SLIDE_SPEC.margin),
+  } as CSSProperties;
 
   const c = slide.content;
-  const img = imageUrl;
+  // Как в выгрузке: на схеме и финале образа нет, даже если картинка осталась.
+  const img = layoutHasImage(slide.layout) ? imageUrl : null;
   const side = slide.imageSide;
 
   const folio = (
@@ -86,9 +72,9 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
   /** Обложка: текст слева 42%, гравюра справа 58%. */
   if (slide.layout === 'cover') {
     return (
-      <div className="stg" style={{ background: color('archiveBlack') }}>
+      <div className="stg" style={sheet}>
         <div className="stg-row">
-          <div className="stg-col stg-pad" style={{ flex: img ? '0 0 42%' : '1' }}>
+          <div className="stg-col stg-pad">
             {c.eyebrow && (
               <div
                 className="stg-eyebrow"
@@ -116,9 +102,9 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
   /** Разделитель: имя части, 60–70% листа — спокойное поле. */
   if (slide.layout === 'divider') {
     return (
-      <div className="stg" style={{ background: color('archiveBlack') }}>
+      <div className="stg" style={sheet}>
         <div className="stg-row">
-          <div className="stg-col stg-pad stg-mid" style={{ flex: img ? '0 0 70%' : '1' }}>
+          <div className="stg-col stg-pad stg-mid">
             {c.eyebrow && (
               <div
                 className="stg-eyebrow"
@@ -140,7 +126,7 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
   /** Цитата: крупный набор по центру вертикали. */
   if (slide.layout === 'quote') {
     return (
-      <div className="stg" style={{ background: color('archiveBlack') }}>
+      <div className="stg" style={sheet}>
         <div className={`stg-row ${side === 'left' ? 'rev' : ''}`}>
           <div className="stg-col stg-pad stg-mid stg-quote">
             <div
@@ -169,7 +155,7 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
     const paragraphs = c.bullets?.length ? c.bullets : c.subtitle ? [c.subtitle] : [];
     const ink = TEXT;
     return (
-      <div className="stg" style={{ background: color('archiveBlack') }}>
+      <div className="stg" style={sheet}>
         <div className={`stg-row ${side === 'left' ? 'rev' : ''}`}>
           <div className="stg-col stg-pad">
             <div className="stg-display" style={{ color: ink, fontSize: pt(T.clinicalTitle) }}>
@@ -198,7 +184,7 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
   if (slide.layout === 'comparison') {
     const cards = c.cards ?? [];
     return (
-      <div className="stg stg-vert" style={{ background: color('archiveBlack') }}>
+      <div className="stg stg-vert" style={sheet}>
         {img && (
           <div className="stg-band" style={{ flex: share(SLIDE_SPEC.comparisonBand) }}>
             {plate}
@@ -209,7 +195,7 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
             {c.title}
           </div>
           <div className="stg-cols" style={{ borderColor: SEAM }}>
-            {cards.slice(0, 2).map((card, i) => (
+            {cards.slice(0, MAX_CARDS).map((card, i) => (
               <div key={i} className="stg-cell">
                 <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.cardTitle) }}>
                   {card.title}
@@ -228,7 +214,7 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
   /** Финал: один вывод по центру вертикали. */
   if (slide.layout === 'final') {
     return (
-      <div className="stg" style={{ background: color('archiveBlack') }}>
+      <div className="stg" style={sheet}>
         <div className="stg-col stg-pad stg-mid" style={{ width: '82%' }}>
           <div
             className="stg-display"
@@ -264,9 +250,9 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
       </div>
     );
     return (
-      <div className="stg stg-vert" style={{ background: color('archiveBlack') }}>
+      <div className="stg stg-vert" style={sheet}>
         <div className="stg-col stg-pad" style={{ flex: 1 }}>
-          <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.theoryTitle) }}>
+          <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.diagramTitle) }}>
             {c.title}
           </div>
           {diagram.kind === 'flow' ? (
@@ -283,7 +269,9 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
               ))}
             </div>
           ) : (
-            <div className="stg-pillars">{diagram.items.map(node)}</div>
+            <div className="stg-pillars">
+              {diagram.items.slice(0, SLIDE_SPEC.diagram.maxItems).map(node)}
+            </div>
           )}
         </div>
       </div>
@@ -291,9 +279,9 @@ export function SlideStage({ slide, index, imageUrl, diagram, palette }: Props) 
   }
 
   /** Теория и всё остальное: тезис, пункты, рабочий вопрос. */
-  const plateCap: CSSProperties = { color: TEXT, fontSize: pt(T.folio) };
+  const plateCap: CSSProperties = { color: TEXT, fontSize: pt(T.plate) };
   return (
-    <div className="stg" style={{ background: color('archiveBlack') }}>
+    <div className="stg" style={sheet}>
       <div className={`stg-row ${side === 'left' ? 'rev' : ''}`}>
         <div className="stg-col stg-pad">
           <div className="stg-display" style={{ color: TEXT, fontSize: pt(T.theoryTitle) }}>

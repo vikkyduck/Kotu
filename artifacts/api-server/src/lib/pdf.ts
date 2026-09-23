@@ -11,7 +11,16 @@ import type {
   SlideContent,
   DiagramSpec,
 } from "@workspace/db";
-import { SLIDE_SPEC, SLIDE_TYPE as T, SHEET } from "@workspace/db/slides";
+import {
+  SLIDE_SPEC,
+  SLIDE_TYPE as T,
+  SHEET,
+  BRAND_PALETTE,
+  SLIDE_TEXT as TEXT,
+  SLIDE_SEAM as SEAM,
+  MAX_CARDS,
+  type BrandColor,
+} from "@workspace/db/slides";
 import { logger } from "./logger";
 
 /**
@@ -28,27 +37,6 @@ const PAGE_W = SHEET.width;
 const PAGE_H = SHEET.height;
 /** Музейное поле по краям — то же число, что в pptx: общая таблица. */
 const MARGIN = SLIDE_SPEC.margin;
-
-/** Фолбэки палитры из брендбука (раздел 2) — колода собирается всегда. */
-const BRAND_FALLBACK = {
-  archiveBlack: "#1D1E24",
-  deepIndigo: "#232638",
-  charcoal: "#2B292B",
-  agedPaper: "#D8C7A7",
-  deepSepia: "#C4AD87",
-  etchingInk: "#302B27",
-  burntUmber: "#7B432F",
-  museumIndigo: "#677184",
-  driedCarmine: "#955A52",
-  dullGold: "#B08D57",
-} as const;
-
-type BrandColor = keyof typeof BRAND_FALLBACK;
-
-/** Цвет букв: один на всю колоду и чисто белый (см. lib/pptx.ts). */
-const TEXT = "#FFFFFF";
-/** Шов между колонками сравнения — волосяная линия старой сшивки. */
-const SEAM = "#65594E";
 
 /**
  * Имена шрифтов, под которыми TTF регистрируются в документе. Пакет может
@@ -98,7 +86,7 @@ interface Style {
 
 function makeStyle(pack: StylePack | null): Style {
   const palette = pack?.palette ?? {};
-  return { color: (name) => hex(palette[name] ?? BRAND_FALLBACK[name]) };
+  return { color: (name) => hex(palette[name] ?? BRAND_PALETTE[name]) };
 }
 
 // ── Текстовые примитивы ─────────────────────────────────────────────────
@@ -528,7 +516,7 @@ function addComparison(doc: PDFKit.PDFDocument, c: SlideContent, img: string | n
   const colW = PAGE_W / 2 - MARGIN - 0.45 * IN;
 
   const cards = c.cards ?? [];
-  cards.slice(0, 2).forEach((card, i) => {
+  cards.slice(0, MAX_CARDS).forEach((card, i) => {
     drawRuns(
       doc,
       [
@@ -572,27 +560,6 @@ function addFinal(doc: PDFKit.PDFDocument, c: SlideContent, st: Style, idx: numb
 }
 
 // ── Схема (diagram) ─────────────────────────────────────────────────────
-
-/**
- * diagramSpec приходит из jsonb: форму гарантирует sanitize при записи,
- * но старые строки могли лечь до него — перепроверяем перед отрисовкой.
- */
-function readDiagramSpec(value: unknown): DiagramSpec | null {
-  if (!value || typeof value !== "object") return null;
-  const o = value as { kind?: unknown; items?: unknown };
-  if (o.kind !== "flow" && o.kind !== "pillars") return null;
-  if (!Array.isArray(o.items)) return null;
-  const items: { label: string; sub?: string }[] = [];
-  for (const it of o.items.slice(0, 6)) {
-    if (!it || typeof it !== "object") continue;
-    const label = (it as { label?: unknown }).label;
-    const sub = (it as { sub?: unknown }).sub;
-    if (typeof label !== "string" || label === "") continue;
-    items.push(typeof sub === "string" && sub !== "" ? { label, sub } : { label });
-  }
-  if (items.length < 2) return null;
-  return { kind: o.kind, items };
-}
 
 /** Подписи внутри фигуры: label по центру, sub под ним. */
 function drawNodeText(
@@ -669,12 +636,14 @@ function addDiagram(doc: PDFKit.PDFDocument, c: SlideContent, spec: DiagramSpec,
     return;
   }
 
-  // pillars: колонки рядом, без стрелок — опоры, а не процесс.
+  // pillars: колонки рядом, без стрелок — опоры, а не процесс. Больше
+  // maxItems в строку не встаёт — режем так же, как PPTX и предпросмотр.
+  const pillars = items.slice(0, SLIDE_SPEC.diagram.maxItems);
   const gap = 24;
-  const colW = (PAGE_W - MARGIN * 2 - (n - 1) * gap) / n;
+  const colW = (PAGE_W - MARGIN * 2 - (pillars.length - 1) * gap) / pillars.length;
   const colH = Math.min(310, areaH);
   const colY = areaY + (areaH - colH) / 2;
-  items.forEach((item, i) => {
+  pillars.forEach((item, i) => {
     const x = MARGIN + i * (colW + gap);
     doc.rect(x, colY, colW, colH).lineWidth(1).fillAndStroke(panel, line);
     drawNodeText(doc, item, st, x + 12, colY + 16, colW - 24, colH - 32);
@@ -742,13 +711,12 @@ export async function buildDeckPdf(
       case "final":
         addFinal(doc, c, st, idx);
         break;
-      case "diagram": {
+      case "diagram":
         // Есть описание структуры — рисуем фигурами, нет — текстом как теория.
-        const spec = readDiagramSpec(s.diagramSpec);
-        if (spec) addDiagram(doc, c, spec, st);
+        // Форму spec держит разбор раскадровки — единственное место записи.
+        if (s.diagramSpec) addDiagram(doc, c, s.diagramSpec, st);
         else addTheory(doc, c, null, st, s.imageSide);
         break;
-      }
       case "theory":
       default:
         addTheory(doc, c, img, st, s.imageSide);

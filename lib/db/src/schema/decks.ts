@@ -9,7 +9,7 @@ import {
   index,
 } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
-import type { SlideLayout } from "../slides";
+import type { SlideLayout, SlideContent, DiagramSpec } from "../slides";
 
 export type DeckStatus =
   | "storyboarding"
@@ -23,26 +23,7 @@ export type SourceKind = "lecture" | "document" | "raw";
 // Макеты слайда и его геометрия живут в ../slides — их читает и сервер,
 // и браузер. Здесь только пере-экспорт, чтобы схема оставалась цельной.
 export { SLIDE_LAYOUTS, LAYOUT_RU, SLIDE_SPEC, SLIDE_TYPE, SHEET } from "../slides";
-export type { SlideLayout } from "../slides";
-
-/** Содержимое слайда. Поля необязательные: у каждого макета свои. */
-export interface SlideContent {
-  eyebrow?: string;
-  title?: string;
-  subtitle?: string;
-  bullets?: string[];
-  cards?: { title: string; body: string }[];
-  quote?: string;
-  attribution?: string;
-  /**
-   * «Рабочий вопрос» / «вопрос к материалу» — приём брендбука на слайдах
-   * теории и клинического фрагмента: слайд заканчивается не выводом,
-   * а вопросом к слушателю.
-   */
-  question?: string;
-  /** Музейная подпись под изображением: «PLATE V · PSYCHIC ATLAS». */
-  plate?: string;
-}
+export type { SlideLayout, SlideContent, DiagramSpec } from "../slides";
 
 /**
  * На какой стороне слайда стоит образ. Противоположная сторона — safe zone
@@ -51,16 +32,6 @@ export interface SlideContent {
  * дорисовать его потом нельзя.
  */
 export type ImageSide = "left" | "right";
-
-/**
- * Схема diagram-слайда, которую рисует код, а не художник: flow — шаги со
- * стрелками сверху вниз, pillars — колонки рядом. 2..6 элементов,
- * label ≤60 знаков, sub ≤120 — пределы держит разбор раскадровки.
- */
-export type DiagramSpec = {
-  kind: "flow" | "pillars";
-  items: { label: string; sub?: string }[];
-};
 
 export const decksTable = pgTable("decks", {
   id: serial("id").primaryKey(),
@@ -172,23 +143,18 @@ export const deckImagesTable = pgTable(
 /** Именованные цвета брендбука: имя → #hex. */
 export type Palette = Record<string, string>;
 
-/** Шрифты и кегли. Кегли даны для 16:9 и уезжают в вёрстку слайда. */
+/**
+ * Гарнитуры пакета. Вёрстка их не читает: слайды набираются Manrope во всех
+ * трёх движках (PDF встраивает его TTF), иначе PPTX расходился бы с PDF
+ * и предпросмотром.
+ */
 export interface Typography {
   display: string;
   body: string;
-  displayFallback: string;
-  bodyFallback: string;
-  sizes: Record<string, [number, number] | number>;
 }
 
-/** Числовые правила композиции — их проверяет вёрстка, а не глаз. */
+/** Правила образа, которые читает режиссура иллюстраций. */
 export interface StyleRules {
-  aspect: string;
-  /** Размер картинки у модели. Обе стороны обязаны быть кратны 16. */
-  imageSize: string;
-  imageSharePct: [number, number];
-  safeZonePct: [number, number];
-  maxBodyLines: number;
   /** Метафорические системы; в одном образе их разрешено не больше двух. */
   metaphorFamilies: string[];
   maxMetaphorsPerImage: number;
