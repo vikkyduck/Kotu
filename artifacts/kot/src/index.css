@@ -627,7 +627,6 @@ button.doc-card:hover{border-color:var(--accent-strong)}
   color:var(--accent-strong);font-family:var(--display);font-size:17px;font-weight:800;
   border:1px solid var(--line);font-variant-numeric:tabular-nums}
 .plan-head{font-size:15px;font-weight:500;line-height:1.4}
-.lec-item{cursor:pointer;text-align:left;width:100%;font:inherit;color:inherit}
 .lec-body{margin-top:6px}
 .lec-section{padding:22px 0;border-bottom:1px solid var(--hairline)}
 .lec-section:last-child{border-bottom:none}
