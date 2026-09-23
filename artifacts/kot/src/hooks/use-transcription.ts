@@ -98,10 +98,20 @@ export function useTranscription(id: number | null): {
     if (id === null) return false;
     try {
       const res = await fetch(`/api/transcriptions/${id}/retry`, { method: 'POST' });
+      if (res.status === 409) {
+        // Возможно, запись уже повторили (другая вкладка, двойной клик) — тогда
+        // остаёмся на ней, а не уводим на новую загрузку.
+        const fresh = await fetch(`/api/transcriptions/${id}`);
+        if (!fresh.ok) return false;
+        const row = (await fresh.json()) as Transcription;
+        if (row.status !== 'processing') return false;
+        setData(row);
+        return true;
+      }
       if (!res.ok) return false;
       // Ответ — уже запись в работе: подставляем сразу, чтобы экран ошибки
       // сменился прогрессом без ожидания, а опрос пошёл по новому статусу.
-      setData(await res.json());
+      setData((await res.json()) as Transcription);
       return true;
     } catch {
       return false;

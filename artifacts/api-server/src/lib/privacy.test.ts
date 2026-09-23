@@ -151,3 +151,31 @@ describe("возврат имён на место", () => {
     expect(result).toBe("Она вспомнила  и замолчала.");
   });
 });
+
+describe("смещения из Python сверяются с текстом", () => {
+  test("эмодзи перед именем не сдвигает метку", async () => {
+    // Python считает 🙂 одним символом, JS — двумя: смещения natasha на 1 меньше.
+    const text = "🙂 Анна снова пришла.";
+    nerReturns([{ start: 2, stop: 6, text: "Анна", type: "PER" }]);
+
+    const { masked } = await maskText(text);
+
+    expect(masked).toBe("🙂 [[PER1]] снова пришла.");
+  });
+
+  test("смещения не совпадают с именем — текст не отдаём", async () => {
+    nerReturns([{ start: 0, stop: 4, text: "Анна", type: "PER" }]);
+
+    await expect(maskText("Пациентка Анна пришла.")).rejects.toBeInstanceOf(NerUnavailableError);
+  });
+
+  test("пересекающиеся спаны — текст не отдаём", async () => {
+    const text = "Анна Петровна пришла.";
+    nerReturns([
+      { start: 0, stop: 13, text: "Анна Петровна", type: "PER" },
+      { start: 5, stop: 13, text: "Петровна", type: "PER" },
+    ]);
+
+    await expect(maskText(text)).rejects.toBeInstanceOf(NerUnavailableError);
+  });
+});

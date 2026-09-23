@@ -307,14 +307,14 @@ export function Transcribe() {
             <button
               className="btn primary"
               style={{ flex: 1 }}
-              disabled={retrying}
+              disabled={retrying || deleting}
               onClick={() => void retry()}
             >
               Попробовать снова <Icon name="arrow" />
             </button>
             <button
               className="btn danger"
-              disabled={deleting}
+              disabled={deleting || retrying}
               onClick={() => activeTranscriptionId != null && void deleteActive(activeTranscriptionId)}
             >
               <Icon name="trash" /> {deleting ? 'Удаляю…' : 'Удалить'}

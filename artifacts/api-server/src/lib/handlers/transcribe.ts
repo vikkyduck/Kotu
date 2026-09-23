@@ -5,6 +5,8 @@ import { transcribeLongAudio, ChunkError } from "../transcription";
 import { registerHandler } from "../jobs";
 import { syncTranscriptionDoc } from "../transcript-doc";
 import { logger } from "../logger";
+import { UPLOAD_DIR } from "../paths";
+import { resolveInsideDir } from "../uploads";
 
 export interface TranscribePayload {
   inputPath: string;
@@ -29,7 +31,7 @@ async function run(job: Job): Promise<void> {
   // некому, а аудио сеанса без записи — ничьё. Убираем его и выходим тихо:
   // ошибка здесь только сожгла бы попытки и оставила файл на диске.
   if (!existing) {
-    await rm(payload.inputPath, { force: true }).catch(() => {});
+    await removeAudio(payload);
     logger.info({ id }, "Запись удалена до расшифровки — убрал аудио");
     return;
   }
@@ -95,8 +97,8 @@ async function run(job: Job): Promise<void> {
 async function onGiveUp(job: Job, message: string): Promise<void> {
   // Аудио НЕ удаляем: попытки сжигает не только плохой файл, но и деплой
   // посреди задачи, сбой транзита, недоступный NER. Запись остаётся на диске,
-  // чтобы «Попробовать снова» повторило её без повторной загрузки. Долго она
-  // не пролежит — стартовая сверка (upload-sweep) уберёт её через 14 дней.
+  // чтобы «Попробовать снова» повторило её без повторной загрузки. Лежит,
+  // пока владелица не повторит или не удалит запись (см. lib/uploads.ts).
   const updated = await db
     .update(transcriptionsTable)
     .set({ status: "error", statusMessage: "", error: message })
@@ -108,9 +110,14 @@ async function onGiveUp(job: Job, message: string): Promise<void> {
     });
   // Исключение — записи больше нет: повторять нечего, аудио ничьё.
   if (updated && updated.length === 0) {
-    const payload = job.payload as unknown as TranscribePayload;
-    await rm(payload.inputPath, { force: true }).catch(() => {});
+    await removeAudio(job.payload as unknown as TranscribePayload);
   }
+}
+
+/** Аудио записи, которой больше нет. Путь из базы — только внутри загрузок. */
+async function removeAudio(payload: TranscribePayload): Promise<void> {
+  const audio = resolveInsideDir(UPLOAD_DIR, payload.inputPath);
+  if (audio) await rm(audio, { force: true }).catch(() => {});
 }
 
 export function registerTranscribeHandler(): void {

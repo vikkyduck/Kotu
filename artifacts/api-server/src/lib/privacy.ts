@@ -42,7 +42,12 @@ export class NerUnavailableError extends Error {
   }
 }
 
-/** Проверяем ответ, а не верим ему: пустой или кривой ответ = маскировка не сделана. */
+/**
+ * Проверяем ответ, а не верим ему: пустой или кривой ответ = маскировка не сделана.
+ * Типы — только PER и LOC: это контракт /opt/privacy/server.py (ORG он отсекает
+ * сам, MASKED_TYPES). Если сервис начнёт отдавать другое — лучше громкий отказ,
+ * чем тихо разошедшиеся метки.
+ */
 function isValidSpans(spans: unknown, textLength: number): spans is NerSpan[] {
   return (
     Array.isArray(spans) &&
@@ -76,10 +81,42 @@ async function fetchSpans(text: string): Promise<NerSpan[]> {
     if (!isValidSpans(data?.spans, text.length)) {
       throw new Error("NER вернул ответ без корректного списка spans");
     }
-    return data.spans;
+    return toUtf16Spans(text, data.spans);
   } catch (err) {
     throw new NerUnavailableError(err);
   }
+}
+
+/**
+ * natasha живёт в Python и считает смещения в кодовых точках, а строки JS — в
+ * UTF-16. Пока в тексте нет символов вне BMP (эмодзи и т.п.), это одно и то же;
+ * если есть — пересчитываем. Затем сверяем: кусок текста по смещениям обязан
+ * совпасть с тем, что сервис назвал именем, и спаны не должны пересекаться.
+ * Иначе метка легла бы не на то место, и кусок имени ушёл бы наружу.
+ */
+function toUtf16Spans(text: string, spans: NerSpan[]): NerSpan[] {
+  let at = (cp: number) => cp;
+  if (/[\uD800-\uDFFF]/.test(text)) {
+    const offsets: number[] = [];
+    let u = 0;
+    for (const ch of text) {
+      offsets.push(u);
+      u += ch.length;
+    }
+    offsets.push(u);
+    at = (cp) => offsets[cp] ?? -1;
+  }
+  const converted = spans
+    .map((s) => ({ ...s, start: at(s.start), stop: at(s.stop) }))
+    .sort((a, b) => a.start - b.start);
+  let prevStop = 0;
+  for (const s of converted) {
+    if (s.start < prevStop || text.slice(s.start, s.stop) !== s.text) {
+      throw new Error("NER вернул смещения, которые не совпадают с текстом");
+    }
+    prevStop = s.stop;
+  }
+  return converted;
 }
 
 /**

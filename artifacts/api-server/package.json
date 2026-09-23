@@ -8,6 +8,7 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke:pdf": "node ./smoke/pdf.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
