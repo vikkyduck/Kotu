@@ -1,5 +1,5 @@
 import { eq, asc } from "drizzle-orm";
-import { openai } from "@workspace/integrations-openai-ai-server/audio";
+import { openai } from "../openai";
 import {
   db,
   lecturesTable,

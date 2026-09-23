@@ -11,7 +11,7 @@ import { test, describe, expect, vi, afterEach, beforeEach } from "vitest";
  */
 
 const create = vi.hoisted(() => vi.fn());
-vi.mock("@workspace/integrations-openai-ai-server/audio", () => ({
+vi.mock("./openai", () => ({
   openai: { chat: { completions: { create } }, audio: { transcriptions: { create: vi.fn() } } },
 }));
 

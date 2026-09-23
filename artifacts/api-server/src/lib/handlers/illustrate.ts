@@ -12,7 +12,7 @@ import {
   type StylePack,
   type ImageSide,
 } from "@workspace/db";
-import { ask, type ImageAttachment } from "../claude";
+import { askJson, type ImageAttachment } from "../claude";
 import { geminiJson } from "../gemini";
 import { renderIllustration } from "../images";
 import { registerHandler, enqueue } from "../jobs";
@@ -43,32 +43,6 @@ interface DirectorReply {
 interface ReviewReply {
   accept: boolean;
   verdict: string;
-}
-
-/**
- * Тот же разбор, что в askJson из ../claude: модель любит обернуть ответ
- * в ```json или добавить фразу вокруг — срезаем и вынимаем сам объект.
- */
-function parseJsonReply<T>(raw: string): T {
-  const cleaned = raw
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "")
-    .trim();
-
-  try {
-    return JSON.parse(cleaned) as T;
-  } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(cleaned.slice(start, end + 1)) as T;
-      } catch {
-        // Наружу — только человеческая формулировка, не сырой SyntaxError.
-      }
-    }
-    throw new Error("Приёмка вернула ответ, который не удалось разобрать как JSON");
-  }
 }
 
 /**
@@ -136,16 +110,14 @@ async function reviewImage(
     "— винтажная гравюра/офорт, музейная сдержанность;",
     `— спокойное поле около 40% ${safeSide} — оно нужно под типографику;`,
     "— нет текста, букв, рамок, хоррора, шестерёнок, неона.",
-    'Ответ СТРОГО JSON: {"accept": true|false, "verdict": "одно-два предложения по-русски: что так или не так"}.',
+    'Форма ответа: {"accept": true|false, "verdict": "одно-два предложения по-русски: что так или не так"}.',
   ].join("\n");
 
-  const raw = await ask({
+  const reply = await askJson<ReviewReply>({
     system,
     user: `Мысль слайда: ${slide.imageBrief}`,
     images: [{ path: filePath, mediaType: mime }],
   });
-
-  const reply = parseJsonReply<ReviewReply>(raw);
   return {
     accept: reply.accept === true,
     verdict: typeof reply.verdict === "string" ? reply.verdict : "",
