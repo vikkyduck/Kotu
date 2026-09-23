@@ -11,6 +11,14 @@ if (!process.env.DATABASE_URL) {
 }
 
 export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Простаивающее соединение может оборваться само (рестарт Postgres, сеть).
+// pg сообщает об этом событием error на пуле, и без обработчика Node роняет
+// процесс вместе с очередью задач. Пул сам выбросит мёртвый клиент и откроет
+// новый при следующем запросе — достаточно записать причину.
+pool.on("error", (err) => {
+  console.error("Postgres: оборвалось простаивающее соединение пула, работаем дальше", err);
+});
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";

@@ -13,6 +13,8 @@ import {
   tooManyAttempts,
   registerFailedAttempt,
   clearAttempts,
+  allowForgotRequest,
+  MAX_EMAIL_LENGTH,
 } from "../lib/auth";
 import { requireAuth } from "../middlewares/require-auth";
 
@@ -41,7 +43,8 @@ async function findValidReset(token: string) {
 }
 
 router.post("/auth/login", async (req, res) => {
-  const ip = req.ip ?? "unknown";
+  // Адрес как есть: в ключ счётчика (IPv6 → /64) его сводит lib/auth.
+  const ip = req.ip;
   if (tooManyAttempts(ip)) {
     res.status(429).json({ message: "Слишком много попыток. Подождите 15 минут." });
     return;
@@ -93,15 +96,25 @@ router.get("/me", requireAuth, (req, res) => {
  * иначе форму можно использовать, чтобы проверять, кто зарегистрирован.
  */
 router.post("/auth/forgot", async (req, res) => {
-  const ip = req.ip ?? "unknown";
-  const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  const ip = req.ip;
+  const raw = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  // Тело может весить до 5 МБ; почту длиннее RFC-предела не ищем в базе и не
+  // пишем в журнал — отвечаем как на пустую, расходуя только лимит адреса.
+  const email = raw.length <= MAX_EMAIL_LENGTH ? raw : "";
+
+  // Лимит проверяем до поиска в базе, и отказ одинаков для любой почты —
+  // по нему нельзя понять, зарегистрирован ли адрес. Счётчик свой: попытки
+  // сброса не должны запирать вход (см. allowForgotRequest).
+  if (!allowForgotRequest(ip, email)) {
+    res.status(429).json({ message: "Слишком много запросов сброса. Попробуйте через час." });
+    return;
+  }
 
   // Единый ответ отдаём сразу, а письмо шлём фоном: по времени ответа тоже
   // не должно быть видно, нашёлся пользователь или нет.
   res.json({ ok: true });
 
-  if (email === "" || tooManyAttempts(ip)) return;
-  registerFailedAttempt(ip);
+  if (email === "") return;
 
   try {
     const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email)).limit(1);
@@ -180,9 +193,17 @@ router.post("/auth/password", requireAuth, async (req, res) => {
     return;
   }
 
+  // Тот же счётчик, что у входа: иначе с чужой украденной сессией текущий
+  // пароль можно было бы подбирать здесь без ограничений.
+  const ip = req.ip;
+  if (tooManyAttempts(ip)) {
+    res.status(429).json({ message: "Слишком много попыток. Подождите 15 минут." });
+    return;
+  }
+
   const ok = await verifyPassword(current, user.passwordHash);
   if (!ok) {
-    registerFailedAttempt(req.ip ?? "unknown");
+    registerFailedAttempt(ip);
     res.status(401).json({ message: "Текущий пароль неверен" });
     return;
   }
