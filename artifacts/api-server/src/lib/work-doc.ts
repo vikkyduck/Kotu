@@ -66,7 +66,11 @@ export async function upsertWorkDoc(opts: {
   kind: "lecture" | "deck" | "transcript";
   link: { column: LinkColumn; id: number };
   values: { lectureId?: number; deckId?: number; transcriptionId?: number };
-  folderId: number | null;
+  /**
+   * Папка работы — у лекции и колоды. У расшифровки её нет: папку копии
+   * выбирает пользовательница, и повторная синхронизация её не трогает.
+   */
+  folderId?: number | null;
   fileName: string;
   text: string;
 }): Promise<number | null> {
@@ -92,7 +96,7 @@ export async function upsertWorkDoc(opts: {
       title: opts.title,
       kind: opts.kind,
       ...opts.values,
-      folderId: opts.folderId,
+      folderId: opts.folderId ?? null,
       sourcePath: filePath,
       mime: "text/plain",
       status: "parsing",
@@ -114,7 +118,7 @@ export async function upsertWorkDoc(opts: {
       .update(documentsTable)
       .set({
         title: opts.title,
-        folderId: opts.folderId,
+        ...(opts.folderId !== undefined && { folderId: opts.folderId }),
         sourcePath: filePath,
         status: "parsing",
         statusMessage: "В очереди…",
