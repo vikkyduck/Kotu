@@ -4,7 +4,7 @@ import { purgeExpiredSessions } from "./lib/auth";
 import { requeueOrphans, startWorker } from "./lib/jobs";
 import { sweepTranscriptionsToLibrary } from "./lib/transcript-doc";
 import { sweepWorkToLibrary, sweepStuckDeckImages } from "./lib/work-doc";
-import { ensureArchive, startFileSweep, whenArchiveReady } from "./lib/archive";
+import { archiveState, ensureArchive, startFileSweep, whenArchiveReady } from "./lib/archive";
 import { registerTranscribeHandler } from "./lib/handlers/transcribe";
 import { registerIngestHandler } from "./lib/handlers/ingest";
 import { registerLectureHandlers } from "./lib/handlers/lecture";
@@ -51,7 +51,7 @@ void whenArchiveReady().then(() => {
       if (n > 0) logger.info({ count: n }, "Вернул в очередь прерванные задачи");
     })
     .catch((err) => logger.error({ err }, "Не смог вернуть задачи в очередь"))
-    .finally(() => startWorker());
+    .finally(() => startWorker(() => archiveState() === "ok"));
 
   // Готовые расшифровки без библиотечной копии: бэкфилл старых и
   // самолечение после сбоев. Идемпотентно, поэтому просто на каждом старте.
