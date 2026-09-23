@@ -1,6 +1,4 @@
 import { pgTable, serial, text, boolean, jsonb, integer, timestamp } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
-import { z } from "zod/v4";
 
 export type TranscriptSegment = {
   who: string;
@@ -32,11 +30,4 @@ export const transcriptionsTable = pgTable("transcriptions", {
     .$onUpdate(() => new Date()),
 });
 
-export const insertTranscriptionSchema = createInsertSchema(transcriptionsTable).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
-
-export type InsertTranscription = z.infer<typeof insertTranscriptionSchema>;
 export type Transcription = typeof transcriptionsTable.$inferSelect;
