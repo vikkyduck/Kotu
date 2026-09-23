@@ -6,7 +6,7 @@ import { registerHandler } from "../jobs";
 import { syncTranscriptionDoc } from "../transcript-doc";
 import { logger } from "../logger";
 
-interface TranscribePayload {
+export interface TranscribePayload {
   inputPath: string;
   filename: string;
   hideNames: boolean;
@@ -25,7 +25,15 @@ async function run(job: Job): Promise<void> {
     .from(transcriptionsTable)
     .where(eq(transcriptionsTable.id, id))
     .limit(1);
-  if (existing?.status === "done") {
+  // Запись удалили, пока задача ждала очереди (или повтора): расшифровывать
+  // некому, а аудио сеанса без записи — ничьё. Убираем его и выходим тихо:
+  // ошибка здесь только сожгла бы попытки и оставила файл на диске.
+  if (!existing) {
+    await rm(payload.inputPath, { force: true }).catch(() => {});
+    logger.info({ id }, "Запись удалена до расшифровки — убрал аудио");
+    return;
+  }
+  if (existing.status === "done") {
     await syncTranscriptionDoc(existing).catch((err) =>
       logger.error({ err, id }, "Расшифровка не доехала до библиотеки"),
     );
@@ -85,13 +93,24 @@ async function run(job: Job): Promise<void> {
 }
 
 async function onGiveUp(job: Job, message: string): Promise<void> {
-  const payload = job.payload as unknown as TranscribePayload;
-  await db
+  // Аудио НЕ удаляем: попытки сжигает не только плохой файл, но и деплой
+  // посреди задачи, сбой транзита, недоступный NER. Запись остаётся на диске,
+  // чтобы «Попробовать снова» повторило её без повторной загрузки. Долго она
+  // не пролежит — стартовая сверка (upload-sweep) уберёт её через 14 дней.
+  const updated = await db
     .update(transcriptionsTable)
     .set({ status: "error", statusMessage: "", error: message })
     .where(eq(transcriptionsTable.id, job.entityId))
-    .catch((err) => logger.error({ err, id: job.entityId }, "Не смог записать состояние ошибки"));
-  await rm(payload.inputPath, { force: true }).catch(() => {});
+    .returning({ id: transcriptionsTable.id })
+    .catch((err) => {
+      logger.error({ err, id: job.entityId }, "Не смог записать состояние ошибки");
+      return null;
+    });
+  // Исключение — записи больше нет: повторять нечего, аудио ничьё.
+  if (updated && updated.length === 0) {
+    const payload = job.payload as unknown as TranscribePayload;
+    await rm(payload.inputPath, { force: true }).catch(() => {});
+  }
 }
 
 export function registerTranscribeHandler(): void {
