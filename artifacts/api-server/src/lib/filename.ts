@@ -24,9 +24,11 @@ export function decodeUploadName(name: string): string {
  * Заголовок Content-Disposition для выгрузки. Одно правило для лекций и
  * презентаций: имя очищено от знаков, ломающих заголовок (апостроф, скобки),
  * обрезано до 60 знаков, плюс ASCII-запасное имя для старых клиентов.
+ * Пустое расширение — имя без точки на конце.
  */
 export function attachmentHeader(title: string, ext: string, fallback: string): string {
   const safe = title.replace(/[^\p{L}\p{N} .-]/gu, "").replace(/\s+/g, " ").trim().slice(0, 60).trim();
-  const name = `${safe || fallback}.${ext}`;
-  return `attachment; filename="download.${ext}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+  const dotExt = ext ? `.${ext}` : "";
+  const name = `${safe || fallback}${dotExt}`;
+  return `attachment; filename="download${dotExt}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
