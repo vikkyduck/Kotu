@@ -46,6 +46,12 @@ export interface ArchivedFile {
   /** inode заархивированного содержимого — чтобы rm удалил именно его. */
   dev: number;
   ino: number;
+  /**
+   * mtime в момент архивации: тот же inode мог переписаться на месте (другой
+   * диск, где архив — копия, а не ссылка), и тогда rm удалил бы содержимое,
+   * которого в архиве нет. Сверяем вместе с размером перед rm.
+   */
+  mtimeMs: number;
 }
 
 export class ArchiveUnavailableError extends Error {
@@ -287,7 +293,15 @@ export function createFileArchive(opts: FileArchiveOptions) {
            ino = EXCLUDED.ino, sha256 = EXCLUDED.sha256, seen_at = now()`,
         [path.resolve(filePath), st.size, st.mtimeMs, String(st.ino), sha],
       );
-      return { sha256: sha, size: st.size, storedPath, stored, dev: st.dev, ino: st.ino };
+      return {
+        sha256: sha,
+        size: st.size,
+        storedPath,
+        stored,
+        dev: st.dev,
+        ino: st.ino,
+        mtimeMs: st.mtimeMs,
+      };
     } finally {
       await fh.close();
     }
@@ -311,9 +325,12 @@ export function createFileArchive(opts: FileArchiveOptions) {
   }
 
   /**
-   * rm после архивации. already — итог архивации, сделанной только что
-   * (archiveTreeAndRemove архивирует всё заранее): если inode тот же, второй
-   * раз не архивируем и второго события в file_events не пишем.
+   * rm после архивации. already — итог архивации первым проходом
+   * (archiveTreeAndRemove архивирует всё заранее): если файл тот же — inode,
+   * устройство, размер и mtime совпадают, — второй раз не архивируем и
+   * второго события в file_events не пишем. Хоть что-то разошлось (файл
+   * подменили или дописали между проходами) — архивируем заново прямо перед
+   * rm, как archiveAndRemove.
    */
   async function removeArchived(
     filePath: string,
@@ -326,8 +343,14 @@ export function createFileArchive(opts: FileArchiveOptions) {
       if (!archived) return null;
       const now = await lstatOrNull(filePath);
       if (!now) return archived;
-      if (now.ino !== archived.ino || now.dev !== archived.dev) {
-        // Путь подменили после архивации — новое содержимое тоже в архив.
+      if (
+        now.ino !== archived.ino ||
+        now.dev !== archived.dev ||
+        now.size !== archived.size ||
+        now.mtimeMs !== archived.mtimeMs
+      ) {
+        // Путь подменили или файл изменили после архивации — новое
+        // содержимое тоже в архив, и только потом rm.
         archived = null;
         continue;
       }
