@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { Router, type IRouter } from "express";
 import multer from "multer";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, ne } from "drizzle-orm";
 import { db, jobsTable, transcriptionsTable, type TranscriptSegment } from "@workspace/db";
 import {
   GetTranscriptionParams,
@@ -24,6 +24,11 @@ import {
   requireArchive,
 } from "../../lib/archive";
 import type { TranscribePayload } from "../../lib/handlers/transcribe";
+import {
+  SEGMENTS_BUSY_MESSAGE,
+  TRANSCRIPTION_WRITING,
+  segmentsEditBlocked,
+} from "../../lib/busy-edit";
 
 // Long recordings (2–3 hours) are split server-side, so allow large uploads.
 // Files are streamed to disk (not held in memory) and split with ffmpeg.
@@ -114,6 +119,9 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
     return;
   }
 
+  // Текст, который сейчас пишет расшифровщик, не правим (lib/busy-edit.ts):
+  // условие — в самом UPDATE, чтобы между проверкой и записью статус не
+  // успел смениться.
   const [row] = await db
     .update(transcriptionsTable)
     .set(updates)
@@ -121,11 +129,27 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
       and(
         eq(transcriptionsTable.id, params.data.id),
         eq(transcriptionsTable.ownerId, req.user!.id),
+        updates.segments !== undefined
+          ? ne(transcriptionsTable.status, TRANSCRIPTION_WRITING)
+          : undefined,
       ),
     )
     .returning();
 
   if (!row) {
+    const [current] = await db
+      .select({ status: transcriptionsTable.status })
+      .from(transcriptionsTable)
+      .where(
+        and(
+          eq(transcriptionsTable.id, params.data.id),
+          eq(transcriptionsTable.ownerId, req.user!.id),
+        ),
+      );
+    if (current && segmentsEditBlocked(current.status, updates)) {
+      res.status(409).json({ error: SEGMENTS_BUSY_MESSAGE, message: SEGMENTS_BUSY_MESSAGE });
+      return;
+    }
     res.status(404).json({ error: "Расшифровка не найдена" });
     return;
   }
