@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { Router, type IRouter } from "express";
 import multer from "multer";
-import { eq, and, desc, sql, inArray } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, getTableColumns } from "drizzle-orm";
 import {
   db,
   documentsTable,
@@ -11,7 +11,6 @@ import {
   decksTable,
   type Document,
 } from "@workspace/db";
-import { enqueue } from "../../lib/jobs";
 import { LIBRARY_DIR } from "../../lib/paths";
 import { embedAll } from "../../lib/embeddings";
 import { ownFolderId } from "../../lib/folders";
@@ -43,9 +42,38 @@ const upload = multer({
 
 const router: IRouter = Router();
 
+const NOT_FOUND = "Документ не найден";
+
+/**
+ * Строка документа для фронта — без пути на диске: он фронту не нужен, а
+ * показывать устройство сервера незачем. Одно поле вычёркиваем, а не
+ * перечисляем остальные: новое поле схемы появится в ответе само.
+ */
+const { sourcePath: _sourcePath, ...PUBLIC_DOC } = getTableColumns(documentsTable);
+
+/**
+ * Название материала: без краевых пробелов и не длиннее 200 знаков. Пустое —
+ * null, ручка отвечает 400. Длинное обрезаем, а не отклоняем: имя файла на
+ * macOS бывает до 255 знаков, и объяснять это автору незачем.
+ */
+function cleanTitle(raw: unknown): string | null {
+  const title = typeof raw === "string" ? raw.trim().slice(0, 200) : "";
+  return title === "" ? null : title;
+}
+
+/**
+ * Метки скрытых имён ([[PER1]], [[LOC2]]) в тексте копии расшифровки — для
+ * модели, а человеку в выдаче поиска они ничего не говорят. Показываем так
+ * же, как на экране записи. Сам текст копии не трогаем: номера меток помогают
+ * модели не путать разных людей.
+ */
+function hideLabels(text: string): string {
+  return text.replace(/\[\[PER\d+\]\]/g, "имя скрыто").replace(/\[\[LOC\d+\]\]/g, "место скрыто");
+}
+
 router.get("/documents", async (req, res): Promise<void> => {
   const rows = await db
-    .select()
+    .select(PUBLIC_DOC)
     .from(documentsTable)
     .where(eq(documentsTable.ownerId, req.user!.id))
     .orderBy(desc(documentsTable.createdAt));
@@ -103,7 +131,7 @@ router.get("/documents/:id/file", async (req, res): Promise<void> => {
 router.post("/documents/:id/retry", async (req, res): Promise<void> => {
   const doc = await ownDoc(req.params.id, req.user!.id);
   if (!doc) {
-    res.status(404).json({ message: "Документ не найден" });
+    res.status(404).json({ message: NOT_FOUND });
     return;
   }
   if (doc.status !== "error") {
@@ -159,7 +187,7 @@ router.post("/documents/:id/retry", async (req, res): Promise<void> => {
 router.delete("/documents/:id", async (req, res): Promise<void> => {
   const doc = await ownDoc(req.params.id, req.user!.id);
   if (!doc) {
-    res.status(404).json({ message: "Документ не найден" });
+    res.status(404).json({ message: NOT_FOUND });
     return;
   }
 
@@ -188,7 +216,7 @@ router.delete("/documents/:id", async (req, res): Promise<void> => {
 router.patch("/documents/:id", async (req, res): Promise<void> => {
   const doc = await ownDoc(req.params.id, req.user!.id);
   if (!doc) {
-    res.status(404).json({ message: "Документ не найден" });
+    res.status(404).json({ message: NOT_FOUND });
     return;
   }
 
@@ -203,14 +231,19 @@ router.patch("/documents/:id", async (req, res): Promise<void> => {
     }
     patch.folderId = folderId;
   }
-  if (typeof body.title === "string" && body.title.trim() !== "") {
+  if ("title" in body) {
     // У библиотечной копии расшифровки имя нейтральное и своё: правка здесь
     // перезатёрлась бы следующей синхронизацией, а имя из зоны А сюда нельзя.
     if (doc.kind === "transcript") {
       res.status(400).json({ message: "Расшифровку переименовывают как запись, а не как копию" });
       return;
     }
-    patch.title = body.title.trim().slice(0, 200);
+    const title = cleanTitle(body.title);
+    if (title === null) {
+      res.status(400).json({ message: "Напишите название" });
+      return;
+    }
+    patch.title = title;
   }
 
   if (Object.keys(patch).length > 0) {
@@ -252,13 +285,13 @@ router.post("/folders", async (req, res): Promise<void> => {
 });
 
 router.patch("/folders/:id", async (req, res): Promise<void> => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
   const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 100) : "";
   if (name === "") {
     res.status(400).json({ message: "Дайте папке имя" });
     return;
   }
-  const [row] = Number.isInteger(id)
+  const [row] = id !== null
     ? await db
         .update(foldersTable)
         .set({ name })
@@ -273,11 +306,11 @@ router.patch("/folders/:id", async (req, res): Promise<void> => {
 });
 
 router.delete("/folders/:id", async (req, res): Promise<void> => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
   // Строка папки уходит в архив триггером — без архива не удаляем.
   await requireArchive();
   const ownerId = req.user!.id;
-  const row = Number.isInteger(id)
+  const row = id !== null
     ? await db.transaction(async (tx) => {
         const [folder] = await tx
           .delete(foldersTable)
@@ -335,10 +368,7 @@ router.post(
     }
 
     const filename = decodeUploadName(req.file.originalname) || "документ";
-    const title =
-      typeof req.body?.title === "string" && req.body.title.trim() !== ""
-        ? req.body.title.trim()
-        : filename.replace(/\.[^.]+$/, "");
+    const title = cleanTitle(req.body?.title) ?? cleanTitle(filename.replace(/\.[^.]+$/, "")) ?? "документ";
     // 'transcript' зарезервирован за автоматическими копиями расшифровок:
     // рукотворный файл с таким kind стал бы неудаляемым.
     const kind = ["book", "article", "note"].includes(req.body?.kind)
@@ -349,31 +379,41 @@ router.post(
     // второго действия «а теперь переложи». Чужая папка молча игнорируется.
     const folderId = (await ownFolderId(req.body?.folderId, req.user!.id)) ?? null;
 
-    const [doc] = await db
-      .insert(documentsTable)
-      .values({
-        ownerId: req.user!.id,
-        folderId,
-        title,
-        kind,
-        sourcePath: req.file.path,
-        mime: req.file.mimetype,
-        status: "parsing",
-        statusMessage: "В очереди…",
-      })
-      .returning();
+    const file = req.file;
+    const payload: IngestPayload = { sourcePath: file.path, mime: file.mimetype, filename };
 
-    await archiveUpload(req.file.path, {
+    // Документ и задача разбора — в одной транзакции: документ «в разборе»
+    // без задачи висел бы вечно (перезапуск при деплое между двумя запросами),
+    // а повтор такой не подхватит — он ждёт ошибки.
+    const doc = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(documentsTable)
+        .values({
+          ownerId: req.user!.id,
+          folderId,
+          title,
+          kind,
+          sourcePath: file.path,
+          mime: file.mimetype,
+          status: "parsing",
+          statusMessage: "В очереди…",
+        })
+        .returning(PUBLIC_DOC);
+      await tx.insert(jobsTable).values({
+        kind: "doc.ingest",
+        entityId: row.id,
+        payload: payload as unknown as Record<string, unknown>,
+      });
+      return row;
+    });
+
+    // Копия в архив — уже после: на большом файле это секунды, и держать ради
+    // неё документ без задачи незачем. Не бросает, промах догонит сверка.
+    await archiveUpload(file.path, {
       entityType: "document",
       entityId: doc.id,
       originalName: filename,
-      mime: req.file.mimetype,
-    });
-
-    await enqueue("doc.ingest", doc.id, {
-      sourcePath: req.file.path,
-      mime: req.file.mimetype,
-      filename,
+      mime: file.mimetype,
     });
 
     res.status(201).json(doc);
@@ -484,7 +524,7 @@ router.get("/search", async (req, res): Promise<void> => {
       score: h.score,
       quotes: [],
     };
-    if (g.quotes.length < 3) g.quotes.push({ text: h.text.slice(0, 600), heading: h.heading });
+    if (g.quotes.length < 3) g.quotes.push({ text: hideLabels(h.text).slice(0, 600), heading: h.heading });
     grouped.set(h.documentId, g);
   }
 
