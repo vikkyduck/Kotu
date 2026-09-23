@@ -117,6 +117,8 @@ interface Props {
   patchSlide: (sid: number, body: Record<string, unknown>) => Promise<boolean>;
   redraw: (sid: number, instruction: string) => Promise<boolean>;
   rewrite: (sid: number, instruction: string) => Promise<boolean>;
+  /** null — убирать нельзя (колода в работе или слайд последний). */
+  removeSlide: ((sid: number) => Promise<boolean>) | null;
   toast: (message: string) => void;
 }
 
@@ -128,6 +130,7 @@ export function SlideViewer({
   patchSlide,
   redraw,
   rewrite,
+  removeSlide,
   toast,
 }: Props) {
   const slide = deck.slides[index];
@@ -312,6 +315,23 @@ export function SlideViewer({
         <span className="vw-count">
           Слайд {index + 1} из {deck.slides.length} · {layoutName(slide.layout)}
         </span>
+        {removeSlide && (
+          <button
+            className="iconbtn"
+            title="Убрать слайд"
+            onClick={() =>
+              leave(() => {
+                // Колода после удаления короче: встаём на соседний слайд, а
+                // с последнего — на новый последний.
+                void removeSlide(slide.id).then((ok) => {
+                  if (ok && index >= deck.slides.length - 1) onIndex(Math.max(0, index - 1));
+                });
+              })
+            }
+          >
+            <Icon name="trash" />
+          </button>
+        )}
         <div className="vw-nav">
           <button
             className="iconbtn"

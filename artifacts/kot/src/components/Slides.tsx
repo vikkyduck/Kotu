@@ -136,6 +136,16 @@ export function Slides() {
       'Переделываю слайд — покажу, когда будет готово',
     );
 
+  /**
+   * Убрать слайд — решение автора, модель слайды не удаляет. Слайд уходит в
+   * архив; последний не убирается (для этого — удалить презентацию).
+   */
+  const removeSlide = async (sid: number): Promise<boolean> => {
+    if (!window.confirm('Убрать этот слайд?')) return false;
+    return act(`${base}/slides/${sid}`, { method: 'DELETE' }, 'Не удалось убрать слайд', 'Слайд убран');
+  };
+  const canRemoveSlide = !!deck && !deckWorking(deck.status) && deck.status !== 'error' && deck.slides.length > 1;
+
   const approve = async () => {
     if (!deck) return;
     const hasImages = deck.slides.some((s) => s.imageBrief !== null);
@@ -258,6 +268,11 @@ export function Slides() {
                   <button className="sb-open" onClick={() => setOpenSlide(i)}>
                     <Icon name="eye" /> открыть слайд
                   </button>
+                  {canRemoveSlide && (
+                    <button className="sb-open" onClick={() => void removeSlide(s.id)}>
+                      <Icon name="trash" /> убрать
+                    </button>
+                  )}
                 </div>
                 {(s.content.title || s.content.quote) && (
                   <h3 className="sb-title">{s.content.title || s.content.quote}</h3>
@@ -417,6 +432,7 @@ export function Slides() {
             patchSlide={patchSlide}
             redraw={redraw}
             rewrite={rewrite}
+            removeSlide={canRemoveSlide ? removeSlide : null}
             toast={toast}
           />
         )}
