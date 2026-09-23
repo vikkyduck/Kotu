@@ -24,8 +24,9 @@ import { deckToLibrary, dropDeckCopies } from "../../lib/work-doc";
 import { DECKS_DIR } from "../../lib/paths";
 import { buildDeckPptx } from "../../lib/pptx";
 import { buildDeckPdf } from "../../lib/pdf";
-import { sanitizeSlideContent } from "../../lib/slide-content";
+import { sanitizeSlideContent, settleSlides } from "../../lib/slide-content";
 import { deckStylePack } from "../../lib/deck-style";
+import { MAX_SOURCE_CHARS, SOURCE_GONE } from "../../lib/handlers/storyboard";
 import { parseId } from "../../lib/parse-id";
 import { attachmentHeader } from "../../lib/filename";
 import {
@@ -75,6 +76,16 @@ async function slideOr404(deck: Deck, req: Request, res: Response): Promise<Deck
   return slide;
 }
 
+/** Слайды колоды по порядку — для экрана и выгрузки, текст в полях макета. */
+async function deckSlides(deckId: number): Promise<DeckSlide[]> {
+  const rows = await db
+    .select()
+    .from(deckSlidesTable)
+    .where(eq(deckSlidesTable.deckId, deckId))
+    .orderBy(asc(deckSlidesTable.ord));
+  return settleSlides(rows);
+}
+
 /** В ошибке колода стоит — не «работает»: сказать, что делать. */
 const RETRY_FIRST = "Сначала нажмите «Попробовать ещё раз»";
 
@@ -92,8 +103,7 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
  * статуса — одной транзакцией с условием на прежний статус. Второй клик или
  * вторая вкладка уже не найдут колоду в этом статусе и второй задачи не
  * поставят; колода «в работе» без задачи тоже невозможна. false — колоду
- * успели занять, ручке ответить 409 BUSY. Так же устроены повторы
- * расшифровки, документа и лекции.
+ * успели занять, ручке ответить 409 BUSY.
  */
 async function queueDeckJob(
   deckId: number,
@@ -145,11 +155,7 @@ router.get("/decks/:id", async (req, res): Promise<void> => {
   const deck = await deckOr404(req, res);
   if (!deck) return;
 
-  const slides = await db
-    .select()
-    .from(deckSlidesTable)
-    .where(eq(deckSlidesTable.deckId, deck.id))
-    .orderBy(asc(deckSlidesTable.ord));
+  const slides = await deckSlides(deck.id);
 
   const images = await db
     .select()
@@ -212,8 +218,14 @@ router.post("/decks", async (req, res): Promise<void> => {
       res.status(400).json({ message: "Вставьте текст лекции — хотя бы пару абзацев" });
       return;
     }
-    // Потолок: больше и лекция инструмента 2 не выдаёт, а payload не резиновый.
-    rawText = text.slice(0, 200_000);
+    // Длиннее модель не прочтёт — лучше сказать сразу, чем молча потерять хвост.
+    if (text.length > MAX_SOURCE_CHARS) {
+      res.status(400).json({
+        message: `Текст длиннее ${MAX_SOURCE_CHARS.toLocaleString("ru-RU")} знаков — сократите его`,
+      });
+      return;
+    }
+    rawText = text;
     title = title || text.slice(0, 70);
   } else {
     res.status(400).json({ message: "Неизвестный источник презентации" });
@@ -271,24 +283,23 @@ router.patch("/decks/:id", async (req, res): Promise<void> => {
     res.status(400).json({ message: "Название — от 1 до 200 знаков" });
     return;
   }
+  const set: { folderId?: number | null; title?: string } = {};
   if ("folderId" in body) {
     const folderId = await ownFolderId(body.folderId, req.user!.id);
     if (folderId === undefined) {
       res.status(404).json({ message: "Папка не найдена" });
       return;
     }
-    // Текстовая копия в поиске переезжает вместе с колодой: материал живёт
-    // в одном месте, а не расползается по двум папкам.
-    await db.update(decksTable).set({ folderId }).where(eq(decksTable.id, deck.id));
-    await db
-      .update(documentsTable)
-      .set({ folderId })
-      .where(eq(documentsTable.deckId, deck.id));
+    set.folderId = folderId;
   }
-  if (title !== "") {
-    // Копия в поиске называется так же, как колода.
-    await db.update(decksTable).set({ title }).where(eq(decksTable.id, deck.id));
-    await db.update(documentsTable).set({ title }).where(eq(documentsTable.deckId, deck.id));
+  if (title !== "") set.title = title;
+  if (Object.keys(set).length > 0) {
+    // Текстовая копия в поиске переезжает и переименовывается вместе с
+    // колодой — одной транзакцией: материал не расползается по двум папкам.
+    await db.transaction(async (tx) => {
+      await tx.update(decksTable).set(set).where(eq(decksTable.id, deck.id));
+      await tx.update(documentsTable).set(set).where(eq(documentsTable.deckId, deck.id));
+    });
   }
   res.json({ ok: true });
 });
@@ -407,10 +418,14 @@ router.post("/decks/:id/approve", async (req, res): Promise<void> => {
     return;
   }
 
-  const withBrief = await db
-    .select({ id: deckSlidesTable.id })
-    .from(deckSlidesTable)
-    .where(and(eq(deckSlidesTable.deckId, deck.id), isNotNull(deckSlidesTable.imageBrief)));
+  // Бриф на финале или схеме (остался от прежнего макета) не рисуется —
+  // то же правило, что у отрисовки: иначе колода ушла бы рисовать пустоту.
+  const withBrief = (
+    await db
+      .select({ layout: deckSlidesTable.layout })
+      .from(deckSlidesTable)
+      .where(and(eq(deckSlidesTable.deckId, deck.id), isNotNull(deckSlidesTable.imageBrief)))
+  ).filter((s) => layoutHasImage(s.layout));
 
   // Рисовать нечего — колода готова сразу, очередь не нужна.
   if (withBrief.length === 0) {
@@ -496,7 +511,7 @@ router.post("/decks/:id/slides/:sid/redraw", async (req, res): Promise<void> => 
 
   const slide = await slideOr404(deck, req, res);
   if (!slide) return;
-  if (!slide.imageBrief) {
+  if (!slide.imageBrief || !layoutHasImage(slide.layout)) {
     res.status(400).json({ message: "У этого слайда нет образа" });
     return;
   }
@@ -558,11 +573,7 @@ router.get("/decks/:id/export", async (req, res): Promise<void> => {
     return;
   }
 
-  const slides = await db
-    .select()
-    .from(deckSlidesTable)
-    .where(eq(deckSlidesTable.deckId, deck.id))
-    .orderBy(asc(deckSlidesTable.ord));
+  const slides = await deckSlides(deck.id);
 
   const images = await db
     .select()
@@ -596,6 +607,25 @@ router.get("/decks/:id/export", async (req, res): Promise<void> => {
   res.send(buffer);
 });
 
+/** Источник колоды ещё есть и годится: те же условия, что при создании. */
+async function sourceAlive(deck: Deck): Promise<boolean> {
+  const id = deck.sourceId;
+  if (id === null) return false;
+  const [row] =
+    deck.sourceKind === "lecture"
+      ? await db
+          .select({ status: lecturesTable.status })
+          .from(lecturesTable)
+          .where(and(eq(lecturesTable.id, id), eq(lecturesTable.ownerId, deck.ownerId)))
+          .limit(1)
+      : await db
+          .select({ status: documentsTable.status })
+          .from(documentsTable)
+          .where(and(eq(documentsTable.id, id), eq(documentsTable.ownerId, deck.ownerId)))
+          .limit(1);
+  return row?.status === "ready";
+}
+
 /**
  * Повтор после ошибки. До утверждения — раскадровка заново (текст берём из
  * payload проваленной задачи: у неуспешных он не затирается), после — только
@@ -619,6 +649,11 @@ router.post("/decks/:id/retry", async (req, res): Promise<void> => {
     const rawText = (lastJob?.payload as { rawText?: string } | undefined)?.rawText;
     if (deck.sourceKind === "raw" && !rawText) {
       res.status(409).json({ message: "Текст не сохранился — создайте презентацию заново" });
+      return;
+    }
+    // Лекцию или документ удалили — повтор упал бы на том же месте.
+    if (deck.sourceKind !== "raw" && !(await sourceAlive(deck))) {
+      res.status(409).json({ message: SOURCE_GONE });
       return;
     }
     const queued = await queueDeckJob(

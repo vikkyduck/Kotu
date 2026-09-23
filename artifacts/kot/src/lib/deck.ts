@@ -2,10 +2,12 @@ import {
   SLIDE_LAYOUTS,
   LAYOUT_RU,
   FIELDS_BY_LAYOUT,
+  layoutHasImage,
   type SlideContent,
   type DiagramSpec,
   type SlideField,
 } from '@workspace/db/slides';
+import type { KeyboardEvent } from 'react';
 import type { DeckStatus, ImageSide, ImageStatus, DeckImageStatus } from '@workspace/db/schema';
 
 /**
@@ -65,6 +67,13 @@ export { LAYOUT_RU, layoutHasImage, layoutSided } from '@workspace/db/slides';
 export const LAYOUTS: readonly string[] = SLIDE_LAYOUTS;
 
 /**
+ * Образ у слайда будет: бриф есть и макет образ показывает. Бриф на финале
+ * или схеме остаётся от прежнего макета — рисовать его сервер не станет.
+ */
+export const wantsImage = (s: Pick<DeckSlide, 'imageBrief' | 'layout'>): boolean =>
+  s.imageBrief !== null && layoutHasImage(s.layout);
+
+/**
  * Название макета для показа. Слайд приходит с сервера строкой, а таблица
  * знает ровно восемь макетов — незнакомый показываем как есть, вместо пустоты.
  */
@@ -103,3 +112,18 @@ export function lastImageBySlide(images: DeckImage[]): Map<number, DeckImage> {
   }
   return last;
 }
+
+/**
+ * Плитка слайда и строка выбора источника — не кнопки по вёрстке, но
+ * нажимаются и с клавиатуры: Tab до них доходит, Enter и пробел — как щелчок.
+ */
+export const pressable = (fn: () => void) => ({
+  role: 'button' as const,
+  tabIndex: 0,
+  onClick: fn,
+  onKeyDown: (e: KeyboardEvent) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    fn();
+  },
+});

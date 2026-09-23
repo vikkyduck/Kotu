@@ -7,16 +7,12 @@ import {
   type DeckStatus,
   type SlideContent,
 } from "@workspace/db";
-import {
-  FIELDS_BY_LAYOUT,
-  type SlideField,
-  type SlideLayout,
-} from "@workspace/db/slides";
 import { askJson } from "../claude";
-import { sanitizeSlideContent } from "../slide-content";
+import { fieldsLine, sanitizeSlideContent, settleContent } from "../slide-content";
 import { registerHandler } from "../jobs";
 import { deckToLibrary } from "../work-doc";
 import { logger } from "../logger";
+import { shownError } from "./storyboard";
 
 /**
  * Переделка ОДНОГО слайда словами автора. Отдельная задача, а не синхронный
@@ -35,6 +31,18 @@ interface ReslideReply {
   notes?: string;
 }
 
+/** Пустой ответ модели — единственная неудача правки, которую автору есть что сказать. */
+const NOT_REDONE = "Не удалось переделать слайд — попробуйте сказать иначе";
+
+/**
+ * Куда вернуть колоду после правки. Не бросает: onGiveUp зовёт её и на
+ * кривом payload. Неизвестное значение — «готова»: тупика быть не должно.
+ */
+function backOf(raw: unknown): DeckStatus {
+  const p = (raw ?? {}) as Record<string, unknown>;
+  return p["back"] === "storyboard_ready" ? "storyboard_ready" : "ready";
+}
+
 /** Задача пришла из очереди — форму payload проверяем, а не верим на слово. */
 function readPayload(raw: unknown): ReslidePayload {
   const p = (raw ?? {}) as Record<string, unknown>;
@@ -42,32 +50,7 @@ function readPayload(raw: unknown): ReslidePayload {
   if (!Number.isInteger(slideId)) throw new Error("В задаче правки нет слайда");
   const instruction = typeof p["instruction"] === "string" ? p["instruction"] : "";
   if (instruction.trim() === "") throw new Error("В задаче правки нет указания автора");
-  // Куда вернуть колоду. Неизвестное значение — «готова»: тупика быть не должно.
-  const back = p["back"] === "storyboard_ready" ? "storyboard_ready" : "ready";
-  return { slideId, instruction, back };
-}
-
-/**
- * Подсказки модели к полям — сами поля берутся из общей таблицы
- * FIELDS_BY_LAYOUT, по которой автор правит слайд руками.
- */
-const HINTS: Partial<Record<SlideLayout, Partial<Record<SlideField, string>>>> = {
-  theory: { bullets: "3–5 коротких" },
-  quote: { quote: "до 35 слов" },
-  clinical: { bullets: "абзацы фрагмента" },
-  comparison: { cards: "ровно две карточки {title, body}" },
-};
-
-/** Какие поля осмысленны на этом макете — чтобы модель не выдумывала лишних. */
-function fieldsLine(layout: SlideLayout): string {
-  const fields = FIELDS_BY_LAYOUT[layout] ?? ["title", "bullets"];
-  return fields
-    .map((f) => {
-      const name = f === "bullets" || f === "cards" ? `${f}[]` : f;
-      const hint = HINTS[layout]?.[f];
-      return hint ? `${name} (${hint})` : name;
-    })
-    .join(", ");
+  return { slideId, instruction, back: backOf(raw) };
 }
 
 async function run(job: Job): Promise<void> {
@@ -112,7 +95,6 @@ async function run(job: Job): Promise<void> {
     "— Поле, которого автор не касался, оставь прежним, слово в слово.",
     "",
     'Ответ СТРОГО JSON: {"content": {…}, "notes": "…"} — целиком новый слайд, а не список изменений.',
-    "content: eyebrow, title, subtitle, bullets[], cards[{title,body}], quote, attribution, question, plate.",
     "Ненужные этому макету поля просто не включай.",
   ].join("\n");
 
@@ -124,11 +106,9 @@ async function run(job: Job): Promise<void> {
 
   const reply = await askJson<ReslideReply>({ system, user, maxTokens: 4000 });
 
-  const content = sanitizeSlideContent(reply.content);
+  const content = settleContent(slide.layout, sanitizeSlideContent(reply.content));
   // Пустой ответ — это потеря слайда, а не правка: лучше честная ошибка.
-  if (Object.keys(content).length === 0) {
-    throw new Error("Не удалось переделать слайд — попробуйте сказать иначе");
-  }
+  if (Object.keys(content).length === 0) throw new Error(NOT_REDONE);
 
   await db
     .update(deckSlidesTable)
@@ -154,15 +134,11 @@ async function run(job: Job): Promise<void> {
 async function onGiveUp(job: Job, message: string): Promise<void> {
   // Колоду не роняем в error: слайды целы, не получилась только правка.
   // Возвращаем туда, откуда пришли, и говорим, что не вышло. Payload здесь
-  // читаем сами, а не через readPayload: задача могла упасть как раз на нём,
-  // и тогда колода осталась бы навсегда в состоянии «работаю».
-  const back =
-    (job.payload as Record<string, unknown> | null)?.["back"] === "storyboard_ready"
-      ? "storyboard_ready"
-      : "ready";
+  // читаем не через readPayload: задача могла упасть как раз на нём, и тогда
+  // колода осталась бы навсегда в состоянии «работаю».
   await db
     .update(decksTable)
-    .set({ status: back, statusMessage: "", error: message })
+    .set({ status: backOf(job.payload), statusMessage: "", error: shownError(message, [NOT_REDONE]) })
     .where(eq(decksTable.id, job.entityId))
     .catch((err) => logger.error({ err, id: job.entityId }, "Не смог записать ошибку правки"));
 }

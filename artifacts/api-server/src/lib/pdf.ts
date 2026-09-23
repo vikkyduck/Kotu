@@ -14,11 +14,12 @@ import type {
 import {
   SLIDE_SPEC,
   SLIDE_TYPE as T,
+  SLIDE_LEADING as L,
   SHEET,
-  BRAND_PALETTE,
   SLIDE_TEXT as TEXT,
   SLIDE_SEAM as SEAM,
   MAX_CARDS,
+  slideColor,
   type BrandColor,
 } from "@workspace/db/slides";
 import { logger } from "./logger";
@@ -75,18 +76,12 @@ function fontPath(dir: string, name: FontName): string {
   return file;
 }
 
-function hex(value: string): string {
-  const v = value.trim();
-  return v.startsWith("#") ? v : `#${v}`;
-}
-
 interface Style {
   color: (name: BrandColor) => string;
 }
 
 function makeStyle(pack: StylePack | null): Style {
-  const palette = pack?.palette ?? {};
-  return { color: (name) => hex(palette[name] ?? BRAND_PALETTE[name]) };
+  return { color: (name) => slideColor(pack?.palette, name) };
 }
 
 // ── Текстовые примитивы ─────────────────────────────────────────────────
@@ -180,7 +175,7 @@ function drawBullets(
   color: string,
 ): void {
   const indent = size * 1.3;
-  const mult = 1.1;
+  const mult = L.bullets;
   let cy = y;
   for (const b of bullets) {
     const room = Math.max(0, Math.min(y + h, PAGE_H) - cy);
@@ -249,7 +244,7 @@ function imagePath(s: DeckSlide, imagesById: Map<number, DeckImage>): string | n
 }
 
 /** Арабский folio внизу листа — на обложке и финале, как в pptx. */
-function drawFolio(doc: PDFKit.PDFDocument, st: Style, idx: number): void {
+function drawFolio(doc: PDFKit.PDFDocument, idx: number): void {
   doc
     .font("body")
     .fontSize(T.folio)
@@ -294,7 +289,7 @@ function addCover(doc: PDFKit.PDFDocument, c: SlideContent, img: string | null, 
   }
   drawRuns(
     doc,
-    [{ text: c.title ?? "", font: "display", size: T.coverTitle, color: TEXT, lineMult: 1.05 }],
+    [{ text: c.title ?? "", font: "display", size: T.coverTitle, color: TEXT, lineMult: L.title }],
     MARGIN,
     2.0 * IN,
     textW,
@@ -310,7 +305,7 @@ function addCover(doc: PDFKit.PDFDocument, c: SlideContent, img: string | null, 
       0.9 * IN,
     );
   }
-  drawFolio(doc, st, idx);
+  drawFolio(doc, idx);
 }
 
 function addDivider(doc: PDFKit.PDFDocument, c: SlideContent, img: string | null, st: Style): void {
@@ -331,7 +326,7 @@ function addDivider(doc: PDFKit.PDFDocument, c: SlideContent, img: string | null
       spaceAfter: 14,
     });
   }
-  runs.push({ text: c.title ?? "", font: "display", size: T.dividerTitle, color: TEXT, lineMult: 1.05 });
+  runs.push({ text: c.title ?? "", font: "display", size: T.dividerTitle, color: TEXT, lineMult: L.title });
   // Один блок на всю высоту: имя части само встаёт по центру вертикали.
   drawRuns(
     doc,
@@ -363,7 +358,7 @@ function addTheory(
 
   drawRuns(
     doc,
-    [{ text: c.title ?? "", font: "display", size: T.theoryTitle, color: TEXT, lineMult: 1.05 }],
+    [{ text: c.title ?? "", font: "display", size: T.theoryTitle, color: TEXT, lineMult: L.title }],
     textX,
     0.75 * IN,
     textW,
@@ -425,11 +420,11 @@ function addQuote(
 
   const runs: Run[] = [
     {
-      text: c.quote ?? c.title ?? "",
+      text: c.quote ?? "",
       font: "display",
       size: T.quote,
       color: TEXT,
-      lineMult: 1.15,
+      lineMult: L.quote,
       spaceAfter: 16,
     },
   ];
@@ -452,7 +447,6 @@ function addClinical(
   side: "left" | "right",
 ): void {
   fillBackground(doc, st.color("archiveBlack"));
-  const ink = TEXT;
 
   const imgW = PAGE_W * SLIDE_SPEC.imageShare.clinical;
   if (img) drawPlateImage(doc, img, side === "left" ? 0 : PAGE_W - imgW, imgW);
@@ -461,9 +455,9 @@ function addClinical(
   // Спокойная бумажная колонка ~55%; шире не делаем даже без образа.
   const textW = img ? PAGE_W - imgW - MARGIN - 0.55 * IN : 8.0 * IN;
 
-  drawRuns(doc, [{ text: c.title ?? "", font: "display", size: T.clinicalTitle, color: ink }], textX, 0.8 * IN, textW, 1.1 * IN);
+  drawRuns(doc, [{ text: c.title ?? "", font: "display", size: T.clinicalTitle, color: TEXT }], textX, 0.8 * IN, textW, 1.1 * IN);
 
-  const paragraphs = c.bullets?.length ? c.bullets : c.subtitle ? [c.subtitle] : [];
+  const paragraphs = c.bullets ?? [];
   if (paragraphs.length) {
     drawRuns(
       doc,
@@ -471,8 +465,8 @@ function addClinical(
         text: p,
         font: "body" as const,
         size: T.clinicalBody,
-        color: ink,
-        lineMult: 1.15,
+        color: TEXT,
+        lineMult: L.body,
         spaceAfter: 12,
       })),
       textX,
@@ -521,7 +515,7 @@ function addComparison(doc: PDFKit.PDFDocument, c: SlideContent, img: string | n
       doc,
       [
         { text: card.title, font: "display", size: T.cardTitle, color: TEXT, spaceAfter: 8 },
-        { text: card.body, font: "body", size: T.cardBody, color: TEXT, lineMult: 1.15 },
+        { text: card.body, font: "body", size: T.cardBody, color: TEXT, lineMult: L.body },
       ],
       i === 0 ? MARGIN : PAGE_W / 2 + 0.45 * IN,
       colY,
@@ -531,11 +525,14 @@ function addComparison(doc: PDFKit.PDFDocument, c: SlideContent, img: string | n
   });
 
   // Шов — не интерфейсный разделитель, а волосяная линия старой сшивки.
-  doc
-    .moveTo(PAGE_W / 2, colY + 0.05 * IN)
-    .lineTo(PAGE_W / 2, colY + colH - 0.1 * IN)
-    .lineWidth(0.75)
-    .stroke(SEAM);
+  // Только между двумя колонками, как в предпросмотре: у одной шить нечего.
+  if (cards.length > 1) {
+    doc
+      .moveTo(PAGE_W / 2, colY + 0.05 * IN)
+      .lineTo(PAGE_W / 2, colY + colH - 0.1 * IN)
+      .lineWidth(0.75)
+      .stroke(SEAM);
+  }
 }
 
 function addFinal(doc: PDFKit.PDFDocument, c: SlideContent, st: Style, idx: number): void {
@@ -544,11 +541,11 @@ function addFinal(doc: PDFKit.PDFDocument, c: SlideContent, st: Style, idx: numb
   // Один вывод по центру-слева; «спасибо за внимание» отсёк ещё storyboard.
   const runs: Run[] = [
     {
-      text: c.title ?? c.quote ?? c.subtitle ?? "",
+      text: c.title ?? c.subtitle ?? "",
       font: "display",
       size: T.finalTitle,
       color: TEXT,
-      lineMult: 1.1,
+      lineMult: L.final,
     },
   ];
   if (c.subtitle && c.title) {
@@ -556,33 +553,45 @@ function addFinal(doc: PDFKit.PDFDocument, c: SlideContent, st: Style, idx: numb
     runs.push({ text: c.subtitle, font: "body", size: T.finalSubtitle, color: TEXT });
   }
   drawRuns(doc, runs, MARGIN, 0, 9.8 * IN, PAGE_H, "middle");
-  drawFolio(doc, st, idx);
+  drawFolio(doc, idx);
 }
 
 // ── Схема (diagram) ─────────────────────────────────────────────────────
 
-/** Подписи внутри фигуры: label по центру, sub под ним. */
+/**
+ * Подписи внутри фигуры: label, под ним sub. Шаг потока — по центру,
+ * опора — слева сверху, как в PPTX и предпросмотре.
+ */
 function drawNodeText(
   doc: PDFKit.PDFDocument,
   item: { label: string; sub?: string },
-  st: Style,
+  kind: DiagramSpec["kind"],
   x: number,
   y: number,
   w: number,
   h: number,
 ): void {
+  const align = kind === "flow" ? "center" : "left";
   const runs: Run[] = [
-    { text: item.label, font: "display", size: T.nodeLabel, color: TEXT, align: "center", spaceAfter: 4 },
+    {
+      text: item.label,
+      font: "display",
+      size: T.nodeLabel,
+      color: TEXT,
+      align,
+      spaceAfter: kind === "flow" ? 4 : 8,
+    },
   ];
   if (item.sub) {
-    runs.push({ text: item.sub, font: "body", size: T.nodeSub, color: TEXT, align: "center" });
+    runs.push({ text: item.sub, font: "body", size: T.nodeSub, color: TEXT, align, lineMult: L.nodeSub });
   }
-  drawRuns(doc, runs, x, y, w, h, "middle");
+  drawRuns(doc, runs, x, y, w, h, kind === "flow" ? "middle" : "top");
 }
 
 /**
  * Схема кодом: rect со скруглением 0 и линии-стрелки — лист атласа,
  * а не интерфейсная блок-схема. Панели — deepIndigo с рамкой museumIndigo.
+ * Геометрия — та же, что в pptx.ts (дюймы × 72).
  */
 function addDiagram(doc: PDFKit.PDFDocument, c: SlideContent, spec: DiagramSpec, st: Style): void {
   fillBackground(doc, st.color("archiveBlack"));
@@ -590,11 +599,11 @@ function addDiagram(doc: PDFKit.PDFDocument, c: SlideContent, spec: DiagramSpec,
   // Заголовок сверху — как в theory.
   drawRuns(
     doc,
-    [{ text: c.title ?? "", font: "display", size: T.diagramTitle, color: TEXT, lineMult: 1.05 }],
+    [{ text: c.title ?? "", font: "display", size: T.diagramTitle, color: TEXT, lineMult: L.title }],
     MARGIN,
     0.75 * IN,
     PAGE_W - MARGIN * 2,
-    1.35 * IN,
+    1.1 * IN,
   );
 
   const panel = st.color("deepIndigo");
@@ -602,33 +611,34 @@ function addDiagram(doc: PDFKit.PDFDocument, c: SlideContent, spec: DiagramSpec,
   const items = spec.items;
   const n = items.length;
 
-  const areaY = 165;
-  const areaH = PAGE_H - areaY - 35;
+  const top = 2.05 * IN;
+  const bottom = PAGE_H - 0.55 * IN;
 
   if (spec.kind === "flow") {
     // Вертикальная колонна шагов со стрелками сверху вниз.
-    const gap = 22;
-    const boxW = 480;
+    const gap = 0.42 * IN; // просвет под стрелку
+    const boxW = 7.2 * IN;
     const boxX = (PAGE_W - boxW) / 2;
-    const boxH = Math.min(78, (areaH - (n - 1) * gap) / n);
+    // Потолок высоты шага: два шага не должны раздуваться в плакаты.
+    const boxH = Math.min(1.15 * IN, (bottom - top - (n - 1) * gap) / n);
     const total = n * boxH + (n - 1) * gap;
-    let cy = areaY + Math.max(0, (areaH - total) / 2);
+    let cy = top + (bottom - top - total) / 2;
 
     items.forEach((item, i) => {
       doc.rect(boxX, cy, boxW, boxH).lineWidth(1).fillAndStroke(panel, line);
-      drawNodeText(doc, item, st, boxX + 16, cy, boxW - 32, boxH);
+      drawNodeText(doc, item, "flow", boxX + 0.25 * IN, cy, boxW - 0.5 * IN, boxH);
 
       if (i < n - 1) {
         // Стрелка к следующему шагу: стержень + две засечки-наконечника.
         const cx = PAGE_W / 2;
-        const y1 = cy + boxH + 3;
-        const y2 = cy + boxH + gap - 3;
-        doc.moveTo(cx, y1).lineTo(cx, y2).lineWidth(1).stroke(line);
+        const y1 = cy + boxH + 0.06 * IN;
+        const y2 = cy + boxH + gap - 0.06 * IN;
+        doc.moveTo(cx, y1).lineTo(cx, y2).lineWidth(1.5).stroke(line);
         doc
           .moveTo(cx - 4, y2 - 5)
           .lineTo(cx, y2)
           .lineTo(cx + 4, y2 - 5)
-          .lineWidth(1)
+          .lineWidth(1.5)
           .stroke(line);
       }
       cy += boxH + gap;
@@ -636,17 +646,16 @@ function addDiagram(doc: PDFKit.PDFDocument, c: SlideContent, spec: DiagramSpec,
     return;
   }
 
-  // pillars: колонки рядом, без стрелок — опоры, а не процесс. Больше
-  // maxItems в строку не встаёт — режем так же, как PPTX и предпросмотр.
+  // pillars: колонки рядом во всё поле, без стрелок — опоры, а не процесс.
+  // Больше maxItems в строку не встаёт — режем так же, как PPTX и предпросмотр.
   const pillars = items.slice(0, SLIDE_SPEC.diagram.maxItems);
-  const gap = 24;
+  const gap = 0.45 * IN;
   const colW = (PAGE_W - MARGIN * 2 - (pillars.length - 1) * gap) / pillars.length;
-  const colH = Math.min(310, areaH);
-  const colY = areaY + (areaH - colH) / 2;
+  const colH = bottom - top;
   pillars.forEach((item, i) => {
     const x = MARGIN + i * (colW + gap);
-    doc.rect(x, colY, colW, colH).lineWidth(1).fillAndStroke(panel, line);
-    drawNodeText(doc, item, st, x + 12, colY + 16, colW - 24, colH - 32);
+    doc.rect(x, top, colW, colH).lineWidth(1).fillAndStroke(panel, line);
+    drawNodeText(doc, item, "pillars", x + 0.3 * IN, top + 0.35 * IN, colW - 0.6 * IN, colH - 0.7 * IN);
   });
 }
 
@@ -683,10 +692,10 @@ export async function buildDeckPdf(
     doc.on("error", reject);
   });
 
+  // Слайды приходят уже по порядку (ручка выгрузки сортирует по ord).
   const st = makeStyle(pack);
-  const ordered = [...slides].sort((a, b) => a.ord - b.ord);
 
-  ordered.forEach((s, idx) => {
+  slides.forEach((s, idx) => {
     doc.addPage();
     const c = s.content ?? {};
     const img = imagePath(s, imagesById);

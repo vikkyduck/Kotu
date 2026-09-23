@@ -11,6 +11,8 @@ import {
   layoutSided,
   deckWorking,
   lastImageBySlide,
+  wantsImage,
+  pressable,
   type DeckFull,
   type SlideContent,
 } from '@/lib/deck';
@@ -37,6 +39,8 @@ export function Slides() {
   const [openSlide, setOpenSlide] = useState<number | null>(null);
 
   const [busy, setBusy] = useState(false);
+  /** Какой файл собирается прямо сейчас — сборка с картинками идёт секундами. */
+  const [exporting, setExporting] = useState<'pptx' | 'pdf' | null>(null);
 
   // Имя стилевого пакета показывается на готовой колоде — за этим и список.
   const [packs, setPacks] = useState<{ id: number; name: string }[]>([]);
@@ -148,7 +152,7 @@ export function Slides() {
 
   const approve = async () => {
     if (!deck) return;
-    const hasImages = deck.slides.some((s) => s.imageBrief !== null);
+    const hasImages = deck.slides.some(wantsImage);
     setBusy(true);
     await act(
       `${base}/approve`,
@@ -179,8 +183,13 @@ export function Slides() {
   };
 
   const download = async (format: 'pptx' | 'pdf') => {
-    const fail = await downloadFile(`${base}/export?format=${format}`, `презентация.${format}`);
-    if (fail) toast(fail);
+    setExporting(format);
+    try {
+      const fail = await downloadFile(`${base}/export?format=${format}`, `презентация.${format}`);
+      if (fail) toast(fail);
+    } finally {
+      setExporting(null);
+    }
   };
 
   if (screen !== 's-slides') return null;
@@ -188,7 +197,7 @@ export function Slides() {
   // ── Открытая презентация ────────────────────────────────────────────────
   if (deck) {
     const working = deckWorking(deck.status);
-    const briefCount = deck.slides.filter((s) => s.imageBrief !== null).length;
+    const briefCount = deck.slides.filter(wantsImage).length;
     // Имя стиля серии — из списка пакетов; не нашли — строку не показываем.
     const packName = packs.find((p) => p.id === deck.stylePackId)?.name;
     const lastImage = lastImageBySlide(deck.images);
@@ -215,12 +224,15 @@ export function Slides() {
         <h2 className="h2">{deck.title}</h2>
 
         {/* Удалить можно на любом этапе — ждать окончания работы незачем.
-            Кнопка живёт рядом с заголовком, а не только на готовой колоде. */}
-        <div className="deck-tools">
-          <button className="chg deck-drop" onClick={() => void remove()}>
-            удалить презентацию
-          </button>
-        </div>
+            Кнопка живёт рядом с заголовком; у ошибки — в её блоке, как у
+            лекции и записи. */}
+        {deck.status !== 'error' && (
+          <div className="deck-tools">
+            <button className="chg deck-drop" onClick={() => void remove()}>
+              удалить презентацию
+            </button>
+          </div>
+        )}
 
         {deck.status === 'error' && (
           <div className="errblock">
@@ -230,7 +242,7 @@ export function Slides() {
               <button className="btn primary" style={{ flex: 1 }} disabled={busy} onClick={() => void retry()}>
                 {busy ? 'Запускаю…' : 'Попробовать ещё раз'}
               </button>
-              <button className="btn danger" onClick={() => void remove()}>
+              <button className="btn danger" disabled={busy} onClick={() => void remove()}>
                 <Icon name="trash" /> Удалить
               </button>
             </div>
@@ -261,10 +273,6 @@ export function Slides() {
         {/* Раскадровка на утверждение: рисование стоит денег, поэтому — человек в цикле */}
         {body === 'storyboard' && (
           <>
-            <p className="sub">
-              Посмотрите раскадровку. Любой слайд можно открыть крупно и переделать —
-              руками или словами. Рисовать начну только после утверждения.
-            </p>
             {deck.slides.map((s, i) => (
               <div key={s.id} className="panel sb-slide">
                 <div className="sb-num">
@@ -300,7 +308,7 @@ export function Slides() {
                     ))}
                   </ul>
                 )}
-                {s.imageBrief !== null ? (
+                {wantsImage(s) ? (
                   <div className="sb-brief">
                     <span className="sb-brief-lbl">Образ</span>
                     {s.imageBrief}
@@ -340,7 +348,7 @@ export function Slides() {
             ))}
             <div className="sb-total">Образов: {briefCount}</div>
             <button className="btn primary big" disabled={busy || working} onClick={() => void approve()}>
-              {busy ? 'Запускаю…' : 'Утвердить — рисуем'} <Icon name="arrow" />
+              {busy ? 'Запускаю…' : briefCount > 0 ? 'Утвердить — рисуем' : 'Утвердить'} <Icon name="arrow" />
             </button>
           </>
         )}
@@ -352,24 +360,20 @@ export function Slides() {
                 <span className="dh-ic"><Icon name="check" /></span>
                 <div>
                   <h3>Готово — презентация собрана</h3>
-                  <p>Слайдов: {deck.slides.length}. Можно скачать или доработать образы.</p>
+                  <p>Слайдов: {deck.slides.length}</p>
                 </div>
               </div>
             )}
             {packName && (
               <p className="doc-meta" style={{ marginBottom: 10 }}>Стиль: {packName}</p>
             )}
-            <p className="tnote">
-              <Icon name="info" /> Нажмите на слайд — он откроется крупно. Там можно
-              править текст руками или сказать словами, что переделать.
-            </p>
 
             <div className="sgrid">
               {deck.slides.map((s, i) => {
                 const doubted = lastImage.get(s.id)?.status === 'rejected';
-                const canRedraw = s.imageBrief !== null;
+                const canRedraw = wantsImage(s);
                 return (
-                  <div key={s.id} className="slide" onClick={() => setOpenSlide(i)}>
+                  <div key={s.id} className="slide" {...pressable(() => setOpenSlide(i))}>
                     {s.imageId !== null && layoutHasImage(s.layout) ? (
                       <div className="th th-img">
                         <img
@@ -413,13 +417,13 @@ export function Slides() {
               <button
                 className="btn primary"
                 style={{ flex: 1 }}
-                disabled={working}
+                disabled={working || exporting !== null}
                 onClick={() => void download('pptx')}
               >
-                <Icon name="download" /> Скачать PPTX
+                <Icon name="download" /> {exporting === 'pptx' ? 'Готовлю…' : 'Скачать PPTX'}
               </button>
-              <button className="btn" disabled={working} onClick={() => void download('pdf')}>
-                <Icon name="download" /> PDF
+              <button className="btn" disabled={working || exporting !== null} onClick={() => void download('pdf')}>
+                <Icon name="download" /> {exporting === 'pdf' ? 'Готовлю…' : 'PDF'}
               </button>
             </div>
           </>
@@ -458,7 +462,7 @@ export function Slides() {
             <p className="errwhy">{failed}</p>
             <div className="btnrow">
               <button className="btn primary" style={{ flex: 1 }} onClick={() => void loadOne(openId)}>
-                Ещё раз
+                Попробовать ещё раз
               </button>
             </div>
           </div>
@@ -471,5 +475,5 @@ export function Slides() {
 
   // ── Новая презентация ───────────────────────────────────────────────────
   // Форма живёт отдельно и сама знает, из чего собирать колоду.
-  return <DeckForm active={screen === 's-slides'} onCreated={openDeck} />;
+  return <DeckForm onCreated={openDeck} />;
 }
