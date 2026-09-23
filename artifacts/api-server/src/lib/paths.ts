@@ -55,7 +55,12 @@ export const ARCHIVE_DIR =
     ? "/opt/kotu/archive"
     : path.join(tmpdir(), "kotu-archive"));
 
-/** Каталоги, чьё содержимое уходит в архив файлов. */
+/**
+ * Каталоги, чьё содержимое уходит в архив файлов. Новый каталог данных (как и
+ * ARCHIVE_DIR) дописать ещё в скрипты: deploy.sh — оба цикла по каталогам и
+ * число строк в проверке описи; ops/kotu-backup.sh — цикл шага 1 и --include
+ * шага 2; ops/pull-backup.sh — MIRRORS. Иначе он молча не попадёт в бэкап.
+ */
 export const DATA_DIRS = [LIBRARY_DIR, UPLOAD_DIR, DECKS_DIR] as const;
 
 // Каталоги создаём здесь же, один раз на запуск: раньше каждый файл делал
