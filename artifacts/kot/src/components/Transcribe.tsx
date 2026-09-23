@@ -452,8 +452,11 @@ function ResultView({
     openSheet(`Как переименовать «${data.title}»?`, (name) => {
       const title = name.slice(0, 200);
       if (!title || title === data.title) return;
-      void save({ title }).then((err) => {
+      // Непринятая правка текста едет вместе с названием: иначе ответ сервера
+      // перерисует строки его копией, и правка исчезнет с экрана.
+      void save(unsaved ? { title, segments } : { title }).then((err) => {
         if (err) toast(err);
+        else setUnsaved(false);
       });
     }, data.title);
   };

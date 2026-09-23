@@ -9,7 +9,7 @@ import { MIN_LIBRARY_TEXT } from "../work-doc";
 const NO_TEXT = "В файле почти нет текста. Если это скан, его нужно сначала распознать (OCR).";
 const NO_CHUNKS = "Не удалось разбить документ на фрагменты";
 /** Всё остальное (pdfjs, JSZip, ENOENT, сбой векторов) — сырое, оно в журнале. */
-const UNREADABLE = "Не удалось прочитать файл — загрузите его ещё раз";
+const UNREADABLE = "Не удалось прочитать файл";
 
 interface IngestPayload {
   sourcePath: string;

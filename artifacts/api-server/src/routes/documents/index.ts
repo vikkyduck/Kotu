@@ -87,11 +87,12 @@ router.get("/documents/:id/file", async (req, res): Promise<void> => {
   const file = doc ? resolveInsideDir(LIBRARY_DIR, doc.sourcePath) : null;
   const onDisk = file ? await stat(file).then((st) => st.isFile(), () => false) : false;
   if (!doc || !file || !onDisk) {
-    res.status(404).json({ message: "Файл не найден" });
+    // Ответ читают в новой вкладке, а не в приложении: фраза, а не JSON.
+    res.status(404).type("text/plain; charset=utf-8").send("Файл не найден — загрузите книгу заново");
     return;
   }
   const prev = (await lastIngest(doc.id))?.payload as Partial<IngestPayload> | undefined;
-  res.sendFile(file, { headers: documentFileHeaders(doc, prev?.filename) });
+  res.sendFile(file, { headers: documentFileHeaders(doc, prev?.filename), cacheControl: false });
 });
 
 /**
@@ -151,7 +152,8 @@ router.post("/documents/:id/retry", async (req, res): Promise<void> => {
     res.status(409).json({ message: "Повторять нечего — ошибки нет" });
     return;
   }
-  res.status(202).json(queued);
+  // Фронту нужен только факт постановки; полная строка отдала бы и путь на диске.
+  res.status(202).json({ id: queued.id, status: queued.status });
 });
 
 router.delete("/documents/:id", async (req, res): Promise<void> => {

@@ -293,7 +293,8 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
   const payload: TranscribePayload = {
     inputPath,
     filename: typeof prev.filename === "string" ? prev.filename : row.filename,
-    hideNames: typeof prev.hideNames === "boolean" ? prev.hideNames : row.hideNames,
+    // Скрытие имён — строже из двух: если хоть где-то просили скрывать, скрываем.
+    hideNames: prev.hideNames === true || row.hideNames,
     markSpeakers: typeof prev.markSpeakers === "boolean" ? prev.markSpeakers : row.markSpeakers,
   };
 
