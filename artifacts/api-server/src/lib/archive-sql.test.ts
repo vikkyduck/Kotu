@@ -5,12 +5,16 @@ import {
   ARCHIVED_TABLES,
   TRIGGER_NAME,
   TRUNCATE_TRIGGER_NAME,
+  ENSURE_LOCK_TIMEOUT,
+  CHECK_STATEMENT_TIMEOUT,
+  checkTriggersWith,
   deleteJobsArchivingInput,
   deleteJobsArchivingInputSql,
   ensureArchiveWith,
   findMissingTriggers,
 } from "./archive-sql";
 import { createTestDb, type TestDb } from "./archive-test-db";
+import type { SqlRunner } from "./archive-sql";
 
 /**
  * Архив строк на настоящем Postgres (PGlite): тот же SQL, что ставит
@@ -366,15 +370,99 @@ describe("архив строк", () => {
     await expect(db.query(`TRUNCATE archive.rows`)).rejects.toThrow(/только пополняется/);
   });
 
-  test("пропавший триггер возвращается на следующем старте со свежим снимком", async () => {
+  test("пропавший триггер возвращается на следующем старте, первичный снимок не повторяется", async () => {
+    const before = await count(db, `tbl = 'folders' AND op = 'INITIAL'`);
     await db.pg.exec(`DROP TRIGGER ${TRIGGER_NAME} ON folders`);
     const r = await ensureArchiveWith(db.runner);
-    expect(r.snapshotted).toEqual(["folders"]);
+    expect(r.snapshotted).toEqual([]);
+    expect(await count(db, `tbl = 'folders' AND op = 'INITIAL'`)).toBe(before);
     const { rows } = await db.query(
       `SELECT count(*)::int AS n FROM pg_trigger WHERE tgname = $1 AND NOT tgisinternal`,
       [TRIGGER_NAME],
     );
     expect(Number(rows[0]!["n"])).toBe(ARCHIVED_TABLES.length);
+  });
+
+  test("выключенный триггер: ensure включает его снова, INITIAL не задваивается", async () => {
+    const initial = async () => count(db, `tbl = 'lectures' AND op = 'INITIAL'`);
+    const before = await initial();
+    expect(before).toBeGreaterThan(0);
+    await db.pg.exec(`ALTER TABLE lectures DISABLE TRIGGER ${TRIGGER_NAME}`);
+    await db.pg.exec(`ALTER TABLE lectures DISABLE TRIGGER ${TRUNCATE_TRIGGER_NAME}`);
+    expect(await findMissingTriggers(db.query)).toHaveLength(2);
+
+    const r = await ensureArchiveWith(db.runner);
+    expect(r.snapshotted).toEqual([]);
+    expect(await initial()).toBe(before);
+    const { rows } = await db.query(
+      `SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'public.lectures'::regclass AND NOT tgisinternal ORDER BY tgname`,
+    );
+    expect(rows).toEqual([
+      { tgname: TRIGGER_NAME, tgenabled: "O" },
+      { tgname: TRUNCATE_TRIGGER_NAME, tgenabled: "O" },
+    ]);
+    // И он снова работает: правка сохраняет прежнее.
+    const { rows: made } = await db.query(
+      `INSERT INTO lectures (owner_id, title, brief, status)
+         VALUES ((SELECT min(id) FROM users), 'До включения', '{}', 'ready') RETURNING id`,
+    );
+    const id = Number(made[0]!["id"]);
+    await db.query(`UPDATE lectures SET title = 'После включения' WHERE id = $1`, [id]);
+    const versions = await archived(db, "lectures", id);
+    expect(versions.map((v) => v["op"])).toEqual(["UPDATE"]);
+    expect(versions[0]!["data"]).toMatchObject({ title: "До включения" });
+  });
+
+  test("база, где архив включили до отметок: снимок не повторяется, отметки появляются", async () => {
+    const fresh = await createTestDb();
+    await seed(fresh);
+    await ensureArchiveWith(fresh.runner);
+    const before = Number(
+      (await fresh.query(`SELECT count(*)::int AS n FROM archive.rows WHERE op = 'INITIAL'`)).rows[0]!["n"],
+    );
+    // Как на проде до этой версии: триггеры и INITIAL есть, отметок нет.
+    await fresh.pg.exec(`
+      ALTER TABLE archive.meta DISABLE TRIGGER append_only;
+      DELETE FROM archive.meta;
+      ALTER TABLE archive.meta ENABLE TRIGGER append_only;
+      ALTER TABLE lectures DISABLE TRIGGER ${TRIGGER_NAME};
+    `);
+    const r = await ensureArchiveWith(fresh.runner);
+    expect(r.snapshotted).toEqual([]);
+    const after = await fresh.query(`SELECT count(*)::int AS n FROM archive.rows WHERE op = 'INITIAL'`);
+    expect(Number(after.rows[0]!["n"])).toBe(before);
+    const { rows } = await fresh.query(`SELECT key FROM archive.meta ORDER BY key`);
+    expect(rows.map((x) => x["key"])).toEqual(ARCHIVED_TABLES.map((t) => `initial:${t.table}`).sort());
+    await expect(fresh.query(`DELETE FROM archive.meta`)).rejects.toThrow(/только пополняется/);
+    await fresh.pg.close();
+  });
+
+  test("транзакции архива ограничены самой базой: lock_timeout до любых блокировок", async () => {
+    const texts: string[][] = [];
+    const spy: SqlRunner = {
+      transaction: (fn) =>
+        db.runner.transaction((q) => {
+          const mine: string[] = [];
+          texts.push(mine);
+          return fn(async (text, params) => {
+            mine.push(text);
+            return q(text, params);
+          });
+        }),
+    };
+    await ensureArchiveWith(spy);
+    expect(texts.length).toBe(ARCHIVED_TABLES.length + 2);
+    for (const tx of texts) {
+      expect(tx[0]).toBe(`SET LOCAL lock_timeout = '${ENSURE_LOCK_TIMEOUT}'`);
+      expect(tx[1]).toMatch(/^SET LOCAL statement_timeout = /);
+    }
+    // Настройки действуют только внутри транзакции — соединение после неё прежнее.
+    const { rows } = await db.query(`SHOW lock_timeout`);
+    expect(rows[0]!["lock_timeout"]).toBe("0");
+
+    texts.length = 0;
+    expect(await checkTriggersWith(spy)).toEqual([]);
+    expect(texts[0]![0]).toBe(`SET LOCAL statement_timeout = '${CHECK_STATEMENT_TIMEOUT}'`);
   });
 
   test("рецепт возврата удалённой строки из ГДЕ-ЧТО.md работает", async () => {

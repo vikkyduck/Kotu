@@ -1,7 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import { pool } from "@workspace/db";
 import { ARCHIVE_DIR, DATA_DIRS } from "./paths";
-import { ensureArchiveWith, findMissingTriggers, type SqlRunner } from "./archive-sql";
+import { checkTriggersWith, ensureArchiveWith, type SqlRunner } from "./archive-sql";
 import { createArchiveSupervisor, type ArchiveState } from "./archive-state";
 import { createFileArchive, ArchiveUnavailableError, type FileMeta } from "./archive-files";
 import { logger } from "./logger";
@@ -11,10 +11,14 @@ import { logger } from "./logger";
  * и файлы (хранилище по содержимому, archive-files.ts).
  *
  * Состояние видно в GET /api/healthz: archive "ok" | "off" | "pending".
- * "off" — архив не включился: сервер отвечает (прод не кладём), но работает
- * только на чтение — очередь задач стоит, изменения и удаления отклоняются
- * (routes/index.ts), а включить архив он пробует снова раз в минуту.
- * deploy.sh такую выкатку бракует.
+ * "off" — попытка включить архив упала: сервер отвечает (прод не кладём), но
+ * работает только на чтение — очередь задач стоит, изменения и удаления
+ * отклоняются (routes/index.ts), а через минуту после провала он пробует
+ * снова. deploy.sh такую выкатку бракует.
+ * "pending" — попытка ещё идёт (первое включение снимает все таблицы, это
+ * бывает долго); тоже только чтение. Попытка всегда одна: пока она не
+ * кончилась, новую не начинаем (archive-state.ts), а кончиться её заставляет
+ * сама база — lock_timeout и statement_timeout (archive-sql.ts).
  *
  * «ok» перепроверяется: при старте и в периодической сверке (раз в 6 ч)
  * процесс смотрит в pg_trigger, на месте ли триггеры всех 10 таблиц, и если
@@ -42,7 +46,7 @@ const poolRunner: SqlRunner = {
 
 const supervisor = createArchiveSupervisor({
   ensure: () => ensureArchiveWith(poolRunner),
-  missingTriggers: () => findMissingTriggers((text, params) => pool.query(text, params)),
+  missingTriggers: () => checkTriggersWith(poolRunner),
   log: logger,
 });
 
