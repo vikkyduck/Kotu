@@ -5,7 +5,10 @@ import {
   type Transcription,
   type TranscriptSegment,
 } from '@/hooks/use-transcription';
+import type { Document } from '@workspace/db/schema';
 import { useApp } from '@/hooks/use-app';
+import { useUnsavedWarning } from '@/hooks/use-draft';
+import { failText } from '@/lib/http';
 import { Icon } from '@/lib/icons';
 import { Celebrate } from '@/lib/celebrate';
 
@@ -25,10 +28,10 @@ export function Transcribe() {
 
   const deleteActive = async (id: number) => {
     setDeleting(true);
-    const ok = await deleteTranscriptionRequest(id);
+    const err = await deleteTranscriptionRequest(id);
     setDeleting(false);
-    if (!ok) {
-      toast('Не удалось удалить — попробуйте ещё раз');
+    if (err) {
+      toast(err);
       return;
     }
     justUploadedId.current = null;
@@ -60,10 +63,28 @@ export function Transcribe() {
   const {
     data: active,
     loading: activeLoading,
+    failed: activeFailed,
+    reload: reloadActive,
     save,
     retry: retryOnServer,
   } = useTranscription(activeTranscriptionId);
   const [retrying, setRetrying] = useState(false);
+
+  // Где человек сейчас — чтобы по окончании загрузки не выдёргивать его
+  // с другого экрана. И идёт ли передача файла: эффект ниже её не сбрасывает.
+  const here = useRef({ screen, activeTranscriptionId });
+  here.current = { screen, activeTranscriptionId };
+  const uploadingRef = useRef(uploading);
+  uploadingRef.current = uploading;
+
+  // Закрытая вкладка обрывает передачу файла — записи на сервере не будет.
+  useUnsavedWarning(uploading);
+
+  const resetUpload = () => {
+    setFile(null);
+    setView('tcUpload');
+    setSub('Загрузите аудио — я переведу его в текст.');
+  };
 
   // React to opening an existing transcription or starting a new one.
   useEffect(() => {
@@ -75,13 +96,18 @@ export function Transcribe() {
         celebrated.current = true;
       }
       setSub(null);
-    } else {
-      setFile(null);
-      setUploading(false);
-      setView('tcUpload');
-      setSub('Загрузите аудио — я переведу его в текст.');
+    } else if (!uploadingRef.current) {
+      resetUpload();
     }
   }, [screen, activeTranscriptionId]);
+
+  // Удалённая или чужая запись по адресу («назад» после удаления, старая ссылка).
+  useEffect(() => {
+    if (screen === 's-transcribe' && activeTranscriptionId != null && activeFailed === 'missing') {
+      toast('Запись не найдена');
+      go('s-home');
+    }
+  }, [screen, activeTranscriptionId, activeFailed, toast, go]);
 
   const acceptFile = (f: File) => {
     if (f.size > MAX_UPLOAD_BYTES) {
@@ -104,7 +130,7 @@ export function Transcribe() {
   const runTranscribe = async () => {
     if (!file) return;
     setUploading(true);
-    setSub('Идёт работа — можно не ждать у экрана.');
+    setSub(null);
     setError(null);
 
     try {
@@ -115,73 +141,74 @@ export function Transcribe() {
 
       const res = await fetch('/api/transcriptions/upload', { method: 'POST', body: form });
 
-      if (!res.ok) {
-        let msg = 'Не удалось загрузить запись. Попробуйте ещё раз.';
-        try {
-          const data = await res.json();
-          if (data?.error) msg = data.error;
-        } catch {
-          // keep default
-        }
-        throw new Error(msg);
-      }
+      if (!res.ok) throw new Error(await failText(res, 'Не удалось загрузить запись. Попробуйте ещё раз.'));
 
       const created = (await res.json()) as Transcription;
-
+      setUploading(false);
+      // Ушла с экрана, пока шла передача, — не выдёргиваем, а сообщаем.
+      if (here.current.screen !== 's-transcribe' || here.current.activeTranscriptionId != null) {
+        toast('Запись загружена — расшифровываю');
+        return;
+      }
       // Celebrate this one when it finishes; hand off to the polling view.
       justUploadedId.current = created.id;
       celebrated.current = false;
-      setUploading(false);
       openTranscription(created.id);
     } catch (err) {
       setUploading(false);
-      setError(err instanceof Error ? err.message : 'Что-то пошло не так.');
+      const msg = err instanceof Error ? err.message : 'Что-то пошло не так.';
+      if (here.current.screen !== 's-transcribe') toast(msg);
+      setError(msg);
       setSub('Можно попробовать ещё раз.');
     }
   };
 
-  // Сначала повтор из аудио, что уже лежит на сервере: провал чаще про сбой
-  // по дороге, чем про сам файл. Не вышло (аудио не сохранилось, записи нет,
-  // нет сети) — тогда, как раньше, форма новой загрузки.
+  // Повтор из аудио, что уже лежит на сервере: провал чаще про сбой по
+  // дороге, чем про сам файл. Причину отказа показываем; на новую загрузку
+  // уводим только при 409 — аудио не сохранилось или повторять нечего.
+  // Нет сети, архив недоступен — остаёмся здесь, повтор ещё сработает.
   const retry = async () => {
-    if (activeTranscriptionId != null) {
-      setRetrying(true);
-      const ok = await retryOnServer();
-      setRetrying(false);
-      if (ok) return;
-    }
+    setRetrying(true);
+    const fail = await retryOnServer();
+    setRetrying(false);
+    if (!fail) return;
+    toast(fail.message);
+    if (fail.status !== 409) return;
     justUploadedId.current = null;
     newTranscription();
+  };
+
+  const removeActive = () => {
+    if (activeTranscriptionId == null) return;
+    if (!window.confirm(active ? `Удалить «${active.title}»?` : 'Удалить запись?')) return;
+    void deleteActive(activeTranscriptionId);
   };
 
   if (screen !== 's-transcribe') return null;
 
   // ---- Derive which phase to render -------------------------------------------
   const isActive = activeTranscriptionId != null;
+  // Передача файла относится к форме новой записи, а не к открытой из библиотеки.
+  const sending = uploading && !isActive;
   const status = active?.status;
   const showResult = isActive && status === 'done';
   const showError = isActive && status === 'error';
+  const showLoadError = isActive && !active && !activeLoading && activeFailed === 'error';
   const showProcessing =
-    uploading || (isActive && (status === 'processing' || status === 'queued' || (!active && activeLoading)));
+    sending || (isActive && (status === 'processing' || (!active && activeLoading)));
 
   const stepperView = showResult
     ? 'tcResult'
-    : showProcessing || showError
-      ? 'tcProc'
-      : view;
+    : showError || showLoadError
+      ? 'tcError'
+      : showProcessing
+        ? 'tcProc'
+        : view;
 
-  const procMessage = uploading
+  const procMessage = sending
     ? 'Загружаю запись…'
     : active?.statusMessage || 'Готовлю запись…';
-  const procProgress = uploading ? 4 : Math.max(4, active?.progress ?? 4);
-  // Стадия считается из уже приходящего прогресса — без новых запросов к API.
-  const procStage = uploading
-    ? 'Шаг 1 из 3 · передаю файл'
-    : procProgress < 35
-      ? 'Шаг 1 из 3 · читаю запись'
-      : procProgress < 80
-        ? 'Шаг 2 из 3 · распознаю речь'
-        : 'Шаг 3 из 3 · собираю текст';
+  const procProgress = sending ? 4 : Math.max(4, active?.progress ?? 4);
 
   return (
     <section className="screen active" id="s-transcribe">
@@ -219,7 +246,7 @@ export function Transcribe() {
           >
             <div className="dz"><Icon name="upload" /></div>
             <b>Перетащите запись сюда</b>
-            <div className="hint">или нажмите, чтобы выбрать файл · любая длина · запись остаётся у вас</div>
+            <div className="hint">или нажмите, чтобы выбрать файл</div>
           </div>
         </div>
       )}
@@ -229,7 +256,7 @@ export function Transcribe() {
           <div className="filecard" style={{ marginBottom: '16px' }}>
             <span className="fi"><Icon name="headphones" /></span>
             <div><b>{file.name}</b><span>{formatSize(file.size)}</span></div>
-            <button className="chg" onClick={newTranscription}>заменить</button>
+            <button className="chg" onClick={resetUpload}>заменить</button>
           </div>
 
           {/* Дизайн Lovable: тумблеры вместо текстовых ссылок «изменить» */}
@@ -292,8 +319,27 @@ export function Transcribe() {
             <div className="orb"><span className="core"></span></div>
             <p className="pstat" id="procStat">{procMessage}</p>
             <div className="pbar"><i id="procBar" style={{ width: `${procProgress}%` }}></i></div>
-            <p className="pstage">{procStage}</p>
-            <p className="preassure">Можно закрыть страницу — я продолжу и соберу единый текст, он будет ждать вас здесь.</p>
+            {!sending && (
+              <p className="preassure">Можно закрыть страницу — я продолжу и соберу единый текст, он будет ждать вас здесь.</p>
+            )}
+          </div>
+          {!sending && active && (
+            <div className="btnrow">
+              <button className="btn danger" disabled={deleting} onClick={removeActive}>
+                <Icon name="trash" /> {deleting ? 'Удаляю…' : 'Удалить'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showLoadError && (
+        <div className="errblock">
+          <h3 className="errttl">Не удалось открыть запись</h3>
+          <div className="btnrow">
+            <button className="btn primary" style={{ flex: 1 }} onClick={() => void reloadActive()}>
+              Обновить
+            </button>
           </div>
         </div>
       )}
@@ -317,7 +363,7 @@ export function Transcribe() {
             <button
               className="btn danger"
               disabled={deleting || retrying}
-              onClick={() => activeTranscriptionId != null && void deleteActive(activeTranscriptionId)}
+              onClick={removeActive}
             >
               <Icon name="trash" /> {deleting ? 'Удаляю…' : 'Удалить'}
             </button>
@@ -325,14 +371,12 @@ export function Transcribe() {
         </div>
       )}
 
-      {showResult && (
+      {showResult && active && (
         <ResultView
           data={active}
           save={save}
           celebrated={celebrated}
-          onDone={() => go('s-home')}
-          toast={toast}
-          onDelete={() => activeTranscriptionId != null && void deleteActive(activeTranscriptionId)}
+          onDelete={removeActive}
           deleting={deleting}
         />
       )}
@@ -372,37 +416,25 @@ function ResultView({
   data,
   save,
   celebrated,
-  onDone,
-  toast,
   onDelete,
   deleting,
 }: {
   /** Запись приходит сверху: опрашивает её один экран, а не каждый блок свой. */
-  data: Transcription | null;
-  save: (patch: { segments?: TranscriptSegment[]; title?: string }) => Promise<boolean>;
+  data: Transcription;
+  save: (patch: { segments?: TranscriptSegment[]; title?: string }) => Promise<string | null>;
   celebrated: React.MutableRefObject<boolean>;
-  onDone: () => void;
-  toast: (msg: string) => void;
   onDelete: () => void;
   deleting: boolean;
 }) {
-  const [confirmDelete, setConfirmDelete] = useState(false);
-
-  const handleDelete = () => {
-    if (!data) return;
-    const ok = window.confirm(`Удалить «${data.title}»?`);
-    if (!ok) return;
-    onDelete();
-  };
-
+  const { go, toast, openSheet, newLecture, newDeck } = useApp();
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
 
   useEffect(() => {
-    if (data?.segments) setSegments(data.segments);
+    setSegments(data.segments);
   }, [data]);
 
   useEffect(() => {
-    if (data && !celebrated.current) {
+    if (!celebrated.current) {
       celebrated.current = true;
       const head = document.querySelector('#tcResult .done-head');
       if (head) {
@@ -412,21 +444,35 @@ function ResultView({
     }
   }, [data, celebrated]);
 
+  // Копия в библиотеке — из неё делают лекцию и презентацию. Сразу после
+  // расшифровки и после каждой правки она переразбирается: ждём готовности.
+  const docId = useLibraryCopy(data.id, data.updatedAt);
+
+  const rename = () => {
+    openSheet(`Как переименовать «${data.title}»?`, 'N', (name) => {
+      const title = name.slice(0, 200);
+      if (!title || title === data.title) return;
+      void save({ title }).then((err) => {
+        if (err) toast(err);
+      });
+    }, data.title);
+  };
+
   const saveSegment = (index: number, text: string) => {
-    if (!data) return;
     const current = segments[index]?.text ?? '';
     if (text === current) return;
     const next = segments.map((s, i) => (i === index ? { ...s, text } : s));
     setSegments(next);
-    void save({ segments: next }).then((ok) => {
-      if (!ok) toast('Правка не сохранилась — попробуйте ещё раз');
+    void save({ segments: next }).then((err) => {
+      if (err) toast(err);
     });
   };
 
   const downloadText = () => {
-    if (!data) return;
     const reveal = (t: string) =>
-      t.replace(/\[\[([\s\S]+?)\]\]/g, data.hideNames ? 'имя скрыто' : '$1');
+      parseTokens(t)
+        .map((k) => (k.type === 'name' && data.hideNames ? 'имя скрыто' : k.value))
+        .join('');
     const body = segments
       .map((s) => (s.who ? `${s.who}: ${reveal(s.text)}` : reveal(s.text)))
       .join('\n\n');
@@ -440,22 +486,12 @@ function ResultView({
     toast('Текст сохранён в файл');
   };
 
-  if (!data) {
-    return (
-      <div id="tcResult">
-        <div className="panel proc">
-          <div className="orb"><span className="core"></span></div>
-          <p className="pstat">Открываю расшифровку…</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div id="tcResult">
       <div className="done-head">
         <span className="dh-ic"><Icon name="check" /></span>
-        <div><h3>Готово — вот ваша расшифровка</h3><p>Уже сохранена. Можно спокойно читать и править.</p></div>
+        <div><h3>{data.title}</h3><p>Уже сохранена. Можно спокойно читать и править.</p></div>
+        <button className="chg" onClick={rename}>переименовать</button>
       </div>
       <p className="tnote"><Icon name="info" /> Если слово распознано неверно — просто исправьте его прямо в тексте, как в обычном документе. Всё сохраняется само.</p>
       {data.hideNames && (
@@ -475,40 +511,69 @@ function ResultView({
         ))}
       </div>
 
-      <div className="btnrow">
+      <div className="btnrow" style={{ flexWrap: 'wrap' }}>
         <button className="btn primary" style={{ flex: 1 }} onClick={downloadText}>
           <Icon name="download" /> Сохранить текст
         </button>
-        <button className="btn" onClick={onDone}>Готово</button>
+        {docId !== null && (
+          <>
+            <button className="btn" onClick={() => newLecture({ documentIds: [docId] })}>
+              <Icon name="pen" /> Написать лекцию
+            </button>
+            <button className="btn" onClick={() => newDeck({ sourceKind: 'document', sourceId: docId })}>
+              <Icon name="deck" /> Собрать презентацию
+            </button>
+          </>
+        )}
+        <button className="btn" onClick={() => go('s-home')}>Готово</button>
         <button
           className="btn danger"
-          onClick={handleDelete}
+          onClick={onDelete}
           disabled={deleting}
           title="Удалить расшифровку"
         >
-          <Icon name="trash" /> Удалить
+          <Icon name="trash" /> {deleting ? 'Удаляю…' : 'Удалить'}
         </button>
       </div>
-
-      {confirmDelete ? (
-        <div className="del-confirm">
-          <span>Удалить эту запись? Это нельзя отменить.</span>
-          <div className="del-confirm-actions">
-            <button className="btn danger" disabled={deleting} onClick={onDelete}>
-              {deleting ? 'Удаляю…' : 'Удалить'}
-            </button>
-            <button className="btn" disabled={deleting} onClick={() => setConfirmDelete(false)}>
-              Оставить
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button className="btn link-danger" onClick={() => setConfirmDelete(true)}>
-          <Icon name="trash" /> Удалить запись
-        </button>
-      )}
     </div>
   );
+}
+
+/** Сколько раз заглянуть в библиотеку, если копии там пока нет (её пишут сразу после «готово»). */
+const COPY_LOOKS = 3;
+const COPY_POLL_MS = 4000;
+
+/**
+ * id готовой копии записи в библиотеке или null. Копии может не быть вовсе
+ * (слишком короткий текст) — тогда после нескольких попыток просто перестаём искать.
+ */
+function useLibraryCopy(transcriptionId: number, updatedAt: string): number | null {
+  const [docId, setDocId] = useState<number | null>(null);
+  useEffect(() => {
+    let stop = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let misses = 0;
+    setDocId(null);
+    const look = async () => {
+      try {
+        const res = await fetch('/api/documents');
+        if (!res.ok || stop) return;
+        const docs = (await res.json()) as Pick<Document, 'id' | 'transcriptionId' | 'status'>[];
+        const doc = docs.find((d) => d.transcriptionId === transcriptionId);
+        if (stop) return;
+        if (doc?.status === 'ready') setDocId(doc.id);
+        else if (doc ? doc.status !== 'error' : ++misses < COPY_LOOKS) timer = setTimeout(look, COPY_POLL_MS);
+      } catch {
+        /* без кнопок «лекция / презентация» — не беда */
+      }
+    };
+    void look();
+    return () => {
+      stop = true;
+      clearTimeout(timer);
+    };
+  }, [transcriptionId, updatedAt]);
+  return docId;
 }
 
 type Token = { type: 'text'; value: string } | { type: 'name'; value: string };
