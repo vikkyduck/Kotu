@@ -41,8 +41,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api", router);
 
 // Удаление без архива не выполняется (lib/archive.ts). Вместо безымянной
-// 500 — понятный ответ: ничего не удалено, можно повторить позже. Ключей два,
-// потому что ручки расшифровок читают error, остальные — message.
+// 500 — понятный ответ: ничего не удалено, можно повторить позже.
 const archiveUnavailable: ErrorRequestHandler = (err, req, res, next) => {
   if (!(err instanceof ArchiveUnavailableError)) {
     next(err);
@@ -50,7 +49,7 @@ const archiveUnavailable: ErrorRequestHandler = (err, req, res, next) => {
   }
   req.log.error({ err }, "Удаление отклонено: архив недоступен");
   const message = "Архив сейчас недоступен, поэтому ничего не удалено. Попробуйте позже";
-  res.status(503).json({ message, error: message });
+  res.status(503).json({ message });
 };
 app.use(archiveUnavailable);
 
