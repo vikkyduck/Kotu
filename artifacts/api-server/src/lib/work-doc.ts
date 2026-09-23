@@ -8,6 +8,7 @@ import {
   decksTable,
   deckSlidesTable,
   deckImagesTable,
+  jobsTable,
 } from "@workspace/db";
 import { LIBRARY_DIR } from "./paths";
 import { archiveAndRemove, writeDataFile } from "./archive";
@@ -30,22 +31,38 @@ import { logger } from "./logger";
  * прежний файл — в архив файлов до rm (lib/archive.ts).
  */
 
-/** Общая часть: положить текст в файл и завести/обновить документ. */
-async function upsertWorkDoc(opts: {
+/** Меньше этого в поиске только мешает: ни цитат, ни смысла. */
+export const MIN_LIBRARY_TEXT = 200;
+
+/** Колонка-ссылка копии на свою работу — по ней стоит уникальный индекс. */
+type LinkColumn =
+  | typeof documentsTable.lectureId
+  | typeof documentsTable.deckId
+  | typeof documentsTable.transcriptionId;
+
+/**
+ * Общая часть для лекции, колоды и расшифровки: положить текст в файл и
+ * завести/обновить документ. Текста мало — прежняя копия уходит в архив.
+ */
+export async function upsertWorkDoc(opts: {
   ownerId: number;
   title: string;
-  kind: "lecture" | "deck";
-  /** Чья это копия — по этой колонке стоит уникальный индекс. */
-  link: { column: typeof documentsTable.lectureId | typeof documentsTable.deckId; id: number };
-  values: { lectureId?: number; deckId?: number };
+  kind: "lecture" | "deck" | "transcript";
+  link: { column: LinkColumn; id: number };
+  values: { lectureId?: number; deckId?: number; transcriptionId?: number };
   folderId: number | null;
   fileName: string;
   text: string;
 }): Promise<number | null> {
+  if (opts.text.length < MIN_LIBRARY_TEXT) {
+    await dropCopies(opts.link.column, opts.link.id);
+    return null;
+  }
+
   const filePath = path.join(LIBRARY_DIR, opts.fileName);
   // Прежний текст копии — в архив, новый пишется атомарно.
   await writeDataFile(filePath, opts.text, {
-    entityType: opts.kind,
+    entityType: opts.kind === "transcript" ? "transcription" : opts.kind,
     entityId: opts.link.id,
     mime: "text/plain",
   });
@@ -89,11 +106,26 @@ async function upsertWorkDoc(opts: {
       .where(eq(documentsTable.id, docId));
   }
 
-  await enqueue("doc.ingest", docId, {
-    sourcePath: filePath,
-    mime: "text/plain",
-    filename: opts.fileName,
-  });
+  // Правки идут сериями (каждое исправленное слово — сохранение). Разбор,
+  // который уже ждёт в очереди, и так прочтёт свежий файл — второй не нужен.
+  const [waiting] = await db
+    .select({ id: jobsTable.id })
+    .from(jobsTable)
+    .where(
+      and(
+        eq(jobsTable.kind, "doc.ingest"),
+        eq(jobsTable.entityId, docId),
+        eq(jobsTable.status, "queued"),
+      ),
+    )
+    .limit(1);
+  if (!waiting) {
+    await enqueue("doc.ingest", docId, {
+      sourcePath: filePath,
+      mime: "text/plain",
+      filename: opts.fileName,
+    });
+  }
   return docId;
 }
 
@@ -118,8 +150,6 @@ export async function lectureToLibrary(lectureId: number): Promise<number | null
     parts.push(`## ${s.heading}`, "", s.text.trim(), "");
   }
   const text = parts.join("\n").trim();
-  // Пустая лекция в поиске только мешает: ни цитат, ни смысла.
-  if (text.length < 200) return null;
 
   const docId = await upsertWorkDoc({
     ownerId: lecture.ownerId,
@@ -180,12 +210,15 @@ export async function deckToLibrary(deckId: number): Promise<number | null> {
 /**
  * Убрать копию работы из библиотеки — вместе с файлом и фрагментами. Файл
  * сначала в архив: не заархивировался — исключение, ничего не удалено.
+ * Строка документа уходит в архив триггером, фрагменты — каскадом по FK.
  */
-async function dropCopies(
-  column: typeof documentsTable.lectureId | typeof documentsTable.deckId,
-  id: number,
-): Promise<void> {
-  const docs = await db.select().from(documentsTable).where(eq(column, id));
+export async function dropCopies(column: LinkColumn, id: number, ownerId?: number): Promise<void> {
+  const docs = await db
+    .select()
+    .from(documentsTable)
+    .where(
+      and(eq(column, id), ownerId === undefined ? undefined : eq(documentsTable.ownerId, ownerId)),
+    );
   for (const doc of docs) {
     await archiveAndRemove(doc.sourcePath, {
       entityType: "document",
@@ -230,6 +263,7 @@ export async function sweepWorkToLibrary(): Promise<number> {
     .select({
       id: documentsTable.id,
       sourcePath: documentsTable.sourcePath,
+      mime: documentsTable.mime,
       lectureId: documentsTable.lectureId,
       deckId: documentsTable.deckId,
     })
@@ -251,7 +285,11 @@ export async function sweepWorkToLibrary(): Promise<number> {
     if (alive.length > 0) continue;
     logger.warn({ docId: copy.id }, "Копия работы без оригинала — убираю в архив");
     try {
-      await archiveAndRemove(copy.sourcePath, { entityType: "document", entityId: copy.id });
+      await archiveAndRemove(copy.sourcePath, {
+        entityType: "document",
+        entityId: copy.id,
+        mime: copy.mime,
+      });
     } catch (err) {
       logger.error({ err, docId: copy.id }, "Копия не заархивировалась — оставил как есть");
       continue;
