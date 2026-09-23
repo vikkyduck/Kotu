@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from '@/lib/icons';
 import { useUnsavedWarning } from '@/hooks/use-draft';
+import { LEAVE_UNSAVED, useApp } from '@/hooks/use-app';
 import { SlideStage } from './SlideStage';
 import { MAX_CARDS, SLIDE_FIELDS } from '@workspace/db/slides';
 import {
@@ -135,6 +136,7 @@ export function SlideViewer({
   removeSlide,
   toast,
 }: Props) {
+  const { setLeaveGuard } = useApp();
   const slide = deck.slides[index];
   const working = deckWorking(deck.status);
 
@@ -175,13 +177,18 @@ export function SlideViewer({
   // Уйти с несохранёнными правками — только переспросив: система сама
   // ничего не стирает. dirty в ref, поэтому эффекту клавиш он не зависимость.
   const leave = (fn: () => void): void => {
-    if (dirty.current && !window.confirm('Правки не сохранены. Уйти без сохранения?')) return;
+    if (dirty.current && !window.confirm(LEAVE_UNSAVED)) return;
     fn();
   };
   const leaveRef = useRef(leave);
   leaveRef.current = leave;
   // Перезагрузка и закрытие вкладки мимо leave() — их спрашивает браузер.
   useUnsavedWarning(dirtyView);
+  // Переход в другой экран и жест «назад» мимо leave() — их спрашивает use-app.
+  useEffect(() => {
+    setLeaveGuard(() => dirty.current);
+    return () => setLeaveGuard(null);
+  }, [setLeaveGuard]);
 
   // Корень окна: пока поверх вход (сессия кончилась), окно спрятано вместе с
   // приложением — клавиши тогда не его, иначе Escape на экране входа закрыл бы

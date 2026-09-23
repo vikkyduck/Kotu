@@ -76,7 +76,7 @@ const DURATIONS = [
 export function Lecture() {
   // Какую лекцию открыть, решает библиотека: инструмент — это действие,
   // а не ещё один список сделанного.
-  const { screen, go, leaveMissing, toast, activeLectureId, openLecture, lectureSeed, newDeck } = useApp();
+  const { screen, go, leaveMissing, setLeaveGuard, toast, activeLectureId, openLecture, lectureSeed, newDeck } = useApp();
   /** null — список ещё не пришёл: «пусто» до ответа было бы неправдой. */
   const [docs, setDocs] = useState<Doc[] | null>(null);
   const [docsFailed, setDocsFailed] = useState(false);
@@ -123,6 +123,19 @@ export function Lecture() {
     (editing !== null && draft !== draftFrom) ||
     (planEdit !== null && (planHead !== planFrom.heading || planAbstract !== planFrom.abstract));
   useUnsavedWarning(unsaved || (screen === 's-lecture' && openId === null && topic.trim() !== ''));
+
+  // Уход внутри приложения: правка главы чужой лекции сейчас не на экране и
+  // с уходом не пропадает. Сохранила — сторож молчит сразу, не дожидаясь
+  // перерисовки.
+  const guard = useRef<() => boolean>(() => false);
+  guard.current = () =>
+    (editing !== null && editOf.current === openId && draft !== draftFrom) ||
+    (planEdit !== null && (planHead !== planFrom.heading || planAbstract !== planFrom.abstract));
+  useEffect(() => {
+    if (screen !== 's-lecture') return;
+    setLeaveGuard(() => guard.current());
+    return () => setLeaveGuard(null);
+  }, [screen, setLeaveGuard]);
 
   const loadDocs = useCallback(async () => {
     // Тихий запрос: без имён записей остаются заголовки копий.
@@ -322,6 +335,7 @@ export function Lecture() {
       i === planEdit ? { ...b, heading: planHead.trim(), abstract: planAbstract.trim() } : b,
     );
     if (!(await patchPlan(plan))) return false;
+    guard.current = () => false;
     setPlanEdit(null);
     return true;
   };
@@ -336,6 +350,7 @@ export function Lecture() {
     if (!lecture) return;
     if (await act(`/api/lectures/${lecture.id}/sections/${section.id}`, json('PATCH', { text: draft }),
       'Не удалось сохранить', 'Правка сохранена')) {
+      guard.current = () => false;
       setEditing(null);
     }
   };
