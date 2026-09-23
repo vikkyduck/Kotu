@@ -17,6 +17,7 @@ import {
 import { SLIDE_LAYOUTS, SLIDE_SPEC, layoutHasImage } from "@workspace/db/slides";
 import { askJson } from "../claude";
 import { fieldsLine, sanitizeSlideContent, settleContent } from "../slide-content";
+import { joinChunks } from "../documents";
 import { registerHandler } from "../jobs";
 import { logger } from "../logger";
 
@@ -108,7 +109,7 @@ async function loadSourceText(
       .where(eq(docChunksTable.documentId, sourceId))
       .orderBy(asc(docChunksTable.ord));
 
-    return { title: doc.title, text: chunks.map((c) => c.text).join("\n\n") };
+    return { title: doc.title, text: joinChunks(chunks) };
   }
 
   throw new Error(SOURCE_GONE);
