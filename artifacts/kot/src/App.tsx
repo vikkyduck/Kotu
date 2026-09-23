@@ -39,7 +39,9 @@ const RETRY_MS = 2000;
  * Форма входа — только на явное 401: сбой сервера сессию не отменяет.
  */
 function AuthGate() {
-  const [state, setState] = useState<'checking' | 'in' | 'out'>('checking');
+  // 'expired' — сессия кончилась посреди работы: вход поверх, приложение под
+  // ним не размонтируется, чтобы несохранённая правка дождалась повторного входа.
+  const [state, setState] = useState<'checking' | 'in' | 'out' | 'expired'>('checking');
   // Ссылка из письма приходит как /?reset=<токен> — своего роутера в
   // приложении нет, поэтому читаем адрес напрямую.
   const [resetToken, setResetToken] = useState<string | null>(() =>
@@ -70,8 +72,8 @@ function AuthGate() {
 
   // Сессия кончилась посреди работы (30 дней прошло, пароль сменили на
   // другом устройстве) — любой запрос к API получит 401, и вместо «не удалось»
-  // на каждой кнопке показываем вход. Экран, на котором она была, сохранится:
-  // навигация живёт в AppProvider, выше этого компонента. Под /api/auth/ 401
+  // на каждой кнопке показываем вход. Экран и недописанный текст сохранятся:
+  // приложение только прячется (см. 'expired'). Под /api/auth/ 401
   // значит другое — «неверный пароль», — его разбирают сами формы.
   useEffect(() => {
     const original = window.fetch;
@@ -85,7 +87,7 @@ function AuthGate() {
           url.pathname.startsWith('/api/') &&
           !url.pathname.startsWith('/api/auth/')
         ) {
-          setState('out');
+          setState((s) => (s === 'in' || s === 'expired' ? 'expired' : 'out'));
         }
       }
       return res;
@@ -111,7 +113,14 @@ function AuthGate() {
 
   if (state === 'checking') return null;
   if (state === 'out') return <Login onSuccess={() => setState('in')} />;
-  return <AppContent />;
+  return (
+    <>
+      {state === 'expired' && <Login onSuccess={() => setState('in')} />}
+      <div hidden={state === 'expired'}>
+        <AppContent />
+      </div>
+    </>
+  );
 }
 
 function App() {
