@@ -44,7 +44,7 @@ Thumbs.db
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
 
-# Replit
+# кэши инструментов (остались от Replit, но и локально бывают)
 .cache/
 .local/
 

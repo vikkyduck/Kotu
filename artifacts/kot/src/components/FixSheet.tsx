@@ -25,15 +25,13 @@ export function FixSheet() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [sheet.isOpen, closeSheet]);
 
-  const isName = sheet.kind === 'N';
-
   const submitFix = () => {
     if (!text.trim()) {
-      toast(isName ? 'Напишите название' : 'Напишите в двух словах, что поправить');
+      toast('Напишите название');
       return;
     }
     // Имя — одной строкой, переносы ни к чему.
-    if (sheet.callback) sheet.callback(isName ? text.trim().replace(/\s+/g, ' ') : text);
+    if (sheet.callback) sheet.callback(text.trim().replace(/\s+/g, ' '));
     // Итог сообщает тот, кто открыл окно: отсюда ответа сервера не видно.
     closeSheet();
   };
@@ -47,13 +45,13 @@ export function FixSheet() {
         <textarea
           id="sheetText"
           ref={inputRef}
-          rows={isName ? 1 : undefined}
-          placeholder={isName ? 'Название' : undefined}
+          rows={1}
+          placeholder="Название"
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={e => {
-            // В режиме имени Enter отправляет, а не добавляет перенос.
-            if (isName && e.key === 'Enter') {
+            // Enter отправляет, а не добавляет перенос: это имя, не текст.
+            if (e.key === 'Enter') {
               e.preventDefault();
               submitFix();
             }

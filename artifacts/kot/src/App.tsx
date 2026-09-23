@@ -101,13 +101,13 @@ function AuthGate() {
   }, []);
 
   // Открытое окно (просмотр слайда) запирает прокрутку body; пока поверх
-  // вход, она ему нужнее. После входа окно снова на месте — и запрет тоже.
+  // вход, она ему нужнее. После входа запрет возвращается, только если окно
+  // всё ещё открыто: жестом «назад» его могли закрыть, пока шёл вход.
   useEffect(() => {
     if (state !== 'expired') return;
-    const prev = document.body.style.overflow;
     document.body.style.overflow = '';
     return () => {
-      document.body.style.overflow = prev;
+      document.body.style.overflow = document.querySelector('#modal-root .vw') ? 'hidden' : '';
     };
   }, [state]);
 

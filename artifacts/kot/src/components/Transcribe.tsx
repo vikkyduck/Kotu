@@ -449,7 +449,7 @@ function ResultView({
   const docId = useLibraryCopy(data.id, data.updatedAt);
 
   const rename = () => {
-    openSheet(`Как переименовать «${data.title}»?`, 'N', (name) => {
+    openSheet(`Как переименовать «${data.title}»?`, (name) => {
       const title = name.slice(0, 200);
       if (!title || title === data.title) return;
       void save({ title }).then((err) => {

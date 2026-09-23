@@ -136,7 +136,6 @@ export function Library() {
   const renameAt = (url: string, current: string, field: 'title' | 'name' = 'title') => {
     openSheet(
       `Как переименовать «${current}»?`,
-      'N',
       (next) => {
         if (next === current) return;
         void (async () => {
@@ -157,7 +156,7 @@ export function Library() {
 
   /** item — если папку создают из меню «переложить»: материал сразу ложится в неё. */
   const createFolder = (item?: Item) => {
-    openSheet('Как назвать папку?', 'N', (name) => {
+    openSheet('Как назвать папку?', (name) => {
       void (async () => {
         const r = await send('/api/folders', json('POST', { name }), 'Не удалось создать папку');
         if (!r.ok) {
