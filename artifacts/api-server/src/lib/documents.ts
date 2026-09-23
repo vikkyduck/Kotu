@@ -116,11 +116,11 @@ export async function extractText(
   if (ext === "epub" || mime === "application/epub+zip") {
     const zip = await JSZip.loadAsync(await readFile(path));
     const parts: string[] = [];
-    // Внутри epub — обычные xhtml-файлы; порядок по имени достаточно близок
-    // к порядку глав, чтобы текст не перемешался.
+    // Внутри epub — обычные xhtml-файлы. Порядок глав берём по имени с
+    // числовым сравнением: ch2 раньше ch10 и без ведущих нулей.
     const names = Object.keys(zip.files)
       .filter((n) => /\.x?html?$/i.test(n))
-      .sort();
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
     for (const name of names) {
       const raw = await zip.files[name].async("string");
       parts.push(stripHtml(raw));
