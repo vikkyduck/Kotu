@@ -48,7 +48,15 @@ export async function downloadFile(url: string, fallbackName: string): Promise<s
   const blob = await r.res.blob();
   const cd = r.res.headers.get('Content-Disposition') ?? '';
   const star = cd.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
-  const name = star ? decodeURIComponent(star) : fallbackName;
+  saveBlob(blob, star ? decodeURIComponent(star) : fallbackName);
+  return null;
+}
+
+/**
+ * Отдать файл браузеру на сохранение. Ссылка в документе и отзыв с
+ * задержкой: немедленный revoke в Safari срывает скачивание.
+ */
+export function saveBlob(blob: Blob, name: string): void {
   const href = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = href;
@@ -57,5 +65,4 @@ export async function downloadFile(url: string, fallbackName: string): Promise<s
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(href), 10_000);
-  return null;
 }
