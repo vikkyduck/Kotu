@@ -1,3 +1,4 @@
+import type { RequestHandler } from "express";
 import { sql, type SQL } from "drizzle-orm";
 import { pool } from "@workspace/db";
 import { ARCHIVE_DIR, DATA_DIRS } from "./paths";
@@ -10,14 +11,20 @@ import { logger } from "./logger";
  * и файлы (хранилище по содержимому, archive-files.ts).
  *
  * Состояние видно в GET /api/healthz: archive "ok" | "off" | "pending".
- * "off" — архив не включился: сервер работает (прод не кладём), но удалять
- * файлы отказывается, а deploy.sh такую выкатку бракует.
+ * "off" — архив не включился: сервер отвечает (прод не кладём), но работает
+ * только на чтение — очередь задач стоит, изменения и удаления отклоняются
+ * (routes/index.ts), а включить архив он пробует снова раз в минуту.
+ * deploy.sh такую выкатку бракует.
  */
 
 export type ArchiveState = "pending" | "ok" | "off";
 
 let state: ArchiveState = "pending";
-let settled: Promise<void> | null = null;
+/** Последняя попытка включить архив; её итог — и есть ответ ready(). */
+let attempt: Promise<ArchiveState> | null = null;
+
+/** Пауза между попытками включить архив, пока он выключен. */
+const RETRY_MS = 60_000;
 
 const poolRunner: SqlRunner = {
   async transaction(fn) {
@@ -36,25 +43,56 @@ const poolRunner: SqlRunner = {
   },
 };
 
-/** Включить архив строк. Не бросает: итог — в archiveState() и в логе. */
-export function ensureArchive(): Promise<void> {
-  settled ??= ensureArchiveWith(poolRunner).then(
-    (r) => {
-      state = "ok";
-      logger.info(
-        { snapshotted: r.snapshotted, initialRows: r.initialRows },
-        "Архив включён: триггеры на месте",
-      );
-    },
-    (err) => {
-      state = "off";
-      logger.error(
-        { err },
-        "АРХИВ НЕ ВКЛЮЧИЛСЯ — удаление файлов заблокировано, строки без триггеров не защищены",
-      );
-    },
-  );
-  return settled;
+async function tryEnsure(): Promise<ArchiveState> {
+  try {
+    const r = await ensureArchiveWith(poolRunner);
+    state = "ok";
+    logger.info(
+      { snapshotted: r.snapshotted, initialRows: r.initialRows },
+      "Архив включён: триггеры на месте",
+    );
+  } catch (err) {
+    state = "off";
+    logger.error(
+      { err },
+      "АРХИВ НЕ ВКЛЮЧИЛСЯ — сервер только на чтение: очередь стоит, изменения отклоняются. Повтор через минуту",
+    );
+  }
+  return state;
+}
+
+/**
+ * Первая попытка включить архив строк. Не бросает: итог — в archiveState()
+ * и в логе.
+ */
+export function ensureArchive(): Promise<ArchiveState> {
+  attempt ??= tryEnsure();
+  return attempt;
+}
+
+let readyLoop: Promise<void> | null = null;
+
+/**
+ * Разрешается, когда архив включён: не вышло с первого раза — пробует раз в
+ * минуту, пока не выйдет. Всё, что меняет данные без участия человека
+ * (очередь, стартовые сверки), запускается только после него: без
+ * триггеров архива перезапись шла бы мимо него.
+ */
+export function whenArchiveReady(): Promise<void> {
+  readyLoop ??= new Promise((resolve) => {
+    const check = (s: ArchiveState) => {
+      if (s === "ok") {
+        resolve();
+        return;
+      }
+      setTimeout(() => {
+        attempt = tryEnsure();
+        void attempt.then(check);
+      }, RETRY_MS);
+    };
+    void ensureArchive().then(check);
+  });
+  return readyLoop;
 }
 
 export function archiveState(): ArchiveState {
@@ -62,8 +100,9 @@ export function archiveState(): ArchiveState {
 }
 
 async function ready(): Promise<boolean> {
-  await (settled ?? ensureArchive());
-  return state === "ok";
+  await ensureArchive();
+  // Идёт повторная попытка — ждём её итога, а не прошлого «off».
+  return (await attempt!) === "ok";
 }
 
 /**
@@ -73,6 +112,23 @@ async function ready(): Promise<boolean> {
 export async function requireArchive(): Promise<void> {
   if (!(await ready())) throw new ArchiveUnavailableError();
 }
+
+const READ_ONLY = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * Пока архив не включён, сервер только на чтение: правка расшифровки или
+ * главы лекции без триггера затёрла бы прежний текст насовсем. Ставится
+ * после входа — сам вход и сброс пароля архива не касаются.
+ */
+export const rejectWritesWithoutArchive: RequestHandler = (req, res, next) => {
+  if (READ_ONLY.has(req.method) || state === "ok") {
+    next();
+    return;
+  }
+  req.log.warn({ archive: state }, "Изменение отклонено: архив не включён");
+  const message = "Архив сейчас недоступен, поэтому изменения не сохраняются. Попробуйте позже";
+  res.status(503).json({ message, error: message });
+};
 
 const files = createFileArchive({
   archiveDir: ARCHIVE_DIR,

@@ -72,6 +72,11 @@ pg_restore --list "$DIR/kotu.dump" > /dev/null
 for d in library uploads decks archive; do
   if [ -d "/opt/kotu/$d" ]; then cp -al "/opt/kotu/$d" "$DIR/$d"; fi
 done
+# Прежняя версия кода — для отката, если новая не включит архив (шаг 6).
+mkdir -p "$DIR/code"
+for d in server public; do
+  if [ -d "/opt/kotu/$d" ]; then cp -a "/opt/kotu/$d" "$DIR/code/$d"; fi
+done
 
 # Ротации нет: снимки не удаляются. Файлы в них — жёсткие ссылки (место почти
 # не занимают), растут только дампы базы.
@@ -98,6 +103,43 @@ if ! printf '%s' "$app_user" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$'; then
   exit 1
 fi
 cd /tmp
+# Триггер на таблицу и CREATE OR REPLACE для таблиц и функций архива может
+# выполнить только владелец. Чужая таблица — и ensureArchive упадёт уже на
+# новой версии, после рестарта. Поэтому проверяем здесь, до заливки: список
+# таблиц — ARCHIVED_TABLES в artifacts/api-server/src/lib/archive-sql.ts.
+bad=$(sudo -u postgres psql -d kotu -v ON_ERROR_STOP=1 -Atq -v u="$app_user" <<'SQL'
+WITH need(t) AS (
+  VALUES ('transcriptions'), ('folders'), ('documents'), ('decks'), ('deck_slides'),
+         ('deck_images'), ('style_packs'), ('lectures'), ('lecture_sections'), ('lecture_sources')
+), problems AS (
+  SELECT 'public.' || n.t || coalesce(' (владелец ' || c.tableowner || ')', ' (таблицы нет)') AS what
+    FROM need n LEFT JOIN pg_tables c ON c.schemaname = 'public' AND c.tablename = n.t
+   WHERE c.tableowner IS DISTINCT FROM :'u'
+  UNION ALL
+  SELECT 'archive.' || c.relname || ' (владелец ' || pg_get_userbyid(c.relowner) || ')'
+    FROM pg_class c JOIN pg_namespace s ON s.oid = c.relnamespace
+   WHERE s.nspname = 'archive' AND c.relkind IN ('r', 'p', 'S')
+     AND pg_get_userbyid(c.relowner) <> :'u'
+  UNION ALL
+  SELECT 'функция archive.' || p.proname || ' (владелец ' || pg_get_userbyid(p.proowner) || ')'
+    FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+   WHERE s.nspname = 'archive' AND pg_get_userbyid(p.proowner) <> :'u'
+)
+SELECT what FROM problems
+ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'u' AND rolsuper)
+UNION ALL
+SELECT 'роли ' || :'u' || ' в базе нет'
+ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'u');
+SQL
+)
+if [ -n "$bad" ]; then
+  echo "❌ Архив на новой версии не включится: владелец этих объектов базы kotu — не $app_user" >&2
+  printf '%s\n' "$bad" | sed 's/^/   /' >&2
+  echo "   Новая версия НЕ залита, прод работает как раньше. Починить от postgres:" >&2
+  echo "   ALTER TABLE <таблица> OWNER TO \"$app_user\"; (функция — ALTER FUNCTION archive.<имя>() OWNER TO …)" >&2
+  exit 1
+fi
+echo "   владелец таблиц данных и архива: $app_user"
 sudo -u postgres psql -d kotu -v ON_ERROR_STOP=1 -q \
   -c "CREATE SCHEMA IF NOT EXISTS archive AUTHORIZATION \"$app_user\"" \
   -c "ALTER SCHEMA archive OWNER TO \"$app_user\""
@@ -129,8 +171,13 @@ done
 echo "   $HEALTH"
 if [ "$ARCHIVE" != ok ]; then
   echo "❌ Архив на сервере не включился (healthz: archive=${ARCHIVE:-нет ответа})."
-  echo "   Удаления на проде сейчас заблокированы, но данные целы. Прежнее состояние — в снимке $SNAP."
-  echo "   Причина — в журнале: ssh $SERVER journalctl -u kotu -n 100 | grep -i архив"
+  echo "   Новая версия УЖЕ работает, но без архива строк: она только на чтение — очередь задач"
+  echo "   стоит, изменения и удаления через интерфейс отклоняются, архив она пробует включить"
+  echo "   раз в минуту. Данные до выкатки — в снимке $SNAP (kotu.dump + файлы)."
+  echo "   Причина: ssh $SERVER \"journalctl -u kotu -n 200 | grep -i архив\""
+  echo "   Откат на прежнюю версию кода (она без архива и удаляет аудио после расшифровки —"
+  echo "   только если работа нужна срочно, лучше починить причину):"
+  echo "   ssh $SERVER 'rsync -a --delete $SNAP/code/server/ /opt/kotu/server/ && rsync -a --delete $SNAP/code/public/ /opt/kotu/public/ && chown -R kotu:kotu /opt/kotu/server /opt/kotu/public && systemctl restart kotu'"
   exit 1
 fi
 

@@ -4,7 +4,7 @@ import { purgeExpiredSessions } from "./lib/auth";
 import { requeueOrphans, startWorker } from "./lib/jobs";
 import { sweepTranscriptionsToLibrary } from "./lib/transcript-doc";
 import { sweepWorkToLibrary, sweepStuckDeckImages } from "./lib/work-doc";
-import { ensureArchive, startFileSweep } from "./lib/archive";
+import { ensureArchive, startFileSweep, whenArchiveReady } from "./lib/archive";
 import { registerTranscribeHandler } from "./lib/handlers/transcribe";
 import { registerIngestHandler } from "./lib/handlers/ingest";
 import { registerLectureHandlers } from "./lib/handlers/lecture";
@@ -38,55 +38,56 @@ registerReslideHandler();
 // Архив «всего» — первым делом: и очередь, и стартовые сверки меняют и
 // удаляют строки и файлы, а без триггеров архива это шло бы мимо него.
 // ensureArchive не бросает: не включился — громко в лог и archive:"off" в
-// /api/healthz, сервер работает дальше, а удаления файлов он откажет сам.
-const archiveReady = ensureArchive();
+// /api/healthz. Сервер при этом отвечает, но только на чтение, а всё, что
+// меняет данные само (очередь, сверки ниже), ждёт архива: whenArchiveReady
+// повторяет попытку раз в минуту и разрешается только при archive:"ok".
+const firstAttempt = ensureArchive();
 
-// Задачи, оборванные прошлым перезапуском, возвращаем в очередь и продолжаем
-// работу — ради этого очередь и заведена.
-void archiveReady
-  .then(() => requeueOrphans())
-  .then((n) => {
-    if (n > 0) logger.info({ count: n }, "Вернул в очередь прерванные задачи");
-  })
-  .catch((err) => logger.error({ err }, "Не смог вернуть задачи в очередь"))
-  .finally(() => startWorker());
+void whenArchiveReady().then(() => {
+  // Задачи, оборванные прошлым перезапуском, возвращаем в очередь и
+  // продолжаем работу — ради этого очередь и заведена.
+  void requeueOrphans()
+    .then((n) => {
+      if (n > 0) logger.info({ count: n }, "Вернул в очередь прерванные задачи");
+    })
+    .catch((err) => logger.error({ err }, "Не смог вернуть задачи в очередь"))
+    .finally(() => startWorker());
 
-// Готовые расшифровки без библиотечной копии: бэкфилл старых и самолечение
-// после сбоев. Идемпотентно, поэтому просто на каждом старте.
-void archiveReady
-  .then(() => sweepTranscriptionsToLibrary())
-  .then((n) => {
-    if (n > 0) logger.info({ count: n }, "Отправил расшифровки в библиотеку");
-  })
-  .catch((err) => logger.error({ err }, "Сверка расшифровок с библиотекой не удалась"));
+  // Готовые расшифровки без библиотечной копии: бэкфилл старых и
+  // самолечение после сбоев. Идемпотентно, поэтому просто на каждом старте.
+  void sweepTranscriptionsToLibrary()
+    .then((n) => {
+      if (n > 0) logger.info({ count: n }, "Отправил расшифровки в библиотеку");
+    })
+    .catch((err) => logger.error({ err }, "Сверка расшифровок с библиотекой не удалась"));
 
-// Каталоги картинок удалённых презентаций больше не чистим: решение владелицы
-// 23.09.2026 — система сама ничего не стирает. Сирота остаётся на диске и
-// в любом случае лежит в архиве файлов.
+  // Каталоги картинок удалённых презентаций больше не чистим: решение
+  // владелицы 23.09.2026 — система сама ничего не стирает. Сирота остаётся на
+  // диске и в любом случае лежит в архиве файлов.
 
-void archiveReady
-  .then(() => sweepStuckDeckImages())
-  .catch((err) => logger.error({ err }, "Сверка брошенных образов не удалась"));
+  void sweepStuckDeckImages().catch((err) =>
+    logger.error({ err }, "Сверка брошенных образов не удалась"),
+  );
 
-// Готовые лекции и презентации без копии в библиотеке: бэкфилл старых и
-// самолечение после сбоев. Идемпотентно, поэтому просто на каждом старте.
-void archiveReady
-  .then(() => sweepWorkToLibrary())
-  .then((n) => {
-    if (n > 0) logger.info({ count: n }, "Отправил готовые работы в библиотеку");
-  })
-  .catch((err) => logger.error({ err }, "Сверка работ с библиотекой не удалась"));
+  // Готовые лекции и презентации без копии в библиотеке: бэкфилл старых и
+  // самолечение после сбоев. Идемпотентно, поэтому просто на каждом старте.
+  void sweepWorkToLibrary()
+    .then((n) => {
+      if (n > 0) logger.info({ count: n }, "Отправил готовые работы в библиотеку");
+    })
+    .catch((err) => logger.error({ err }, "Сверка работ с библиотекой не удалась"));
 
-// Все файлы данных — в архив: первичная загрузка того, что уже лежит на
-// диске, и страховка на случай места в коде, которое пишет мимо архива.
-void archiveReady.then(() => startFileSweep());
+  // Все файлы данных — в архив: первичная загрузка того, что уже лежит на
+  // диске, и страховка на случай места в коде, которое пишет мимо архива.
+  startFileSweep();
+});
 
-// Порт открываем, когда архив включён: иначе на самом первом старте правка,
-// успевшая раньше триггеров, прошла бы мимо архива. Но не ждём дольше
-// полуминуты — зависшая база не должна держать сервер закрытым; тогда
-// /api/healthz честно отвечает archive:"pending".
+// Порт открываем после первой попытки включить архив: пока её нет, изменения
+// всё равно отклоняются (только чтение), но так на обычном старте сайт не
+// отвечает 503 зря. Дольше полуминуты не ждём — зависшая база не должна
+// держать сервер закрытым; тогда /api/healthz честно отвечает archive:"pending".
 void Promise.race([
-  archiveReady,
+  firstAttempt,
   new Promise<void>((resolve) => setTimeout(resolve, 30_000).unref()),
 ]).finally(() => {
   const server = app.listen(port, () => {
