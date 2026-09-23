@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import PDFDocument from "pdfkit";
 import JSZip from "jszip";
 import { Document, Packer, Paragraph } from "docx";
-import { extractPdf, extractText } from "./documents";
+import { chunkText, extractPdf, extractText, joinChunks } from "./documents";
 
 /**
  * Разбор загружаемых в библиотеку файлов.
@@ -80,14 +80,15 @@ describe("остальные форматы не задеты", () => {
     expect(result.text).toBe("Перенос в анализе");
   });
 
-  test("EPUB", async () => {
+  test("EPUB: главы по номерам, ch2 раньше ch10", async () => {
     const zip = new JSZip();
+    zip.file("OEBPS/ch10.xhtml", "<html><body><p>Десятая глава</p></body></html>");
     zip.file("OEBPS/ch1.xhtml", "<html><body><p>Первая глава</p></body></html>");
     zip.file("OEBPS/ch2.xhtml", "<html><body><p>Вторая&nbsp;глава</p></body></html>");
     const file = path.join(dir, "book.epub");
     await writeFile(file, await zip.generateAsync({ type: "nodebuffer" }));
     const result = await extractText(file, "application/epub+zip", "book.epub");
-    expect(result.text).toMatch(/^Первая глава\s+Вторая глава$/);
+    expect(result.text).toMatch(/^Первая глава\s+Вторая глава\s+Десятая глава$/);
   });
 
   test("TXT", async () => {
@@ -95,5 +96,22 @@ describe("остальные форматы не задеты", () => {
     await writeFile(file, "Строка\r\nвторая   строка\n\n\n\nконец");
     const result = await extractText(file, "text/plain", "note.txt");
     expect(result).toEqual({ text: "Строка\nвторая строка\n\nконец" });
+  });
+});
+
+describe("фрагменты обратно в текст", () => {
+  test("joinChunks(chunkText(t)) — исходный текст без повторов нахлёста", () => {
+    const para = (n: number): string =>
+      Array.from({ length: 4 + (n % 5) }, (_, i) => `Абзац ${n}, мысль ${i}: перенос и сопротивление в работе.`).join(" ");
+    const text = [
+      ...Array.from({ length: 12 }, (_, n) => para(n)),
+      "Глава 2",
+      ...Array.from({ length: 12 }, (_, n) => para(n + 100)),
+    ].join("\n\n");
+    const chunks = chunkText(text);
+    const squash = (s: string): string => s.replace(/\s+/g, " ").trim();
+    // Простая склейка повторяет нахлёст — иначе тест ничего не проверяет.
+    expect(squash(chunks.map((c) => c.text).join("\n\n"))).not.toBe(squash(text));
+    expect(squash(joinChunks(chunks))).toBe(squash(text));
   });
 });

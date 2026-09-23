@@ -183,3 +183,19 @@ export function chunkText(text: string): Chunk[] {
 
   return chunks;
 }
+
+/**
+ * Обратно к сплошному тексту: у фрагмента срезается нахлёст — хвост
+ * предыдущего, который chunkText перенёс в его начало. Иначе каждая граница
+ * фрагментов звучит дважды. После заголовка нахлёста нет — фрагмент как есть.
+ */
+export function joinChunks(chunks: { text: string }[]): string {
+  return chunks
+    .map((c, i) => {
+      const overlap = i > 0 ? chunks[i - 1].text.slice(-OVERLAP_CHARS).trimStart() : "";
+      return overlap !== "" && c.text.startsWith(overlap)
+        ? c.text.slice(overlap.length).trimStart()
+        : c.text;
+    })
+    .join("\n\n");
+}
