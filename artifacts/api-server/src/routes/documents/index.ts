@@ -1,5 +1,4 @@
 import { stat } from "node:fs/promises";
-import path from "node:path";
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { eq, and, desc, sql, inArray } from "drizzle-orm";
@@ -16,7 +15,8 @@ import { enqueue } from "../../lib/jobs";
 import { LIBRARY_DIR } from "../../lib/paths";
 import { embedAll } from "../../lib/embeddings";
 import { ownFolderId } from "../../lib/folders";
-import { attachmentHeader, decodeUploadName } from "../../lib/filename";
+import { decodeUploadName } from "../../lib/filename";
+import { documentFileHeaders } from "./file-headers";
 import { parseId } from "../../lib/parse-id";
 import { resolveInsideDir } from "../../lib/uploads";
 import { archiveAndRemove, archiveUpload, requireArchive } from "../../lib/archive";
@@ -81,19 +81,6 @@ interface IngestPayload {
   filename: string;
 }
 
-/**
- * Во вкладке открываются только PDF и простой текст — с типом, заданным здесь,
- * а не присланным при загрузке. Остальное скачивается: сохранённая из
- * интернета HTML-страница, открытая inline, запустила бы чужие скрипты на
- * домене приложения — с доступом ко всей библиотеке через cookie владелицы.
- */
-const INLINE_TYPES: Record<string, string> = {
-  pdf: "application/pdf",
-  txt: "text/plain; charset=utf-8",
-  md: "text/plain; charset=utf-8",
-  markdown: "text/plain; charset=utf-8",
-};
-
 /** Сам загруженный файл — открыть во вкладке или скачать под исходным именем. */
 router.get("/documents/:id/file", async (req, res): Promise<void> => {
   const doc = await ownDoc(req.params.id, req.user!.id);
@@ -104,16 +91,7 @@ router.get("/documents/:id/file", async (req, res): Promise<void> => {
     return;
   }
   const prev = (await lastIngest(doc.id))?.payload as Partial<IngestPayload> | undefined;
-  const ext = path.extname(typeof prev?.filename === "string" ? prev.filename : "").slice(1).toLowerCase();
-  const inlineType = INLINE_TYPES[ext];
-  const disposition = ext ? attachmentHeader(doc.title, ext, "document") : "attachment";
-  res.sendFile(file, {
-    headers: {
-      "Content-Type": inlineType ?? "application/octet-stream",
-      "Content-Disposition": inlineType ? disposition.replace(/^attachment/, "inline") : disposition,
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
+  res.sendFile(file, { headers: documentFileHeaders(doc, prev?.filename) });
 });
 
 /**
