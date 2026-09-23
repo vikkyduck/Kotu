@@ -146,6 +146,12 @@ export const BRAND_PALETTE = {
 
 export type BrandColor = keyof typeof BRAND_PALETTE;
 
+/** Цвет листа: из палитры стилевого пакета, не задан — из брендбука. */
+export const slideColor = (
+  palette: Record<string, string> | null | undefined,
+  name: BrandColor,
+): string => palette?.[name] ?? BRAND_PALETTE[name];
+
 /**
  * Цвет букв на слайде. Один на всю колоду и чисто белый: тёплые бежевые
  * и сепия читались на тёмном как приглушённые, а умбра и музейный индиго
@@ -186,6 +192,32 @@ export const SLIDE_TYPE = {
   /** Арабский номер листа внизу обложки и финала. */
   folio: 11,
 } as const;
+
+/**
+ * Межстрочный — множитель к собственной высоте строки шрифта: так его
+ * понимают и PowerPoint (lineSpacingMultiple), и PDF (lineGap). Имя поля
+ * говорит, что набирается; plain — всё, что идёт одинарным.
+ */
+export const SLIDE_LEADING = {
+  /** Заголовки обложки, разделителя, теории и схемы. */
+  title: 1.05,
+  bullets: 1.1,
+  /** Абзацы клинического фрагмента и текст колонок сравнения. */
+  body: 1.15,
+  quote: 1.15,
+  final: 1.1,
+  /** Расшифровка шага или опоры схемы. */
+  nodeSub: 1.2,
+  plain: 1,
+} as const;
+
+/**
+ * Собственная высота строки Manrope в кеглях: (ascent + |descent|) / upm
+ * из таблицы hhea шрифта, (2132 + 600) / 2000. CSS считает line-height от
+ * кегля, а не от этой высоты, — предпросмотр умножает SLIDE_LEADING на неё,
+ * иначе набирался бы заметно плотнее файла.
+ */
+export const FONT_LINE = 1.366;
 
 /** Композиция: сколько места занимает образ и где проходят поля. */
 export const SLIDE_SPEC = {

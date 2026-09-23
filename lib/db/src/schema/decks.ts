@@ -20,9 +20,8 @@ export type DeckStatus =
 
 export type SourceKind = "lecture" | "document" | "raw";
 
-// Макеты слайда и его геометрия живут в ../slides — их читает и сервер,
-// и браузер. Здесь только пере-экспорт, чтобы схема оставалась цельной.
-export { SLIDE_LAYOUTS, LAYOUT_RU, SLIDE_SPEC, SLIDE_TYPE, SHEET } from "../slides";
+// Макеты слайда и его геометрия живут в ../slides (@workspace/db/slides) —
+// их читает и сервер, и браузер. Здесь пробрасываются только типы колонок.
 export type { SlideLayout, SlideContent, DiagramSpec } from "../slides";
 
 /**
