@@ -13,18 +13,20 @@ export function Login({ onSuccess }: LoginProps) {
   const [busy, setBusy] = useState(false);
   const [forgot, setForgot] = useState(false);
   const [sent, setSent] = useState(false);
+  // Своё «занято» у ссылки: пока она уходит, вход не притворяется, что проверяет пароль.
+  const [sending, setSending] = useState(false);
 
   const askReset = async () => {
     if (email.trim() === '') {
       setError('Сначала впишите почту — на неё придёт ссылка');
       return;
     }
-    setBusy(true);
+    setSending(true);
     setError('');
     // На отказ (429 «попробуйте через час», сбой сервера) — его причина, а не
     // «письмо отправлено»: иначе она ждала бы письмо, которого не будет.
     const r = await send('/api/auth/forgot', json('POST', { email }), 'Не удалось отправить ссылку');
-    setBusy(false);
+    setSending(false);
     if (r.ok) setSent(true);
     else setError(r.message);
   };
@@ -53,7 +55,7 @@ export function Login({ onSuccess }: LoginProps) {
       <CatLine className="login-cat" />
       <div className="login-mark" aria-hidden="true"><span></span></div>
       <p className="login-eyebrow">Psy3107</p>
-      <h1 className="hello">Psy Библиотека</h1>
+      <h1 className="hello">Библиотека Кота</h1>
       <p className="lead">Войдите, чтобы продолжить.</p>
 
       <form className="panel" onSubmit={submit}>
@@ -63,7 +65,11 @@ export function Login({ onSuccess }: LoginProps) {
           type="email"
           autoComplete="username"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => {
+            setEmail(e.target.value);
+            // Почту поправили — ссылку можно запросить снова, уже на новый адрес.
+            setSent(false);
+          }}
           placeholder="почта"
           required
         />
@@ -101,8 +107,8 @@ export function Login({ onSuccess }: LoginProps) {
               Впишите почту выше и нажмите — пришлю ссылку, по которой можно задать
               новый пароль.
             </p>
-            <button className="btn" type="button" disabled={busy} onClick={() => void askReset()}>
-              {busy ? 'Отправляю…' : 'Прислать ссылку на почту'}
+            <button className="btn" type="button" disabled={sending} onClick={() => void askReset()}>
+              {sending ? 'Отправляю…' : 'Прислать ссылку на почту'}
             </button>
           </div>
         )}
