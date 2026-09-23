@@ -375,6 +375,7 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
 /* ── Расшифровка ─────────────────────────────────────────────────────── */
 .tnote{font-size:15px;color:var(--muted);margin:0 0 14px;display:flex;gap:8px;align-items:flex-start}
 .tnote .ic-svg{width:16px;height:16px;color:var(--accent-strong);flex-shrink:0;margin-top:2px}
+.tnote.bad{color:var(--danger-strong)}
 .tline{padding:14px 0;border-bottom:1px solid var(--hairline);position:relative}
 .tline:last-child{border-bottom:none}
 .tline .who{font-size:13px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;
