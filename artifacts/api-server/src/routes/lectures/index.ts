@@ -15,6 +15,7 @@ import { enqueue } from "../../lib/jobs";
 import { ownFolderId } from "../../lib/folders";
 import { lectureToLibrary, dropLectureCopies } from "../../lib/work-doc";
 import { buildLectureDocx, buildLectureMarkdown } from "../../lib/lecture-export";
+import { requireArchive } from "../../lib/archive";
 
 const router: IRouter = Router();
 
@@ -293,6 +294,9 @@ router.delete("/lectures/:id", async (req, res): Promise<void> => {
     res.status(404).json({ message: "Лекция не найдена" });
     return;
   }
+  // Лекция, главы и источники уходят в архив триггерами (каскад по FK тоже),
+  // файл копии — archiveAndRemove. Без архива не удаляем ничего.
+  await requireArchive();
   // Задачи снимаем первыми: иначе они остаются в очереди, падают на
   // «лекция не найдена», уходят в повтор и держат единственный воркер —
   // соседние работы ждут на пустом месте.

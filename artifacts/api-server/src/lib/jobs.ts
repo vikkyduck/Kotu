@@ -79,11 +79,11 @@ export async function requeueOrphans(): Promise<number> {
 
 async function finish(job: Job, error?: string): Promise<void> {
   if (!error) {
-    // Payload затираем: у выполненной задачи он мёртвый груз, а лежать в нём
-    // может целый текст лекции — уничтожение данных из §10 касается и очереди.
-    // У проваленных задач payload остаётся ради ручного повтора.
+    // Payload НЕ затираем (решение владелицы 23.09.2026: система сама ничего
+    // не стирает). В нём путь к аудио записи — по нему удаление записи
+    // уносит аудио в архив — и вставленный текст презентации.
     await db.execute(sql`
-      UPDATE jobs SET status = 'done', finished_at = now(), last_error = NULL, payload = '{}'::jsonb
+      UPDATE jobs SET status = 'done', finished_at = now(), last_error = NULL
       WHERE id = ${job.id}
     `);
     return;

@@ -1,13 +1,13 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { eq, and, desc, sql, inArray } from "drizzle-orm";
-import { rm } from "node:fs/promises";
 import { db, documentsTable, docChunksTable, foldersTable } from "@workspace/db";
 import { enqueue } from "../../lib/jobs";
 import { LIBRARY_DIR } from "../../lib/paths";
 import { embedAll } from "../../lib/embeddings";
 import { ownFolderId } from "../../lib/folders";
 import { decodeUploadName } from "../../lib/filename";
+import { archiveAndRemove, archiveUpload, requireArchive } from "../../lib/archive";
 
 // Книги бывают толстыми, но не гигабайтными.
 const MAX_FILE_BYTES = 200 * 1024 * 1024;
@@ -81,10 +81,17 @@ router.delete("/documents/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  // Фрагменты уходят каскадом, файл убираем руками — без «мягкого удаления»:
-  // удалили значит удалили.
+  // Удаление убирает документ из библиотеки, но не стирает: файл сначала в
+  // архив (не вышло — исключение, ничего не удалено), строка уходит в архив
+  // триггером. Фрагменты поиска уходят каскадом — это индекс, не данные.
+  await requireArchive();
+  await archiveAndRemove(doc.sourcePath, {
+    entityType: "document",
+    entityId: doc.id,
+    originalName: doc.title,
+    mime: doc.mime,
+  });
   await db.delete(documentsTable).where(eq(documentsTable.id, id));
-  await rm(doc.sourcePath, { force: true }).catch(() => {});
   res.sendStatus(204);
 });
 
@@ -185,6 +192,8 @@ router.patch("/folders/:id", async (req, res): Promise<void> => {
 
 router.delete("/folders/:id", async (req, res): Promise<void> => {
   const id = Number(req.params.id);
+  // Строка папки уходит в архив триггером — без архива не удаляем.
+  await requireArchive();
   const [row] = Number.isInteger(id)
     ? await db
         .delete(foldersTable)
@@ -265,6 +274,13 @@ router.post(
         statusMessage: "В очереди…",
       })
       .returning();
+
+    await archiveUpload(req.file.path, {
+      entityType: "document",
+      entityId: doc.id,
+      originalName: filename,
+      mime: req.file.mimetype,
+    });
 
     await enqueue("doc.ingest", doc.id, {
       sourcePath: req.file.path,

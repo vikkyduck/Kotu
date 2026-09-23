@@ -1,4 +1,3 @@
-import { writeFile, rm, mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import { and, asc, eq, isNotNull } from "drizzle-orm";
 import {
@@ -10,7 +9,8 @@ import {
   deckSlidesTable,
   deckImagesTable,
 } from "@workspace/db";
-import { LIBRARY_DIR, DECKS_DIR } from "./paths";
+import { LIBRARY_DIR } from "./paths";
+import { archiveAndRemove, writeDataFile } from "./archive";
 import { enqueue } from "./jobs";
 import { logger } from "./logger";
 
@@ -25,7 +25,9 @@ import { logger } from "./logger";
  *
  * Копия — не второй документ, а поисковый след своей работы: в списке
  * библиотеки её не показывают отдельной карточкой, она живёт на карточке
- * самой лекции или колоды и удаляется вместе с ней.
+ * самой лекции или колоды и удаляется вместе с ней. Замена и удаление копии
+ * допустимы только потому, что прежняя строка уходит в архив триггером, а
+ * прежний файл — в архив файлов до rm (lib/archive.ts).
  */
 
 /** Общая часть: положить текст в файл и завести/обновить документ. */
@@ -41,8 +43,12 @@ async function upsertWorkDoc(opts: {
   text: string;
 }): Promise<number | null> {
   const filePath = path.join(LIBRARY_DIR, opts.fileName);
-  await mkdir(LIBRARY_DIR, { recursive: true });
-  await writeFile(filePath, opts.text, "utf8");
+  // Прежний текст копии — в архив, новый пишется атомарно.
+  await writeDataFile(filePath, opts.text, {
+    entityType: opts.kind,
+    entityId: opts.link.id,
+    mime: "text/plain",
+  });
 
   // Уникальный индекс превращает гонку двух синхронизаций в спокойное
   // «второй просто обновит».
@@ -171,43 +177,27 @@ export async function deckToLibrary(deckId: number): Promise<number | null> {
   return docId;
 }
 
-/** Убрать копию работы из библиотеки — вместе с файлом и фрагментами. */
+/**
+ * Убрать копию работы из библиотеки — вместе с файлом и фрагментами. Файл
+ * сначала в архив: не заархивировался — исключение, ничего не удалено.
+ */
 async function dropCopies(
   column: typeof documentsTable.lectureId | typeof documentsTable.deckId,
   id: number,
 ): Promise<void> {
   const docs = await db.select().from(documentsTable).where(eq(column, id));
   for (const doc of docs) {
+    await archiveAndRemove(doc.sourcePath, {
+      entityType: "document",
+      entityId: doc.id,
+      mime: doc.mime,
+    });
     await db.delete(documentsTable).where(eq(documentsTable.id, doc.id));
-    await rm(doc.sourcePath, { force: true }).catch(() => undefined);
   }
 }
 
 export const dropLectureCopies = (id: number) => dropCopies(documentsTable.lectureId, id);
 export const dropDeckCopies = (id: number) => dropCopies(documentsTable.deckId, id);
-
-/**
- * Каталоги картинок от колод, которых уже нет: удаление во время рисования
- * оставляет гонку, а диск не резиновый. Сверка на старте её закрывает.
- */
-export async function sweepOrphanDeckDirs(): Promise<number> {
-  let removed = 0;
-  const names = await readdir(DECKS_DIR).catch(() => [] as string[]);
-  for (const name of names) {
-    const id = Number(name);
-    if (!Number.isInteger(id)) continue;
-    const [deck] = await db
-      .select({ id: decksTable.id })
-      .from(decksTable)
-      .where(eq(decksTable.id, id))
-      .limit(1);
-    if (deck) continue;
-    await rm(path.join(DECKS_DIR, name), { recursive: true, force: true }).catch(() => undefined);
-    removed += 1;
-  }
-  if (removed > 0) logger.info({ removed }, "Убрал каталоги удалённых презентаций");
-  return removed;
-}
 
 /**
  * Попытки образа, брошенные посреди рисования: перезапуск (деплой) убивает
@@ -230,7 +220,8 @@ export async function sweepStuckDeckImages(): Promise<number> {
 
 /**
  * Стартовая сверка для работ, в обе стороны: готовое без копии — завести
- * (бэкфилл и самолечение после сбоев), копия без оригинала — удалить.
+ * (бэкфилл и самолечение после сбоев), копия без оригинала — убрать (строка
+ * и файл остаются в архиве).
  */
 export async function sweepWorkToLibrary(): Promise<number> {
   let synced = 0;
@@ -258,9 +249,14 @@ export async function sweepWorkToLibrary(): Promise<number> {
             .where(eq(decksTable.id, copy.deckId!))
             .limit(1);
     if (alive.length > 0) continue;
-    logger.warn({ docId: copy.id }, "Копия работы без оригинала — удаляю");
+    logger.warn({ docId: copy.id }, "Копия работы без оригинала — убираю в архив");
+    try {
+      await archiveAndRemove(copy.sourcePath, { entityType: "document", entityId: copy.id });
+    } catch (err) {
+      logger.error({ err, docId: copy.id }, "Копия не заархивировалась — оставил как есть");
+      continue;
+    }
     await db.delete(documentsTable).where(eq(documentsTable.id, copy.id));
-    await rm(copy.sourcePath, { force: true }).catch(() => undefined);
   }
 
   const readyLectures = await db

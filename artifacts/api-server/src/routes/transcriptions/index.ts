@@ -1,4 +1,4 @@
-import { rm, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { eq, and, desc } from "drizzle-orm";
@@ -17,6 +17,7 @@ import { UPLOAD_DIR } from "../../lib/paths";
 import { syncTranscriptionDoc, deleteTranscriptionDoc } from "../../lib/transcript-doc";
 import { decodeUploadName } from "../../lib/filename";
 import { resolveInsideDir } from "../../lib/uploads";
+import { archiveAndRemove, archiveUpload, requireArchive } from "../../lib/archive";
 import type { TranscribePayload } from "../../lib/handlers/transcribe";
 
 // Long recordings (2–3 hours) are split server-side, so allow large uploads.
@@ -157,22 +158,34 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  // Уничтожение — без остатков (§10): сначала библиотечная копия, потом сама
-  // запись. Упади чистка копии — запись останется, и можно повторить; в
-  // обратном порядке копия зависала бы сиротой до стартовой сверки.
+  // Удаление убирает запись из рабочего пространства, но не стирает: строки
+  // уходят в архив триггерами, файлы — archiveAndRemove (решение владелицы
+  // 23.09.2026, ARCHITECTURE.md §10). Архив не готов — не трогаем ничего.
+  await requireArchive();
+
+  // Сначала библиотечная копия, потом сама запись. Упади уборка копии —
+  // запись останется, и можно повторить; в обратном порядке копия зависала
+  // бы сиротой до стартовой сверки.
   await deleteTranscriptionDoc(params.data.id, req.user!.id);
 
   // Затем задачи расшифровки и их аудио: ждущая задача иначе взялась бы за
-  // удалённую запись, а проваленная держала бы запись сеанса на диске.
-  // Сначала файлы, потом строки задач — упади rm, ссылки останутся и повтор
-  // удаления дочистит; в обратном порядке файл остался бы без хозяина.
+  // удалённую запись. Сначала файлы, потом строки задач — не заархивируется
+  // аудио, ссылки останутся и повтор удаления доделает; в обратном порядке
+  // файл остался бы без хозяина.
   const jobs = await db
     .select({ payload: jobsTable.payload })
     .from(jobsTable)
     .where(and(eq(jobsTable.kind, "transcribe"), eq(jobsTable.entityId, params.data.id)));
   for (const job of jobs) {
     const audio = resolveInsideDir(UPLOAD_DIR, job.payload["inputPath"]);
-    if (audio) await rm(audio, { force: true });
+    if (audio) {
+      await archiveAndRemove(audio, {
+        entityType: "transcription",
+        entityId: params.data.id,
+        originalName:
+          typeof job.payload["filename"] === "string" ? job.payload["filename"] : null,
+      });
+    }
   }
   await db
     .delete(jobsTable)
@@ -342,6 +355,15 @@ router.post(
         statusMessage: "Готовлю запись…",
       })
       .returning();
+
+    // Аудио — в архив файлов сразу: оно хранится, пока владелица не удалит
+    // запись, и после удаления тоже остаётся в архиве.
+    await archiveUpload(inputPath, {
+      entityType: "transcription",
+      entityId: row.id,
+      originalName: filename,
+      mime: req.file.mimetype,
+    });
 
     // Работа уходит в очередь в базе: ответ не ждёт расшифровку, а сама задача
     // переживает перезапуск сервера и при сбое повторяется.
