@@ -1,17 +1,16 @@
-import { logger } from "./logger";
-
 /**
  * Локальная маскировка персональных данных.
  *
  * Зачем: расшифровка сеанса — это данные о здоровье (специальная категория,
  * ст. 10 152-ФЗ). Оформлять текст помогает зарубежная модель, поэтому имена
  * пациентов, клички, города и адреса заменяются метками ДО отправки и
- * возвращаются на место после ответа. За пределы сервера в Москве настоящие
- * имена не уходят никогда.
+ * возвращаются на место после ответа.
  *
- * Распознаёт локальный сервис natasha (127.0.0.1:9020). Если он недоступен,
- * работает запасной эвристический маскировщик — он перестраховывается и прячет
- * лишнее, но НИКОГДА не отправляет имена наружу открытым текстом.
+ * Распознаёт только локальный сервис natasha (127.0.0.1:9020). Запасного пути
+ * нет намеренно: прежняя эвристика «заглавная буква в середине фразы» по
+ * построению пропускала имя в начале предложения и строки. Если сервис
+ * недоступен или ответил непонятно, maskText бросает NerUnavailableError, и
+ * вызывающий НЕ отправляет текст наружу — лучше задержка, чем утечка.
  */
 
 const NER_URL = process.env["NER_URL"] ?? "http://127.0.0.1:9020/ner";
@@ -29,49 +28,66 @@ export interface MaskedText {
   masked: string;
   /** Метка → исходное значение. Живёт только в памяти процесса. */
   map: Record<string, string>;
-  /** true, если сработал запасной путь (сервис NER был недоступен). */
-  degraded: boolean;
-}
-
-async function fetchSpans(text: string): Promise<NerSpan[]> {
-  const res = await fetch(NER_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
-    signal: AbortSignal.timeout(NER_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`NER ответил ${res.status}`);
-  const data = (await res.json()) as { spans?: NerSpan[] };
-  return data.spans ?? [];
 }
 
 /**
- * Запасной путь: прячет слова с заглавной буквы в середине предложения —
- * в русском это почти всегда имена собственные. Перестраховка допустима,
- * утечка настоящего имени — нет.
+ * Сервис распознавания имён недоступен — текст замаскировать нечем, значит
+ * отправлять его наружу нельзя. Отдельный класс, чтобы вызывающие отличали
+ * «временно подождать» от настоящей поломки и говорили человеку понятное.
  */
-function heuristicSpans(text: string): NerSpan[] {
-  const spans: NerSpan[] = [];
-  const re = /(?<=[^.!?…\n[]\s)(\p{Lu}[\p{Ll}\p{Lu}-]+)/gu;
-  for (const m of text.matchAll(re)) {
-    if (m.index === undefined) continue;
-    spans.push({ start: m.index, stop: m.index + m[0].length, text: m[0], type: "PER" });
+export class NerUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super("Сервис скрытия имён недоступен — текст с именами наружу не отправляю", { cause });
+    this.name = "NerUnavailableError";
   }
-  return spans;
 }
 
-/** Заменяет найденные сущности метками. Одинаковый текст — всегда одна метка. */
-export async function maskText(text: string): Promise<MaskedText> {
-  let spans: NerSpan[];
-  let degraded = false;
+/** Проверяем ответ, а не верим ему: пустой или кривой ответ = маскировка не сделана. */
+function isValidSpans(spans: unknown, textLength: number): spans is NerSpan[] {
+  return (
+    Array.isArray(spans) &&
+    spans.every(
+      (s: Partial<NerSpan> | null) =>
+        s !== null &&
+        typeof s === "object" &&
+        Number.isInteger(s.start) &&
+        Number.isInteger(s.stop) &&
+        s.start! >= 0 &&
+        s.start! < s.stop! &&
+        s.stop! <= textLength &&
+        typeof s.text === "string" &&
+        (s.type === "PER" || s.type === "LOC"),
+    )
+  );
+}
 
+async function fetchSpans(text: string): Promise<NerSpan[]> {
   try {
-    spans = await fetchSpans(text);
+    const res = await fetch(NER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(NER_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`NER ответил ${res.status}`);
+    const data = (await res.json()) as { spans?: unknown };
+    // Ответ без массива spans нельзя читать как «имён нет»: так немаскированный
+    // текст уехал бы наружу из-за сбоя сервиса.
+    if (!isValidSpans(data?.spans, text.length)) {
+      throw new Error("NER вернул ответ без корректного списка spans");
+    }
+    return data.spans;
   } catch (err) {
-    logger.warn({ err }, "NER недоступен — маскирую запасной эвристикой");
-    spans = heuristicSpans(text);
-    degraded = true;
+    throw new NerUnavailableError(err);
   }
+}
+
+/**
+ * Заменяет найденные сущности метками. Одинаковый текст — всегда одна метка.
+ * Бросает {@link NerUnavailableError}, если сервис NER недоступен.
+ */
+export async function maskText(text: string): Promise<MaskedText> {
+  const spans = await fetchSpans(text);
 
   const map: Record<string, string> = {};
   const labelByValue = new Map<string, string>();
@@ -93,14 +109,23 @@ export async function maskText(text: string): Promise<MaskedText> {
     masked = masked.slice(0, span.start) + label + masked.slice(span.stop);
   }
 
-  return { masked, map, degraded };
+  return { masked, map };
 }
 
-/** Возвращает настоящие значения на место меток: [[PER1]] → [[Анна Петровна]]. */
-export function unmaskText(text: string, map: Record<string, string>): string {
+/**
+ * Возвращает настоящие значения на место меток.
+ * По умолчанию оборачивает их скобками: [[PER1]] → [[Анна Петровна]] — так
+ * фронт узнаёт имя и показывает «имя скрыто». С brackets: false — просто
+ * «Анна Петровна», как в расшифровке, где имена скрывать не просили.
+ */
+export function unmaskText(
+  text: string,
+  map: Record<string, string>,
+  { brackets = true }: { brackets?: boolean } = {},
+): string {
   let result = text;
   for (const [label, value] of Object.entries(map)) {
-    result = result.split(label).join(`[[${value}]]`);
+    result = result.split(label).join(brackets ? `[[${value}]]` : value);
   }
   // Если модель всё же выдумала метку, которой не было, — убираем её,
   // чтобы в тексте не осталось технического мусора.

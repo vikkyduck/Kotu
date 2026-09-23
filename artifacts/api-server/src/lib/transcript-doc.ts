@@ -3,7 +3,7 @@ import path from "node:path";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { db, documentsTable, transcriptionsTable, decksTable, type Transcription } from "@workspace/db";
 import { LIBRARY_DIR } from "./paths";
-import { maskText } from "./privacy";
+import { maskText, NerUnavailableError } from "./privacy";
 import { enqueue } from "./jobs";
 import { logger } from "./logger";
 
@@ -41,16 +41,19 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
     return;
   }
 
-  const { masked: rawMasked, degraded } = await maskText(plain);
+  const { masked: rawMasked } = await maskText(plain).catch((err: unknown) => {
+    // Без настоящего NER наружу нельзя: отказываемся, стартовая сверка
+    // повторит, когда сервис вернётся.
+    if (err instanceof NerUnavailableError) {
+      throw new Error("Сервис маскировки недоступен — расшифровку в библиотеку не отправляю", {
+        cause: err,
+      });
+    }
+    throw err;
+  });
   // Если текст УЖЕ содержал плейсхолдеры (маскировка на этапе расшифровки),
   // повторная маскировка оборачивает их второй парой скобок — схлопываем.
   const masked = rawMasked.replace(/\[{3,}((?:PER|LOC)\d+)\]{3,}/g, "[[$1]]");
-  if (degraded) {
-    // Эвристика перестраховывается, но не ловит имя в начале строки — а формат
-    // «Имя: реплика» ставит его туда всегда. Без настоящего NER наружу нельзя:
-    // отказываемся, стартовая сверка повторит, когда сервис вернётся.
-    throw new Error("Сервис маскировки недоступен — расшифровку в библиотеку не отправляю");
-  }
 
   // Расшифровку могли удалить, пока считалась маскировка, — не воскрешаем.
   const [alive] = await db
