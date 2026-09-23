@@ -3,7 +3,7 @@ import { useApp } from '@/hooks/use-app';
 import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
 import { Icon } from '@/lib/icons';
 import { OFFLINE, failText, send, json, downloadFile } from '@/lib/http';
-import { KIND_LABEL, docKind, type ItemKind } from '@/lib/library-items';
+import { KIND_LABEL, docKind, lectureWorking, titleOf, type ItemKind } from '@/lib/library-items';
 import type {
   Bibliography,
   DocumentStatus,
@@ -217,7 +217,7 @@ export function Lecture() {
   // Пока идёт работа — подтягиваем состояние, чтобы прогресс двигался сам.
   useEffect(() => {
     if (openId === null || !lecture) return;
-    if (lecture.status !== 'planning' && lecture.status !== 'writing') return;
+    if (!lectureWorking(lecture.status)) return;
     const t = setInterval(() => void loadOne(openId), 4000);
     return () => clearInterval(t);
   }, [openId, lecture, loadOne]);
@@ -384,7 +384,7 @@ export function Lecture() {
 
   // ── Открытая лекция ─────────────────────────────────────────────────────
   if (lecture) {
-    const working = lecture.status === 'planning' || lecture.status === 'writing';
+    const working = lectureWorking(lecture.status);
 
     return (
       <section className="screen active" id="s-lecture">
@@ -806,7 +806,7 @@ export function Lecture() {
                       setPicked((p) => (p.includes(d.id) ? p.filter((x) => x !== d.id) : [...p, d.id]))
                     }
                   >
-                    {records.find((t) => t.id === d.transcriptionId)?.title ?? d.title}
+                    {titleOf(d, records)}
                     {OWN_WORK.includes(docKind(d.kind)) ? ` · ${KIND_LABEL[docKind(d.kind)]}` : ''}
                   </button>
                 ))}

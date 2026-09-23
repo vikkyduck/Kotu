@@ -4,7 +4,7 @@ import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
 import { Icon } from '@/lib/icons';
 import { send, json } from '@/lib/http';
 import { pressable } from '@/lib/deck';
-import { KIND_ICON, KIND_LABEL, docKind } from '@/lib/library-items';
+import { KIND_ICON, KIND_LABEL, docKind, titleOf } from '@/lib/library-items';
 import type { DocumentStatus, LectureStatus } from '@workspace/db/schema';
 
 /**
@@ -212,7 +212,7 @@ export function DeckForm({ onCreated }: Props) {
                   <Icon name={KIND_ICON[docKind(d.kind)]} />
                 </span>
                 <span className="rt">
-                  <b>{records.find((t) => t.id === d.transcriptionId)?.title ?? d.title}</b>
+                  <b>{titleOf(d, records)}</b>
                   <span>{KIND_LABEL[docKind(d.kind)]}</span>
                 </span>
                 {pickedDoc === d.id && (
