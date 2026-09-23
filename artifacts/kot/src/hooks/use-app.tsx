@@ -10,7 +10,7 @@ type Theme = 'light' | 'dark';
 interface FixSheetState {
   isOpen: boolean;
   title: string;
-  kind: 'A' | 'B' | 'C' | 'N';
+  kind: 'C' | 'N';
   callback: ((text: string) => void) | null;
   /** Текст, с которым поле открывается (прежнее имя при переименовании). */
   initial: string;
@@ -22,7 +22,7 @@ interface AppContextType {
   toast: (msg: string) => void;
   toastMsg: string | null;
   sheet: FixSheetState;
-  openSheet: (title: string, kind: 'A' | 'B' | 'C' | 'N', cb: (text: string) => void, initial?: string) => void;
+  openSheet: (title: string, kind: 'C' | 'N', cb: (text: string) => void, initial?: string) => void;
   closeSheet: () => void;
   theme: Theme;
   toggleTheme: () => void;
@@ -94,16 +94,29 @@ function navOf(hash: string): Nav {
   return HOME;
 }
 
+/** Что открыто в инструменте; null — пустая форма «делаем новое». */
+function idOf(n: Nav): number | null {
+  return n.transcriptionId ?? n.lectureId ?? n.deckId;
+}
+
+function historyState(): (Nav & { fromHome?: boolean }) | null {
+  return window.history.state as (Nav & { fromHome?: boolean }) | null;
+}
+
 const AppContext = createContext<AppContextType | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [nav, setNav] = useState<Nav>(() => navOf(window.location.hash));
   const screen = nav.screen;
   const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const [sheet, setSheet] = useState<FixSheetState>({ isOpen: false, title: '', kind: 'A', callback: null, initial: '' });
+  const [sheet, setSheet] = useState<FixSheetState>({ isOpen: false, title: '', kind: 'N', callback: null, initial: '' });
   const toastT = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [theme, setThemeState] = useState<Theme>('light');
+  // Тему до загрузки уже выставил скрипт в index.html (по умолчанию — бумага),
+  // здесь её только читаем: правило живёт в одном месте.
+  const [theme, setThemeState] = useState<Theme>(() =>
+    document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light',
+  );
   // Что именно открыто в инструменте. null = «делаем новое»: инструмент
   // открывается формой, а список сделанного живёт в библиотеке.
   const activeTranscriptionId = nav.transcriptionId;
@@ -112,27 +125,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [deckSeed, setDeckSeed] = useState<DeckSeed | null>(null);
   const activeLectureId = nav.lectureId;
   const activeDeckId = nav.deckId;
-
-  useEffect(() => {
-    let t = '';
-    try {
-      t = localStorage.getItem('kot-theme') || '';
-    } catch (e) {}
-    // По умолчанию — бумага: платформа читается как документ, а не как ночь.
-    // Тёмная тема осталась переключателем в меню; сохранённый выбор уважается.
-    if (!t) t = 'light';
-    const next = (t === 'dark' ? 'dark' : 'light') as Theme;
-    document.documentElement.setAttribute('data-theme', next);
-    setThemeState(next);
-  }, []);
-
-  const setTheme = useCallback((t: Theme) => {
-    document.documentElement.setAttribute('data-theme', t);
-    setThemeState(t);
-    try {
-      localStorage.setItem('kot-theme', t);
-    } catch (e) {}
-  }, []);
 
   const toggleTheme = useCallback(() => {
     setThemeState(prev => {
@@ -145,12 +137,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  /** Переход: состояние и адрес меняются вместе, иначе «назад» врёт. */
+  const navRef = useRef(nav);
+  navRef.current = nav;
+
+  /**
+   * Переход: состояние и адрес меняются вместе, иначе «назад» врёт.
+   * fromHome в записи истории — пришли на неё из библиотеки: тогда возврат
+   * в библиотеку — это шаг назад, а не новая запись (см. go).
+   */
   const goTo = useCallback((next: Nav) => {
-    setNav(next);
-    if (hashOf(next) !== window.location.hash) {
-      window.history.pushState(next, '', hashOf(next));
+    const cur = navRef.current;
+    const hash = hashOf(next);
+    if (hash !== window.location.hash) {
+      // Только что созданная запись встаёт на место пустой формы: «назад» с неё
+      // не должен возвращать к форме, из которой она получилась.
+      const created = next.screen === cur.screen && idOf(cur) === null && idOf(next) !== null;
+      const fromHome = cur.screen === 's-home' || (created && Boolean(historyState()?.fromHome));
+      const entry = { ...next, fromHome };
+      if (created) window.history.replaceState(entry, '', hash);
+      else window.history.pushState(entry, '', hash);
     }
+    navRef.current = next;
+    setNav(next);
     window.scrollTo({ top: 0 });
   }, []);
 
@@ -163,12 +171,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
     window.addEventListener('popstate', onPop);
     // Первая запись в истории должна знать своё место — иначе возврат на неё
-    // оставил бы приложение на прежнем экране.
-    window.history.replaceState(navOf(window.location.hash), '', window.location.hash || '#/');
+    // оставил бы приложение на прежнем экране. fromHome переживает перезагрузку.
+    const entry = { ...navOf(window.location.hash), fromHome: Boolean(historyState()?.fromHome) };
+    window.history.replaceState(entry, '', window.location.hash || '#/');
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
   const go = useCallback((id: ScreenId) => {
+    // В библиотеку, из которой сюда и пришли, — шагом назад: иначе жест
+    // «назад» на телефоне снова открыл бы экран, с которого только что ушли.
+    if (id === 's-home' && navRef.current.screen !== 's-home' && historyState()?.fromHome) {
+      window.history.back();
+      return;
+    }
     goTo({ ...HOME, screen: id });
   }, [goTo]);
 
@@ -212,7 +227,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const openSheet = useCallback((title: string, kind: 'A' | 'B' | 'C' | 'N', cb: (text: string) => void, initial = '') => {
+  const openSheet = useCallback((title: string, kind: 'C' | 'N', cb: (text: string) => void, initial = '') => {
     setSheet({ isOpen: true, title, kind, callback: cb, initial });
   }, []);
 

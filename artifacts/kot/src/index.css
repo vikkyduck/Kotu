@@ -23,8 +23,8 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    Psy3107 · «Архив бессознательного» — дизайн-система платформы.
    Источник истины: brand/design-system-reference.html (токены — раздел 16).
-   Две темы: архивная ночь (по умолчанию, data-theme="dark") и бумага
-   (data-theme="light") — пара «Etching Ink / Aged Paper» из референса.
+   Две темы: бумага (по умолчанию, data-theme="light") и архивная ночь
+   (data-theme="dark") — пара «Etching Ink / Aged Paper» из референса.
    Шрифты — локальные @font-face выше; внешних CDN на странице нет.
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -551,7 +551,6 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
   background:var(--press-bg);color:var(--press-ink);padding:13px 20px;font-size:15px;
   box-shadow:var(--shadow-lg);opacity:0;transition:opacity .3s var(--ease),transform .3s var(--ease);
   z-index:80;display:flex;gap:10px;align-items:center;max-width:90vw}
-.toast .ic-svg{width:17px;height:17px;flex-shrink:0}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
 /* ── Вход ────────────────────────────────────────────────────────────── */
