@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Response } from "express";
 import { randomBytes, createHash } from "node:crypto";
 import { eq, and, isNull, gt } from "drizzle-orm";
 import { db, usersTable, sessionsTable, passwordResetsTable } from "@workspace/db";
@@ -24,6 +24,22 @@ const router: IRouter = Router();
 // поэтому включаем флаг там, где сайт реально отдаётся по https.
 const isHttps = (process.env.PUBLIC_BASE_URL ?? "").startsWith("https://");
 
+const MIN_PASSWORD_LENGTH = 10;
+const SHORT_PASSWORD_MESSAGE = `Пароль должен быть не короче ${MIN_PASSWORD_LENGTH} символов`;
+// 15 минут — окно счётчика попыток входа (LOGIN_WINDOW_MS в lib/auth).
+const TOO_MANY_ATTEMPTS_MESSAGE = "Слишком много попыток. Подождите 15 минут.";
+
+/** Одна cookie сессии для входа и смены пароля: path тот же, что у clearCookie в выходе. */
+function setSessionCookie(res: Response, token: string, expiresAt: Date) {
+  res.cookie(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: isHttps,
+    expires: expiresAt,
+    path: "/",
+  });
+}
+
 /** Живая, неиспользованная и не протухшая ссылка сброса — или null. */
 async function findValidReset(token: string) {
   if (!token) return null;
@@ -46,7 +62,7 @@ router.post("/auth/login", async (req, res) => {
   // Адрес как есть: в ключ счётчика (IPv6 → /64) его сводит lib/auth.
   const ip = req.ip;
   if (tooManyAttempts(ip)) {
-    res.status(429).json({ message: "Слишком много попыток. Подождите 15 минут." });
+    res.status(429).json({ message: TOO_MANY_ATTEMPTS_MESSAGE });
     return;
   }
 
@@ -69,13 +85,7 @@ router.post("/auth/login", async (req, res) => {
 
   clearAttempts(ip);
   const { token, expiresAt } = await createSession(user.id);
-  res.cookie(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: isHttps,
-    expires: expiresAt,
-    path: "/",
-  });
+  setSessionCookie(res, token, expiresAt);
   res.json({ id: user.id, name: user.name, email: user.email, role: user.role });
 });
 
@@ -152,8 +162,8 @@ router.post("/auth/reset", async (req, res) => {
   const token = typeof req.body?.token === "string" ? req.body.token : "";
   const password = typeof req.body?.password === "string" ? req.body.password : "";
 
-  if (password.length < 10) {
-    res.status(400).json({ message: "Пароль должен быть не короче 10 символов" });
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    res.status(400).json({ message: SHORT_PASSWORD_MESSAGE });
     return;
   }
 
@@ -184,8 +194,8 @@ router.post("/auth/password", requireAuth, async (req, res) => {
   const current = typeof req.body?.current === "string" ? req.body.current : "";
   const next = typeof req.body?.next === "string" ? req.body.next : "";
 
-  if (next.length < 10) {
-    res.status(400).json({ message: "Новый пароль короче 10 символов" });
+  if (next.length < MIN_PASSWORD_LENGTH) {
+    res.status(400).json({ message: SHORT_PASSWORD_MESSAGE });
     return;
   }
   if (next === current) {
@@ -197,7 +207,7 @@ router.post("/auth/password", requireAuth, async (req, res) => {
   // пароль можно было бы подбирать здесь без ограничений.
   const ip = req.ip;
   if (tooManyAttempts(ip)) {
-    res.status(429).json({ message: "Слишком много попыток. Подождите 15 минут." });
+    res.status(429).json({ message: TOO_MANY_ATTEMPTS_MESSAGE });
     return;
   }
 
@@ -218,13 +228,7 @@ router.post("/auth/password", requireAuth, async (req, res) => {
   await db.delete(sessionsTable).where(eq(sessionsTable.userId, user.id));
 
   const { token, expiresAt } = await createSession(user.id);
-  res.cookie(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: isHttps,
-    expires: expiresAt,
-    path: "/",
-  });
+  setSessionCookie(res, token, expiresAt);
   res.json({ ok: true });
 });
 
