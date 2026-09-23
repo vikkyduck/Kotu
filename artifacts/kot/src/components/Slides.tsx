@@ -198,7 +198,7 @@ export function Slides() {
 
   /** Удалить можно на любом этапе — ждать окончания работы незачем. */
   const removeDeck = async (id: number) => {
-    if (!window.confirm('Удалить презентацию? Вернуть её будет нельзя.')) return;
+    if (!window.confirm('Удалить презентацию?')) return;
     try {
       const res = await fetch(`/api/decks/${id}`, { method: 'DELETE' });
       if (res.ok) {

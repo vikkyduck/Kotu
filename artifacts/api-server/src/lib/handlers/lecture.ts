@@ -298,6 +298,8 @@ async function runWrite(job: Job): Promise<void> {
     const cited = new Set(
       [...text.matchAll(/\[(\d{1,2})\]/g)].map((m) => Number(m[1])).filter((n) => n > 0),
     );
+    // Прежние источники главы заменяются новыми; старые строки остаются в
+    // архиве (триггер на lecture_sources).
     await db.delete(lectureSourcesTable).where(eq(lectureSourcesTable.sectionId, section.id));
 
     if (excerpts.length > 0) {

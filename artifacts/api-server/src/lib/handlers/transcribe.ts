@@ -1,4 +1,3 @@
-import { rm } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { db, transcriptionsTable, type Job } from "@workspace/db";
 import { transcribeLongAudio, ChunkError } from "../transcription";
@@ -7,6 +6,7 @@ import { syncTranscriptionDoc } from "../transcript-doc";
 import { logger } from "../logger";
 import { UPLOAD_DIR } from "../paths";
 import { resolveInsideDir } from "../uploads";
+import { archiveAndRemove } from "../archive";
 
 export interface TranscribePayload {
   inputPath: string;
@@ -20,19 +20,20 @@ async function run(job: Job): Promise<void> {
   const id = job.entityId;
 
   // Рестарт мог оборвать задачу ПОСЛЕ готовности (на шаге отправки в
-  // библиотеку): повторная расшифровка сожгла бы готовый текст об удалённое
-  // аудио. Готовую запись не трогаем — только досылаем в библиотеку.
+  // библиотеку): повторная расшифровка переписала бы готовый текст, может
+  // быть уже поправленный руками. Готовую запись не трогаем — только
+  // досылаем в библиотеку.
   const [existing] = await db
     .select()
     .from(transcriptionsTable)
     .where(eq(transcriptionsTable.id, id))
     .limit(1);
   // Запись удалили, пока задача ждала очереди (или повтора): расшифровывать
-  // некому, а аудио сеанса без записи — ничьё. Убираем его и выходим тихо:
-  // ошибка здесь только сожгла бы попытки и оставила файл на диске.
+  // некому. Аудио убираем из загрузок (в архиве оно остаётся) и выходим
+  // тихо: ошибка здесь только сожгла бы попытки.
   if (!existing) {
-    await removeAudio(payload);
-    logger.info({ id }, "Запись удалена до расшифровки — убрал аудио");
+    await removeAudio(payload, id);
+    logger.info({ id }, "Запись удалена до расшифровки — аудио убрал в архив");
     return;
   }
   if (existing.status === "done") {
@@ -67,8 +68,9 @@ async function run(job: Job): Promise<void> {
       .where(eq(transcriptionsTable.id, id));
 
     logger.info({ id, segments: segments.length }, "Расшифровка готова");
-    // Аудио больше не нужно: дальше живёт только текст.
-    await rm(payload.inputPath, { force: true }).catch(() => {});
+    // Аудио после успеха НЕ удаляем: решение владелицы 23.09.2026 — всё
+    // загруженное хранится, пока она сама не удалит запись. Это осознанно
+    // отменяет прежнюю минимизацию по 152-ФЗ (ARCHITECTURE.md §10).
 
     // Готовая расшифровка едет в библиотеку (в маскированном виде). Сбой здесь
     // не должен ронять готовую расшифровку — стартовая сверка догонит.
@@ -108,16 +110,24 @@ async function onGiveUp(job: Job, message: string): Promise<void> {
       logger.error({ err, id: job.entityId }, "Не смог записать состояние ошибки");
       return null;
     });
-  // Исключение — записи больше нет: повторять нечего, аудио ничьё.
+  // Исключение — записи больше нет: повторять нечего, аудио убираем.
   if (updated && updated.length === 0) {
-    await removeAudio(job.payload as unknown as TranscribePayload);
+    await removeAudio(job.payload as unknown as TranscribePayload, job.entityId);
   }
 }
 
-/** Аудио записи, которой больше нет. Путь из базы — только внутри загрузок. */
-async function removeAudio(payload: TranscribePayload): Promise<void> {
+/**
+ * Аудио записи, которой больше нет, — из загрузок в архив. Путь из базы —
+ * только внутри загрузок. Не заархивировалось — файл остаётся на месте.
+ */
+async function removeAudio(payload: TranscribePayload, id: number): Promise<void> {
   const audio = resolveInsideDir(UPLOAD_DIR, payload.inputPath);
-  if (audio) await rm(audio, { force: true }).catch(() => {});
+  if (!audio) return;
+  await archiveAndRemove(audio, {
+    entityType: "transcription",
+    entityId: id,
+    originalName: payload.filename,
+  }).catch((err) => logger.error({ err, id }, "Аудио не заархивировалось — оставил на месте"));
 }
 
 export function registerTranscribeHandler(): void {
