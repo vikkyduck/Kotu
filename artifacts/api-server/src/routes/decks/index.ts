@@ -1,6 +1,5 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { rm, writeFile, mkdir } from "node:fs/promises";
 import { Router, type IRouter } from "express";
 import { eq, and, or, asc, desc, isNotNull, isNull } from "drizzle-orm";
 import {
@@ -25,6 +24,7 @@ import { DECKS_DIR } from "../../lib/paths";
 import { buildDeckPptx } from "../../lib/pptx";
 import { buildDeckPdf } from "../../lib/pdf";
 import { sanitizeSlideContent } from "../../lib/slide-content";
+import { archiveInputSql, archiveTreeAndRemove, requireArchive } from "../../lib/archive";
 
 const router: IRouter = Router();
 
@@ -169,20 +169,26 @@ router.post("/decks", async (req, res): Promise<void> => {
     stylePackId = requested;
   }
 
-  const [deck] = await db
-    .insert(decksTable)
-    .values({
-      ownerId: req.user!.id,
-      title,
-      sourceKind: kind,
-      sourceId,
-      stylePackId,
-      status: "storyboarding",
-      statusMessage: "В очереди…",
-    })
-    .returning();
+  // Вставленный текст в рабочих таблицах не хранится — он едет прямо в
+  // задачу. Задачи удаляются вместе с колодой, поэтому сам текст — в архив,
+  // в той же транзакции, что и колода: без архива колоду не заводим.
+  const deck = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(decksTable)
+      .values({
+        ownerId: req.user!.id,
+        title,
+        sourceKind: kind,
+        sourceId,
+        stylePackId,
+        status: "storyboarding",
+        statusMessage: "В очереди…",
+      })
+      .returning();
+    if (rawText) await tx.execute(archiveInputSql("decks", row.id, { raw_text: rawText }));
+    return row;
+  });
 
-  // Вставленный текст в базе не храним — он едет прямо в задачу.
   await enqueue("deck.storyboard", deck.id, rawText ? { rawText } : {});
   res.status(201).json(deck);
 });
@@ -614,20 +620,42 @@ router.delete("/decks/:id", async (req, res): Promise<void> => {
     return;
   }
 
+  // Удаление убирает колоду из рабочего пространства, но не стирает: колода,
+  // слайды и картинки (каскад по FK) уходят в архив триггерами, файлы
+  // картинок — в архив файлов до rm. Без архива не удаляем ничего.
+  await requireArchive();
+
   // Удалять можно на любом этапе — ждать окончания работы человек не обязан.
   // Задачи снимаем первыми: воркер, начав слайд, проверит колоду перед
   // записью файла и остановится сам (см. handlers/illustrate.ts).
-  // В payload мог остаться вставленный текст — уничтожение без остатков (§10).
-  await db
-    .delete(jobsTable)
-    .where(and(sql`${jobsTable.kind} LIKE 'deck.%'`, eq(jobsTable.entityId, deck.id)));
+  // Вставленный текст из payload — в архив (op='INPUT'; у новых колод он
+  // там с создания, повтор не пишется) в одной транзакции со снятием задач.
+  await db.transaction(async (tx) => {
+    const jobs = await tx
+      .select({ payload: jobsTable.payload })
+      .from(jobsTable)
+      .where(and(sql`${jobsTable.kind} LIKE 'deck.%'`, eq(jobsTable.entityId, deck.id)));
+    for (const job of jobs) {
+      const raw = job.payload["rawText"];
+      if (typeof raw === "string" && raw !== "") {
+        await tx.execute(archiveInputSql("decks", deck.id, { raw_text: raw }));
+      }
+    }
+    await tx
+      .delete(jobsTable)
+      .where(and(sql`${jobsTable.kind} LIKE 'deck.%'`, eq(jobsTable.entityId, deck.id)));
+  });
   // Текстовая копия в поиске — часть той же презентации, а не отдельный
-  // документ: удаляем вместе, иначе в библиотеке остался бы призрак колоды,
+  // документ: убираем вместе, иначе в библиотеке остался бы призрак колоды,
   // которую уже не открыть.
   await dropDeckCopies(deck.id);
 
   // Сначала файлы, потом запись: осиротевшая папка хуже осиротевшей строки.
-  await rm(path.join(DECKS_DIR, String(deck.id)), { recursive: true, force: true });
+  // Каталог уходит, только если ВСЕ картинки легли в архив.
+  await archiveTreeAndRemove(path.join(DECKS_DIR, String(deck.id)), {
+    entityType: "deck",
+    entityId: deck.id,
+  });
   await db.delete(decksTable).where(eq(decksTable.id, deck.id));
   res.sendStatus(204);
 });

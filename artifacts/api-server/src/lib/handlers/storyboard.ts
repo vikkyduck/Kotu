@@ -178,6 +178,9 @@ async function run(job: Job): Promise<void> {
   }
   const slides = parsed.slice(0, MAX_SLIDES);
 
+  // Пересборка заменяет слайды целиком. Прежние слайды (и их картинки по
+  // каскаду) не пропадают: строки уходят в архив триггером, файлы картинок
+  // остаются на диске и в архиве файлов.
   await db.delete(deckSlidesTable).where(eq(deckSlidesTable.deckId, id));
   await db.insert(deckSlidesTable).values(
     slides.map((s, i) => {

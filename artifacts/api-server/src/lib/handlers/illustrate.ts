@@ -1,4 +1,3 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
@@ -19,6 +18,7 @@ import { renderIllustration } from "../images";
 import { registerHandler, enqueue } from "../jobs";
 import { DECKS_DIR } from "../paths";
 import { deckToLibrary } from "../work-doc";
+import { writeDataFile } from "../archive";
 import { logger } from "../logger";
 
 /** Потолок перерисовок: после второй попытки слайд идёт с тем, что есть. */
@@ -184,11 +184,15 @@ async function illustrateSlide(
         .limit(1);
       if (!alive) throw new Error("Презентация удалена");
       const dir = path.join(DECKS_DIR, String(deckId));
-      await mkdir(dir, { recursive: true });
       // Расширение — по настоящему формату: Anthropic сверяет заявленный
       // тип с байтами, а PowerPoint выбирает кодек по имени файла.
       const filePath = path.join(dir, `${row.id}.${art.ext}`);
-      await writeFile(filePath, art.buffer);
+      // Атомарно и сразу в архив: картинка оплачена, второй раз её не нарисовать.
+      await writeDataFile(filePath, art.buffer, {
+        entityType: "deck_image",
+        entityId: row.id,
+        mime: art.mime,
+      });
       await db
         .update(deckImagesTable)
         .set({ path: filePath, provider: art.provider, model: art.model })

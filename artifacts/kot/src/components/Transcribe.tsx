@@ -388,7 +388,7 @@ function ResultView({
 
   const handleDelete = () => {
     if (!data) return;
-    const ok = window.confirm(`Удалить «${data.title}»? Расшифровку нельзя будет вернуть.`);
+    const ok = window.confirm(`Удалить «${data.title}»?`);
     if (!ok) return;
     onDelete();
   };
