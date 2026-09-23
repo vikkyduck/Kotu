@@ -185,21 +185,22 @@ export async function transcribeLongAudio(
 
 interface StructureOptions {
   /**
-   * Только про хранение и показ: true — имена сохраняются в скобках [[Анна]]
-   * и на экране видны как «имя скрыто»; false — обычным текстом. Наружу имена
-   * не уходят НИ при каком значении: маскировка перед моделью безусловная.
-   * Название поля осталось прежним — оно живёт в БД и API.
+   * Галочка «Скрыть имена и города» в форме. true — имена маскируются ДО
+   * отправки в модель (если сервис имён лежит, текст не уходит), хранятся в
+   * скобках [[Анна]] и на экране видны как «имя скрыто». false — текст уходит
+   * на оформление как есть и хранится обычным: на платформе лекции и
+   * воркшопы, а не сеансы (решение владелицы 23.09.2026: выбирает клиент).
    */
   hideNames: boolean;
   markSpeakers: boolean;
 }
 
 /**
- * Turn a raw transcript into clean, structured segments. Always masks personal
- * names / places before the model call and optionally labels the two speakers.
- * Best-effort: if the model output can't be parsed, falls back to a single
- * plain-text segment. Throws {@link NerUnavailableError} without calling the
- * model if names can't be masked.
+ * Turn a raw transcript into clean, structured segments. With hideNames masks
+ * personal names / places before the model call; optionally labels the two
+ * speakers. Best-effort: if the model output can't be parsed, falls back to a
+ * single plain-text segment. With hideNames throws {@link NerUnavailableError}
+ * without calling the model if names can't be masked.
  */
 export async function structureTranscript(
   rawText: string,
@@ -210,12 +211,13 @@ export async function structureTranscript(
     return [{ who: "", text: "В записи не удалось распознать речь." }];
   }
 
-  // Персональные данные прячем ЛОКАЛЬНО до отправки в зарубежную модель —
-  // всегда, независимо от hideNames: галочка в форме решает, как показывать
-  // имена, а не можно ли их вывезти (зона А не покидает РФ). Если NER лежит,
-  // maskText бросает, и запрос к модели не уходит вовсе.
-  const { masked: payload, map: nameMap } = await maskText(trimmed);
-  const reveal = (text: string) => unmaskText(text, nameMap, { brackets: hideNames });
+  // Скрыть имена попросили — прячем их ЛОКАЛЬНО до отправки в модель. Если
+  // NER лежит, maskText бросает, и запрос к модели не уходит вовсе. Не
+  // попросили — текст уходит как есть, сервис имён не нужен.
+  const { masked: payload, map: nameMap } = hideNames
+    ? await maskText(trimmed)
+    : { masked: trimmed, map: {} };
+  const reveal = (text: string) => (hideNames ? unmaskText(text, nameMap) : text);
 
   const rules: string[] = [
     "Ты помогаешь психологу аккуратно оформить расшифровку аудиозаписи на русском языке.",
@@ -230,9 +232,14 @@ export async function structureTranscript(
     rules.push('Не помечай говорящих: у каждой реплики "who" должно быть пустой строкой "".');
   }
 
-  rules.push(
-    'В тексте уже стоят метки вида [[PER1]], [[LOC1]] — за ними скрыты имена людей и названия мест. Переноси эти метки в ответ ДОСЛОВНО и на то же место: не переводи, не склоняй, не раскрывай и не придумывай новых меток. Больше двойные квадратные скобки ни для чего не используй.',
-  );
+  if (hideNames) {
+    rules.push(
+      'В тексте уже стоят метки вида [[PER1]], [[LOC1]] — за ними скрыты имена людей и названия мест. Переноси эти метки в ответ ДОСЛОВНО и на то же место: не переводи, не склоняй, не раскрывай и не придумывай новых меток. Больше двойные квадратные скобки ни для чего не используй.',
+    );
+  } else {
+    // [[…]] фронт читает как скрытое имя — в тексте без скрытия их быть не должно.
+    rules.push("Двойные квадратные скобки не используй.");
+  }
 
   rules.push(
     'Верни СТРОГО JSON-объект вида {"segments":[{"who":"...","text":"..."}]} без какого-либо другого текста.',
