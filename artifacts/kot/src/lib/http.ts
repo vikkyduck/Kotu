@@ -7,10 +7,10 @@
 
 export const OFFLINE = 'Нет связи с сервером. Попробуйте ещё раз.';
 
-/** Причина отказа из тела ответа: сервер пишет её в message (старые ручки — в error). */
+/** Причина отказа из тела ответа: сервер пишет её в message. */
 export async function failText(res: Response, fallback: string): Promise<string> {
-  const body = (await res.json().catch(() => null)) as { message?: unknown; error?: unknown } | null;
-  const text = body?.message ?? body?.error;
+  const body = (await res.json().catch(() => null)) as { message?: unknown } | null;
+  const text = body?.message;
   return typeof text === 'string' && text.trim() ? text : fallback;
 }
 

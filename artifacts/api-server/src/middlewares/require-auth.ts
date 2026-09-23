@@ -14,18 +14,31 @@ declare global {
 /**
  * Закрывает всё, кроме /healthz и /auth/*. В системе лежат расшифровки сеансов —
  * открытых ручек здесь быть не должно.
+ *
+ * Cookie мёртвой сессии не стираем: запоздалый ответ на запрос со старым
+ * токеном стёр бы уже новую cookie, выданную входом или сменой пароля.
+ * Мёртвая cookie безвредна — её заменит следующий вход.
  */
 export const requireAuth: RequestHandler = async (req, res, next) => {
+  // Файл книги открывают во вкладке — там нужна фраза, а не JSON. fetch шлёт
+  // Accept */* и картинки image/*: им по-прежнему JSON.
+  const deny = (message: string) => {
+    if (req.accepts(["json", "html"]) === "html") {
+      res.status(401).type("text/plain; charset=utf-8").send(message);
+    } else {
+      res.status(401).json({ message });
+    }
+  };
+
   const token = req.cookies?.[SESSION_COOKIE] as string | undefined;
   if (!token) {
-    res.status(401).json({ message: "Нужно войти" });
+    deny("Нужно войти");
     return;
   }
 
   const user = await findUserBySession(token);
   if (!user) {
-    res.clearCookie(SESSION_COOKIE);
-    res.status(401).json({ message: "Сессия истекла — войдите заново" });
+    deny("Сессия истекла — войдите заново");
     return;
   }
 
