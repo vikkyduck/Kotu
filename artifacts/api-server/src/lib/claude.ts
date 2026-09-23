@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import { failHttp } from "./http-fail";
+import { JSON_RULE, parseModelJson } from "./model-json";
 
 /**
  * Обращения к Claude через собственный транзит (см. ARCHITECTURE.md §5).
@@ -21,7 +23,6 @@ interface AskOptions {
   maxTokens?: number;
   /** Картинки, на которые Claude должен посмотреть. */
   images?: ImageAttachment[];
-  timeoutMs?: number;
 }
 
 type ContentBlock =
@@ -69,13 +70,10 @@ export async function ask(opts: AskOptions): Promise<string> {
       system: opts.system,
       messages: [{ role: "user", content }],
     }),
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 1_500_000),
+    signal: AbortSignal.timeout(1_500_000),
   });
 
-  if (!res.ok || !res.body) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Claude ответил ${res.status}: ${body.slice(0, 200)}`);
-  }
+  if (!res.ok || !res.body) return failHttp(res, "Claude");
 
   // Разбор SSE руками: событие — блок строк до пустой строки, полезная
   // нагрузка в строках «data: {...}». Куски приходят как попало, поэтому
@@ -119,35 +117,8 @@ export async function ask(opts: AskOptions): Promise<string> {
   return text.trim();
 }
 
-/**
- * Ответ строго объектом. Модели любят обернуть JSON в ```json — срезаем,
- * иначе разбор падает на ровном месте.
- */
+/** Ответ строго объектом — разбор в lib/model-json.ts. */
 export async function askJson<T>(opts: AskOptions): Promise<T> {
-  const raw = await ask({
-    ...opts,
-    system: `${opts.system}\n\nОтвечай СТРОГО одним JSON-объектом, без пояснений и без markdown.`,
-  });
-
-  const cleaned = raw
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "")
-    .trim();
-
-  try {
-    return JSON.parse(cleaned) as T;
-  } catch {
-    // Иногда модель добавляет фразу до или после — вынимаем сам объект.
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(cleaned.slice(start, end + 1)) as T;
-      } catch {
-        // Сырой SyntaxError отсюда однажды доехал до экрана автора —
-        // наружу уходит только человеческая формулировка.
-      }
-    }
-    throw new Error("Claude вернул ответ, который не удалось разобрать как JSON");
-  }
+  const raw = await ask({ ...opts, system: `${opts.system}\n\n${JSON_RULE}` });
+  return parseModelJson<T>(raw, "Claude");
 }

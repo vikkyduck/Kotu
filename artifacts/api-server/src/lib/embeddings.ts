@@ -1,3 +1,4 @@
+import { failHttp } from "./http-fail";
 import { logger } from "./logger";
 
 /**
@@ -30,10 +31,7 @@ async function embedBatch(texts: string[], kind: EmbedKind): Promise<number[][]>
     signal: AbortSignal.timeout(600_000),
   });
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Эмбеддинги: ответ ${res.status} ${body.slice(0, 200)}`);
-  }
+  if (!res.ok) return failHttp(res, "Эмбеддинги");
 
   const data = (await res.json()) as { vectors: number[][] };
   if (!Array.isArray(data.vectors) || data.vectors.length !== texts.length) {

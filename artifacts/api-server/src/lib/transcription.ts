@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { toFile } from "openai";
-import { openai } from "@workspace/integrations-openai-ai-server/audio";
+import { openai } from "./openai";
 import type { TranscriptSegment } from "@workspace/db";
 import { maskText, unmaskText, NerUnavailableError } from "./privacy";
 

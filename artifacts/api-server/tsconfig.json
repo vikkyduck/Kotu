@@ -11,9 +11,6 @@
   "references": [
     {
       "path": "../../lib/db"
-    },
-    {
-      "path": "../../lib/integrations-openai-ai-server"
     }
   ]
 }

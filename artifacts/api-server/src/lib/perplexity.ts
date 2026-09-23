@@ -1,4 +1,4 @@
-import { logger } from "./logger";
+import { failHttp } from "./http-fail";
 
 /**
  * Веб-исследование через Perplexity — для лекций в режиме «исследование ИИ».
@@ -62,11 +62,7 @@ export async function research(query: string): Promise<ResearchResult> {
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    logger.error({ status: res.status, body: body.slice(0, 300) }, "Perplexity ответил ошибкой");
-    throw new Error(`Веб-поиск ответил ${res.status}`);
-  }
+  if (!res.ok) return failHttp(res, "Веб-поиск");
 
   const data = (await res.json()) as {
     choices?: { message?: { content?: string } }[];
