@@ -1,7 +1,14 @@
 import { test, describe, expect, beforeAll } from "vitest";
 import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
 import * as schema from "@workspace/db/schema";
-import { ARCHIVED_TABLES, TRIGGER_NAME, ensureArchiveWith } from "./archive-sql";
+import {
+  ARCHIVED_TABLES,
+  TRIGGER_NAME,
+  TRUNCATE_TRIGGER_NAME,
+  deleteJobsArchivingInputSql,
+  ensureArchiveWith,
+  findMissingTriggers,
+} from "./archive-sql";
 import { createTestDb, type TestDb } from "./archive-test-db";
 
 /**
@@ -70,6 +77,7 @@ describe("архив строк", () => {
       const cols = byName.get(t.table);
       expect(cols, t.table).toBeDefined();
       for (const s of t.service) expect(cols, `${t.table}.${s}`).toContain(s);
+      for (const m of t.machine) expect(cols, `${t.table}.${m}`).toContain(m);
       if (t.busy.length > 0) expect(cols, `${t.table}.status`).toContain("status");
     }
   });
@@ -78,7 +86,7 @@ describe("архив строк", () => {
     for (const value of Object.values(schema)) {
       if (!(value && typeof value === "object" && Symbol.for("drizzle:IsDrizzleTable") in value)) continue;
       const cfg = getTableConfig(value as PgTable);
-      if (!ARCHIVED_TABLES.some((t) => t.table === cfg.name)) continue;
+      if (cfg.name !== "jobs" && !ARCHIVED_TABLES.some((t) => t.table === cfg.name)) continue;
       const { rows } = await db.query(
         `SELECT column_name FROM information_schema.columns
           WHERE table_schema = 'public' AND table_name = $1`,
@@ -212,6 +220,120 @@ describe("архив строк", () => {
     await db.query(`UPDATE lecture_sections SET status = 'writing' WHERE id = $1`, [sid]);
     await db.query(`UPDATE lecture_sections SET status = 'ready' WHERE id = $1`, [sid]);
     expect(await versions()).toBe(atStart + 3);
+  });
+
+  test("правка человека во время работы машины сохраняет прежнее, поток машины — нет", async () => {
+    await db.pg.exec(`
+      INSERT INTO users (email) VALUES ('busy@example.ru');
+      INSERT INTO folders (owner_id, name) VALUES (currval('users_id_seq'), 'Сны');
+      INSERT INTO transcriptions (owner_id, title, filename, segments, status)
+        VALUES (currval('users_id_seq'), 'Запись без имени', 'busy.m4a', '[]', 'processing');
+      INSERT INTO lectures (owner_id, title, brief, status)
+        VALUES (currval('users_id_seq'), 'Лекция в работе', '{}', 'writing');
+      INSERT INTO decks (owner_id, title, source_kind, status)
+        VALUES (currval('users_id_seq'), 'Колода в работе', 'raw', 'drawing');
+    `);
+    const id = async (tbl: string, where: string) =>
+      Number((await db.query(`SELECT id FROM ${tbl} WHERE ${where}`)).rows[0]!["id"]);
+    const tid = await id("transcriptions", `filename = 'busy.m4a'`);
+    const lid = await id("lectures", `title = 'Лекция в работе'`);
+    const did = await id("decks", `title = 'Колода в работе'`);
+    const fid = await id("folders", `name = 'Сны'`);
+    const updates = async (tbl: string, rowId: number) =>
+      (await archived(db, tbl, rowId)).filter((r) => r["op"] === "UPDATE");
+
+    // Потоковая запись сегментов и прогресса — ни одной версии.
+    for (const [i, text] of ["Сон ", "Сон о ", "Сон о доме"].entries()) {
+      await db.query(
+        `UPDATE transcriptions SET segments = $2, progress = $3, status_message = 'Слушаю' WHERE id = $1`,
+        [tid, JSON.stringify([{ who: "А", text }]), 10 + i],
+      );
+    }
+    expect(await updates("transcriptions", tid)).toHaveLength(0);
+
+    // Переименование во время расшифровки — прежнее название в архиве, и
+    // вторая правка подряд сохраняет промежуточную.
+    await db.query(`UPDATE transcriptions SET title = 'Сеанс 7' WHERE id = $1`, [tid]);
+    await db.query(`UPDATE transcriptions SET title = 'Сеанс 7, Анна' WHERE id = $1`, [tid]);
+    expect((await updates("transcriptions", tid)).map((r) => (r["data"] as Row)["title"])).toEqual([
+      "Запись без имени",
+      "Сеанс 7",
+    ]);
+
+    // Перенос лекции и колоды в папку во время writing / drawing.
+    await db.query(`UPDATE lectures SET folder_id = $2 WHERE id = $1`, [lid, fid]);
+    const lv = await updates("lectures", lid);
+    expect(lv).toHaveLength(1);
+    expect((lv[0]!["data"] as Row)["folder_id"]).toBeNull();
+    await db.query(`UPDATE decks SET folder_id = $2 WHERE id = $1`, [did, fid]);
+    expect(await updates("decks", did)).toHaveLength(1);
+
+    // План и список литературы машина пишет в работе — не версии.
+    await db.query(`UPDATE lectures SET bibliography = '["Фрейд 1915"]', status = 'ready' WHERE id = $1`, [lid]);
+    expect(await updates("lectures", lid)).toHaveLength(1);
+  });
+
+  test("последняя версия для сравнения — по id, а не по времени транзакции", async () => {
+    await db.pg.exec(`INSERT INTO folders (owner_id, name) VALUES (currval('users_id_seq'), 'п1')`);
+    const fid = Number((await db.query(`SELECT id FROM folders WHERE name = 'п1'`)).rows[0]!["id"]);
+    await db.query(`UPDATE folders SET name = 'п2' WHERE id = $1`, [fid]);
+    // Версия «п2», записанная транзакцией, начавшейся раньше (at в прошлом),
+    // но позже по порядку записи (id больше).
+    await db.query(
+      `INSERT INTO archive.rows (at, tbl, op, row_id, data)
+       SELECT '2000-01-01', 'folders', 'UPDATE', id::text, to_jsonb(f) FROM folders f WHERE id = $1`,
+      [fid],
+    );
+    const before = (await archived(db, "folders", fid)).length;
+    await db.query(`UPDATE folders SET name = 'п3' WHERE id = $1`, [fid]);
+    expect(await archived(db, "folders", fid)).toHaveLength(before);
+  });
+
+  test("TRUNCATE рабочих таблиц запрещён: данные на месте", async () => {
+    const { rows } = await db.query(`SELECT count(*)::int AS n FROM transcriptions`);
+    const n = Number(rows[0]!["n"]);
+    expect(n).toBeGreaterThan(0);
+    await expect(db.query(`TRUNCATE transcriptions`)).rejects.toThrow(/TRUNCATE запрещён/);
+    await expect(db.query(`TRUNCATE users CASCADE`)).rejects.toThrow(/TRUNCATE запрещён/);
+    const after = await db.query(`SELECT count(*)::int AS n FROM transcriptions`);
+    expect(Number(after.rows[0]!["n"])).toBe(n);
+  });
+
+  test("самопроверка видит пропавший или выключенный триггер", async () => {
+    expect(await findMissingTriggers(db.query)).toEqual([]);
+    await db.pg.exec(`DROP TRIGGER ${TRUNCATE_TRIGGER_NAME} ON decks`);
+    await db.pg.exec(`ALTER TABLE lectures DISABLE TRIGGER ${TRIGGER_NAME}`);
+    expect((await findMissingTriggers(db.query)).sort()).toEqual([
+      `public.decks: ${TRUNCATE_TRIGGER_NAME}`,
+      `public.lectures: ${TRIGGER_NAME}`,
+    ]);
+    await db.pg.exec(`ALTER TABLE lectures ENABLE TRIGGER ${TRIGGER_NAME}`);
+    await ensureArchiveWith(db.runner);
+    expect(await findMissingTriggers(db.query)).toEqual([]);
+  });
+
+  test("снятие задач сохраняет их вход: указания владелицы не теряются", async () => {
+    await db.pg.exec(`
+      INSERT INTO jobs (kind, entity_id, payload) VALUES
+        ('deck.reslide', 900, '{"slideId": 3, "instruction": "сделай мягче"}'),
+        ('deck.illustrate', 900, '{}'),
+        ('deck.storyboard', 901, '{"rawText": "чужая колода"}'),
+        ('lecture.write', 900, '{"note": "не та сущность"}');
+    `);
+    const text = deleteJobsArchivingInputSql("deck.%", "decks");
+    await db.query(text, [900]);
+    const { rows: left } = await db.query(`SELECT kind, entity_id FROM jobs ORDER BY id`);
+    expect(left).toEqual([
+      { kind: "deck.storyboard", entity_id: 901 },
+      { kind: "lecture.write", entity_id: 900 },
+    ]);
+    const inputs = (await archived(db, "decks", 900)).filter((r) => r["op"] === "INPUT");
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]!["data"]).toMatchObject({
+      job_kind: "deck.reslide",
+      payload: { slideId: 3, instruction: "сделай мягче" },
+    });
+    expect(() => deleteJobsArchivingInputSql("deck'; drop", "decks")).toThrow();
   });
 
   test("без архива не перезаписываем: упала вставка — упала и правка", async () => {
