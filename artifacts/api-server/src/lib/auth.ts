@@ -66,33 +66,104 @@ export async function purgeExpiredSessions(): Promise<void> {
 }
 
 /**
- * Простой счётчик неудачных входов по IP. В памяти процесса — этого достаточно:
- * пользователь один, а цель — сделать перебор пароля бессмысленным, а не строить
- * распределённую защиту.
+ * Счётчик «не больше limit событий на ключ за окно». В памяти процесса — этого
+ * достаточно: пользователь один, а цель — сделать перебор бессмысленным, а не
+ * строить распределённую защиту.
+ *
+ * Ключи приходят от анонимов (адреса, введённые почты), поэтому Map обязана
+ * худеть: протухшие записи вычищаются по ходу дела, не чаще раза в окно, а на
+ * случай наплыва уникальных ключей внутри одного окна есть потолок — сверх него
+ * выкидываем самые старые записи (Map помнит порядок вставки).
  */
-const attempts = new Map<string, { count: number; resetAt: number }>();
-const MAX_ATTEMPTS = 10;
-const WINDOW_MS = 15 * 60 * 1000;
+export function createRateLimiter(opts: { limit: number; windowMs: number; maxKeys?: number }) {
+  const { limit, windowMs, maxKeys = 10_000 } = opts;
+  const hits = new Map<string, { count: number; resetAt: number }>();
+  let nextSweepAt = 0;
+
+  function sweep(now: number): void {
+    if (now >= nextSweepAt) {
+      for (const [key, rec] of hits) if (now >= rec.resetAt) hits.delete(key);
+      nextSweepAt = now + windowMs;
+    }
+    while (hits.size > maxKeys) {
+      const oldest = hits.keys().next().value;
+      if (oldest === undefined) break;
+      hits.delete(oldest);
+    }
+  }
+
+  /** Живая запись ключа или undefined, если её нет или окно истекло. */
+  function live(key: string, now: number) {
+    const rec = hits.get(key);
+    if (rec && now >= rec.resetAt) {
+      hits.delete(key);
+      return undefined;
+    }
+    return rec;
+  }
+
+  return {
+    /** Лимит на ключ уже исчерпан — дальше отказываем до конца окна. */
+    blocked(key: string): boolean {
+      const rec = live(key, Date.now());
+      return rec !== undefined && rec.count >= limit;
+    },
+    /** Засчитать событие. Окно фиксированное: отсчёт от первого события. */
+    hit(key: string): void {
+      const now = Date.now();
+      const rec = live(key, now);
+      if (rec) rec.count += 1;
+      else hits.set(key, { count: 1, resetAt: now + windowMs });
+      sweep(now);
+    },
+    reset(key: string): void {
+      hits.delete(key);
+    },
+    /** Для тестов: сколько ключей сейчас держим в памяти. */
+    size(): number {
+      return hits.size;
+    },
+  };
+}
+
+// Неудачные входы по адресу клиента. Адрес настоящий только благодаря
+// trust proxy в app.ts — без него за nginx у всех был бы 127.0.0.1 и один
+// общий счётчик на весь интернет.
+const LOGIN_MAX_ATTEMPTS = 10;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const loginFailures = createRateLimiter({ limit: LOGIN_MAX_ATTEMPTS, windowMs: LOGIN_WINDOW_MS });
 
 export function tooManyAttempts(ip: string): boolean {
-  const rec = attempts.get(ip);
-  if (!rec) return false;
-  if (Date.now() > rec.resetAt) {
-    attempts.delete(ip);
-    return false;
-  }
-  return rec.count >= MAX_ATTEMPTS;
+  return loginFailures.blocked(ip);
 }
 
 export function registerFailedAttempt(ip: string): void {
-  const rec = attempts.get(ip);
-  if (!rec || Date.now() > rec.resetAt) {
-    attempts.set(ip, { count: 1, resetAt: Date.now() + WINDOW_MS });
-    return;
-  }
-  rec.count += 1;
+  loginFailures.hit(ip);
 }
 
 export function clearAttempts(ip: string): void {
-  attempts.delete(ip);
+  loginFailures.reset(ip);
+}
+
+// «Забыли пароль» считаем отдельно от неудачных входов: раньше десяток анонимных
+// запросов сброса запирал вход самой владелице на 15 минут. Два счётчика: по
+// адресу — против засыпания формы с одной машины, по почте — чтобы ящик не
+// заваливали письмами сброса с разных адресов.
+const FORGOT_WINDOW_MS = 60 * 60 * 1000;
+const forgotByIp = createRateLimiter({ limit: 5, windowMs: FORGOT_WINDOW_MS });
+const forgotByEmail = createRateLimiter({ limit: 3, windowMs: FORGOT_WINDOW_MS });
+
+/**
+ * Можно ли обработать запрос сброса, и если да — засчитать его. Решение не
+ * зависит от того, есть ли такая почта в базе: иначе отказ выдавал бы, кто
+ * зарегистрирован. Запрос, отказанный по адресу, лимит почты не расходует:
+ * уже заблокированный адрес не должен и дальше выжигать чужой ящик.
+ */
+export function allowForgotRequest(ip: string, email: string): boolean {
+  if (forgotByIp.blocked(ip)) return false;
+  forgotByIp.hit(ip);
+  if (email === "") return true;
+  if (forgotByEmail.blocked(email)) return false;
+  forgotByEmail.hit(email);
+  return true;
 }
