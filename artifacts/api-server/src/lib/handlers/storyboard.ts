@@ -14,7 +14,7 @@ import {
   type ImageSide,
   type DiagramSpec,
 } from "@workspace/db";
-import { SLIDE_LAYOUTS } from "@workspace/db/slides";
+import { SLIDE_LAYOUTS, SLIDE_SPEC, layoutHasImage } from "@workspace/db/slides";
 import { askJson } from "../claude";
 import { sanitizeSlideContent } from "../slide-content";
 import { registerHandler } from "../jobs";
@@ -32,7 +32,8 @@ interface StoryboardSlide {
 /**
  * Модель отвечает JSON'ом без гарантий формы, а схема потом рисуется кодом —
  * и в PPTX, и на фронте. Поэтому приводим к контракту DiagramSpec руками:
- * только известные поля, обрезка длин (label 60, sub 120), максимум 6 шагов.
+ * только известные поля, обрезка длин (label 60, sub 120), не больше
+ * SLIDE_SPEC.diagram.maxItems шагов — столько встаёт на лист во всех движках.
  * Всё, что не дотягивает до осмысленной схемы (меньше двух шагов), — null:
  * лучше слайд текстом, чем кривая схема.
  */
@@ -50,7 +51,7 @@ function sanitizeDiagramSpec(raw: unknown): DiagramSpec | null {
     const item: DiagramSpec["items"][number] = { label: label.trim().slice(0, 60) };
     if (typeof sub === "string" && sub.trim() !== "") item.sub = sub.trim().slice(0, 120);
     clean.push(item);
-    if (clean.length === 6) break;
+    if (clean.length === SLIDE_SPEC.diagram.maxItems) break;
   }
 
   if (clean.length < 2) return null;
@@ -150,14 +151,14 @@ async function run(job: Job): Promise<void> {
     "— imageBrief — это МЫСЛЬ, которую должна передать картинка, на русском, одним-двумя предложениями.",
     "  Не описывай сцену и не придумывай сюжет — этим займётся художник. Пиши, ЧТО должно быть понятно зрителю.",
     "— imageSide — на какой стороне слайда стоит образ: left или right. Чередуй, чтобы серия не была однообразной.",
-    "— На слайдах с макетом diagram картинок не бывает: там структура, её рисуют схемой.",
+    "— На слайдах с макетом diagram и final картинок не бывает: на diagram структуру рисуют схемой, final — только текст.",
     "— На clinical образ — интерьер, объект или сцена, но НЕ портрет человека.",
     "— Не повторяй один и тот же образ: чередуй человека, интерьер, предмет, анатомический фрагмент, пустое поле.",
     "",
     'Формат ответа: {"slides":[{"layout":"...","content":{...},"notes":"...","imageBrief":null,"imageSide":"right"}]}',
     "content зависит от функции: eyebrow, title, subtitle, bullets[], cards[{title,body}], quote, attribution, question, plate.",
     'На diagram-слайде заполни ещё "diagramSpec": {"kind":"flow"|"pillars","items":[{"label":"...","sub":"..."}]} —',
-    "2–6 шагов, label до 60 знаков, sub — необязательная расшифровка до 120. flow — последовательность",
+    `2–${SLIDE_SPEC.diagram.maxItems} шага, label до 60 знаков, sub — необязательная расшифровка до 120. flow — последовательность`,
     "(этапы, стрелки сверху вниз), pillars — рядоположные опоры колонками. Другим слайдам diagramSpec не нужен.",
   ].join("\n");
 
@@ -190,9 +191,9 @@ async function run(job: Job): Promise<void> {
       const brief = typeof s.imageBrief === "string" && s.imageBrief.trim() !== ""
         ? s.imageBrief.trim()
         : null;
-      // Схема и метафора взаимоисключают друг друга: на слайде-схеме
-      // картинка только помешает.
-      const wanted = layout === "diagram" ? null : brief;
+      // Образ только там, где макет его показывает: на схеме он помешает
+      // структуре, финал выводит один текст — картинку оплатили бы зря.
+      const wanted = layoutHasImage(layout) ? brief : null;
       const imageStatus: ImageStatus = wanted ? "queued" : "none";
       return {
         deckId: id,
@@ -229,7 +230,8 @@ async function run(job: Job): Promise<void> {
   logger.info({ id, slides: slides.length, withImages }, "Раскадровка готова");
 }
 
-async function onGiveUp(job: Job, message: string): Promise<void> {
+/** Задача колоды сдалась — колода в ошибке; так же падает и отрисовка образов. */
+export async function onGiveUp(job: Job, message: string): Promise<void> {
   await db
     .update(decksTable)
     .set({ status: "error", statusMessage: "", error: message })

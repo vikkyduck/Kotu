@@ -924,8 +924,8 @@ input.field,textarea.topic,.sheet textarea{font-size:17px}
 .stg-row.rev{flex-direction:row-reverse}
 .stg-col{display:flex;flex-direction:column;flex:1;min-width:0;gap:1.6cqw;overflow:hidden}
 .stg-mid{justify-content:center}
-/* Музейное поле 0.85in от листа 960pt — те же 6.4% ширины */
-.stg-pad{padding:6.4cqw}
+/* Музейное поле --m задаёт SlideStage из SLIDE_SPEC.margin — то же число, что в выгрузке */
+.stg-pad{padding:var(--m)}
 .stg-plate{position:relative;overflow:hidden;align-self:stretch;min-width:0}
 .stg-band{overflow:hidden;width:100%;position:relative}
 .stg-img{width:100%;height:100%;object-fit:cover;display:block}
@@ -937,10 +937,10 @@ input.field,textarea.topic,.sheet textarea{font-size:17px}
 .stg-bullet{display:flex;gap:1.3cqw;line-height:1.25}
 .stg-dia{font-family:var(--display);flex-shrink:0}
 .stg-quote{flex:1}
-.stg-cols{display:flex;flex:1;min-height:0;gap:3cqw;margin-top:.8cqw;border-color:#65594e}
+.stg-cols{display:flex;flex:1;min-height:0;gap:3cqw;margin-top:.8cqw}
 .stg-cell{flex:1;min-width:0;display:flex;flex-direction:column;gap:1cqw}
 .stg-cell+.stg-cell{border-left:1px solid;border-color:inherit;padding-left:3cqw}
-.stg-folio{position:absolute;left:6.4cqw;bottom:3.4cqw;letter-spacing:.2em}
+.stg-folio{position:absolute;left:var(--m);bottom:3.4cqw;letter-spacing:.2em}
 .stg-cap{position:absolute;left:3cqw;right:3cqw;bottom:2.4cqw;text-align:center;
   text-transform:uppercase;letter-spacing:.18em}
 .stg-flowbox{display:flex;flex-direction:column;flex:1;min-height:0;

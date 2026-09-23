@@ -12,7 +12,8 @@
  * Повторный запуск обновляет существующий пакет, а не плодит копии.
  */
 import { eq } from "drizzle-orm";
-import { db, stylePacksTable } from "@workspace/db";
+import { db, stylePacksTable, type StyleRules, type Typography } from "@workspace/db";
+import { BRAND_PALETTE } from "@workspace/db/slides";
 
 const NAME = "Psy3107 · Архивный сон";
 
@@ -29,43 +30,11 @@ Presentation composition, 16:9. Place the main visual mass {{IMAGE_SIDE}}. Prese
 
 const NEGATIVE = `cartoon, anime, manga, 3d render, CGI, cheerful, cute, childlike, bright colors, saturated colors, neon, corporate Memphis art, flat vector illustration, simplistic, photorealism, glossy surfaces, plastic, stock photography, smiling consultant, motivational poster, low resolution, blurry, text, letters, typography, logo, watermark, gore, horror, occult symbols, demonic imagery, jump scare, cracked face used as horror, gears inside the brain, glowing eye, steampunk cliché, fantasy portal, arches, archways, cathedral arches, repeating ornamental frames, excessive gold, excessive red, multiple competing metaphors, cluttered composition`;
 
-const PALETTE = {
-  archiveBlack: "#1D1E24",
-  deepIndigo: "#232638",
-  charcoal: "#2B292B",
-  agedPaper: "#D8C7A7",
-  deepSepia: "#C4AD87",
-  etchingInk: "#302B27",
-  burntUmber: "#7B432F",
-  museumIndigo: "#677184",
-  driedCarmine: "#955A52",
-  dullGold: "#B08D57",
-};
+// Гарнитура одна — Manrope: ею набирают слайды все три движка (PDF, PPTX,
+// предпросмотр). Кегли живут в общей таблице lib/db/src/slides.ts.
+const TYPOGRAPHY: Typography = { display: "Manrope", body: "Manrope" };
 
-const TYPOGRAPHY = {
-  display: "Cormorant Garamond",
-  body: "Manrope",
-  displayFallback: "Georgia",
-  bodyFallback: "Arial",
-  // Вилки кеглей для 16:9 из брендбука, с. 7.
-  sizes: {
-    cover: [56, 72] as [number, number],
-    heading: [34, 44] as [number, number],
-    bigQuote: [30, 40] as [number, number],
-    subtitle: [22, 26] as [number, number],
-    body: [18, 22] as [number, number],
-    caption: [11, 13] as [number, number],
-  },
-};
-
-const RULES = {
-  aspect: "16:9",
-  // Единственный размер, который одновременно ровно 16:9 и кратен 16
-  // по обеим сторонам (требование gpt-image). Проверено 2026-07-31.
-  imageSize: "1536x864",
-  imageSharePct: [40, 60] as [number, number],
-  safeZonePct: [35, 45] as [number, number],
-  maxBodyLines: 8,
+const RULES: StyleRules = {
   // Три реальности брендбука (с. 5). Соединять можно максимум две.
   metaphorFamilies: ["anatomy", "archive", "dream"],
   maxMetaphorsPerImage: 2,
@@ -82,7 +51,7 @@ async function main(): Promise<void> {
     name: NAME,
     promptSuffix: PROMPT_SUFFIX,
     negative: NEGATIVE,
-    palette: PALETTE,
+    palette: { ...BRAND_PALETTE },
     typography: TYPOGRAPHY,
     rules: RULES,
   };
