@@ -20,20 +20,21 @@ command -v pnpm >/dev/null || { echo "❌ pnpm не найден (ищу в PATH
 
 SERVER="${SERVER_USER:-root}@${SERVER_HOST:-5.129.198.180}"
 
-echo "==> [1/5] Typecheck + сборка фронта"
+echo "==> [1/6] Typecheck + сборка фронта"
 BASE_PATH=/ PORT=3000 NODE_ENV=production pnpm --filter @workspace/kot run build
 
-echo "==> [2/5] Сборка API-сервера"
+echo "==> [2/6] Сборка API-сервера"
 pnpm --filter @workspace/api-server run build
 
-echo "==> [3/5] Снимок данных перед выкаткой"
+echo "==> [3/6] Снимок данных перед выкаткой"
 # Ночной бэкап хранит файлы одним зеркалом (rsync --delete): удаление, сделанное
 # ошибкой в новой версии, следующей ночью ушло бы и из бэкапа. Поэтому перед
 # каждой выкаткой — отдельный снимок: дамп базы kotu и ЖЁСТКИЕ ссылки на файлы
 # (место почти не занимают, а удалённый оригинал остаётся жить в снимке).
-# Плюс опись «данных платформы» — число файлов и строк главных таблиц; её же
-# снимаем после рестарта и сравниваем. Не удался снимок — деплой не идёт
-# дальше (set -e), прод не тронут.
+# Плюс опись «данных платформы» — число файлов и строк главных таблиц и
+# архива; её же снимаем после рестарта и сравниваем. Не удался снимок — деплой
+# не идёт дальше (set -e), прод не тронут. Снимки не удаляются никогда —
+# решение владелицы 23.09.2026: система сама ничего не стирает.
 SNAP=$(ssh "$SERVER" bash -s <<'REMOTE'
 set -euo pipefail
 umask 077
@@ -43,42 +44,95 @@ mkdir -p "$DIR"
 
 cat > "$DIR/inventory.sh" <<'INV'
 set -euo pipefail
-for d in library uploads decks; do
+for d in library uploads decks archive; do
   n=0; [ -d "/opt/kotu/$d" ] && n=$(find "/opt/kotu/$d" -type f | wc -l)
   echo "файлы_$d $n"
 done
 cd /tmp
+q() { sudo -u postgres psql -d kotu -v ON_ERROR_STOP=1 -Atc "$1"; }
 for t in transcriptions documents folders lectures decks users; do
-  echo "строки_$t $(sudo -u postgres psql -d kotu -Atc "select count(*) from $t")"
+  echo "строки_$t $(q "select count(*) from $t")"
+done
+# Таблиц архива до первой выкатки с ним нет — это ноль, а не сломанная опись.
+for t in rows files; do
+  n=0
+  [ "$(q "select to_regclass('archive.$t') is not null")" = t ] && n=$(q "select count(*) from archive.$t")
+  echo "архив_$t $n"
 done
 INV
 bash "$DIR/inventory.sh" > "$DIR/inventory.txt"
-[ "$(wc -l < "$DIR/inventory.txt")" -eq 9 ] || { echo "опись неполная" >&2; exit 1; }
+# 4 каталога + 6 таблиц + 2 таблицы архива, и в каждой строке — число.
+[ "$(wc -l < "$DIR/inventory.txt")" -eq 12 ] &&
+  awk 'NF != 2 || $2 !~ /^[0-9]+$/ {bad=1} END {exit bad}' "$DIR/inventory.txt" ||
+  { echo "опись неполная" >&2; exit 1; }
 
 sudo -u postgres pg_dump -Fc kotu > "$DIR/kotu.dump.tmp"
 mv "$DIR/kotu.dump.tmp" "$DIR/kotu.dump"
 pg_restore --list "$DIR/kotu.dump" > /dev/null
-for d in library uploads decks; do
+for d in library uploads decks archive; do
   if [ -d "/opt/kotu/$d" ]; then cp -al "/opt/kotu/$d" "$DIR/$d"; fi
 done
 
-# Храним десять последних снимков: это копии-ссылки, оригиналы не трогаются.
-ls -1d "$ROOT"/2* | head -n -10 | xargs -r rm -rf
+# Ротации нет: снимки не удаляются. Файлы в них — жёсткие ссылки (место почти
+# не занимают), растут только дампы базы.
 echo "$DIR"
 REMOTE
 )
 echo "   снимок: $SNAP"
 ssh "$SERVER" "sed 's/^/   /' '$SNAP/inventory.txt'"
 
-echo "==> [4/5] Заливка на $SERVER"
+echo "==> [4/6] Архив на сервере: схема базы, каталог, ночной бэкап"
+# До заливки: новый бандл не должен оказаться на сервере без схемы архива,
+# даже на случай внепланового рестарта. Схему archive создаёт postgres,
+# владелец — пользователь приложения из DATABASE_URL: у приложения может не
+# быть права CREATE на базу, а таблицы и триггеры архива оно ставит само на
+# старте (lib/archive.ts). Пароль из DATABASE_URL не выводится: печатаем
+# только имя пользователя.
+ssh "$SERVER" bash -s <<'REMOTE'
+set -euo pipefail
+url=$(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?DATABASE_URL=//p' /opt/kotu/.env | tail -n 1 | tr -d "\"'")
+app_user=$(printf '%s' "$url" | sed -nE 's#^postgres(ql)?://([^:@/]+)(:[^@]*)?@.*#\2#p')
+unset url
+if ! printf '%s' "$app_user" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$'; then
+  echo "❌ Не смог определить пользователя базы из DATABASE_URL в /opt/kotu/.env — деплой остановлен" >&2
+  exit 1
+fi
+cd /tmp
+sudo -u postgres psql -d kotu -v ON_ERROR_STOP=1 -q \
+  -c "CREATE SCHEMA IF NOT EXISTS archive AUTHORIZATION \"$app_user\"" \
+  -c "ALTER SCHEMA archive OWNER TO \"$app_user\""
+echo "   схема archive: владелец $app_user"
+mkdir -p /opt/kotu/archive
+REMOTE
+# Скрипт бэкапа — из репозитория, иначе на сервере жила бы его старая копия
+# (с зеркалом без архива). Проверяем синтаксис до установки.
+ssh "$SERVER" 'set -e; t=$(mktemp); cat > "$t"; bash -n "$t"; install -m 0711 -o root -g root "$t" /usr/local/bin/kotu-backup.sh; rm -f "$t"; echo "   /usr/local/bin/kotu-backup.sh обновлён"' < ops/kotu-backup.sh
+
+echo "==> [5/6] Заливка на $SERVER"
 rsync -az --delete artifacts/kot/dist/public/ "$SERVER:/opt/kotu/public/"
 rsync -az --delete artifacts/api-server/dist/ "$SERVER:/opt/kotu/server/"
 
-echo "==> [5/5] Рестарт сервиса и проверка"
+echo "==> [6/6] Рестарт сервиса и проверка"
 ssh "$SERVER" 'chown -R kotu:kotu /opt/kotu && systemctl restart kotu && sleep 2 && systemctl is-active kotu'
 # Проверяем по настоящему адресу: старый :8091 теперь только редирект на него.
-# --fail: ответ не-2xx (502 при упавшем API) обрывает скрипт, а не печатается как успех.
-curl -sS --fail --retry 5 --retry-delay 2 --retry-all-errors "${PUBLIC_URL:-https://psy3107.ru}/api/healthz"; echo
+# Сервис должен не просто отвечать, а доложить archive:"ok" — триггеры архива
+# на месте. Архив включается на старте асинхронно, поэтому ждём до ~2 минут;
+# "off" — сразу стоп: такая выкатка не принимается.
+HEALTH_URL="${PUBLIC_URL:-https://psy3107.ru}/api/healthz"
+ARCHIVE=""
+for _ in $(seq 1 40); do
+  HEALTH=$(curl -sS --fail --max-time 10 "$HEALTH_URL" 2>/dev/null || true)
+  ARCHIVE=$(printf '%s' "$HEALTH" | sed -nE 's/.*"archive":"([a-z]+)".*/\1/p')
+  [ "$ARCHIVE" = ok ] || [ "$ARCHIVE" = off ] && break
+  sleep 3
+done
+echo "   $HEALTH"
+if [ "$ARCHIVE" != ok ]; then
+  echo "❌ Архив на сервере не включился (healthz: archive=${ARCHIVE:-нет ответа})."
+  echo "   Удаления на проде сейчас заблокированы, но данные целы. Прежнее состояние — в снимке $SNAP."
+  echo "   Причина — в журнале: ssh $SERVER journalctl -u kotu -n 100 | grep -i архив"
+  exit 1
+fi
 
 # Сверка описи: стартовые сверки нового кода уже отработали (сервис отвечает).
 # Меньше файлов или строк, чем в снимке (или опись не снялась вовсе), —
