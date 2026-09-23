@@ -50,7 +50,7 @@ export function FixSheet() {
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={e => {
-            // Enter отправляет, а не добавляет перенос: это имя, не текст.
+            // Enter сохраняет, а не добавляет перенос: это имя, не текст.
             if (e.key === 'Enter') {
               e.preventDefault();
               submitFix();
@@ -60,7 +60,7 @@ export function FixSheet() {
 
         <div className="btnrow">
           <button className="btn" style={{ flex: 1 }} onClick={closeSheet}>Отмена</button>
-          <button className="btn primary" style={{ flex: 1.4 }} onClick={submitFix}>Отправить</button>
+          <button className="btn primary" style={{ flex: 1.4 }} onClick={submitFix}>Сохранить</button>
         </div>
       </div>
     </div>
