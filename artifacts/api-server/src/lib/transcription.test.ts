@@ -143,3 +143,59 @@ describe("сервис распознавания имён лежит", () => {
     expect(err.userMessage).toBe("Не удалось оформить часть 2 из 3. Попробуйте загрузить запись ещё раз.");
   });
 });
+
+describe("пометки говорящих — Speaker 1, Speaker 2", () => {
+  test("правило в промпте; «Спикер 2» приводится к «Speaker 2»", async () => {
+    modelAnswers(
+      JSON.stringify({
+        segments: [
+          { who: "Speaker 1", text: "Начнём." },
+          { who: "Спикер 2", text: "Вопрос." },
+        ],
+      }),
+    );
+
+    const segs = await structureTranscript(RAW, { hideNames: false, markSpeakers: true });
+
+    expect(sentToModel()).toContain('"Speaker 1", "Speaker 2"');
+    expect(sentToModel()).not.toContain("Собеседник");
+    expect(segs.map((s) => s.who)).toEqual(["Speaker 1", "Speaker 2"]);
+  });
+
+  test("следующая часть продолжает нумерацию и видит конец прошлой", async () => {
+    modelAnswers(JSON.stringify({ segments: [{ who: "Speaker 2", text: "Дальше." }] }));
+    const previous = [
+      { who: "Speaker 1", text: "Вводная часть лекции." },
+      { who: "Speaker 2", text: "Можно вопрос про Фрейда?" },
+    ];
+
+    await structureTranscript(RAW, { hideNames: false, markSpeakers: true }, previous);
+
+    const sent = sentToModel();
+    expect(sent).toContain("Уже встречались: Speaker 1, Speaker 2; последним говорил Speaker 2");
+    expect(sent).toContain("Можно вопрос про Фрейда?");
+  });
+
+  test("со скрытием имён текст прошлых реплик в модель не уходит — только метки", async () => {
+    nerFindsAnna();
+    modelAnswers(JSON.stringify({ segments: [{ who: "Speaker 1", text: "[[PER1]] пришла." }] }));
+    const previous = [{ who: "Speaker 1", text: "[[Мария]] сказала, что устала." }];
+
+    await structureTranscript(RAW, { hideNames: true, markSpeakers: true }, previous);
+
+    const sent = sentToModel();
+    expect(sent).toContain("Уже встречались: Speaker 1");
+    expect(sent.includes("Мария"), `имя из прошлой части ушло в модель: ${sent}`).toBe(false);
+    expect(sent.includes("устала")).toBe(false);
+  });
+
+  test("без пометок говорящих контекст не передаётся", async () => {
+    modelAnswers(JSON.stringify({ segments: [{ who: "", text: "Текст." }] }));
+
+    await structureTranscript(RAW, { hideNames: false, markSpeakers: false }, [
+      { who: "Speaker 1", text: "Было." },
+    ]);
+
+    expect(sentToModel()).not.toContain("Уже встречались");
+  });
+});
