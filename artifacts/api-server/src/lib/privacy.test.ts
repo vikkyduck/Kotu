@@ -1,13 +1,13 @@
 import { test, describe, expect, vi, afterEach } from "vitest";
-import { maskText, unmaskText } from "./privacy";
+import { maskText, unmaskText, NerUnavailableError } from "./privacy";
 
 /**
  * Главное обещание платформы: настоящие имена пациентов не покидают сервер
  * в Москве. Всё, что уезжает к зарубежным моделям, проходит через maskText.
  *
  * Эти тесты проверяют именно обещание, а не устройство кода: после маскировки
- * в тексте не должно остаться ни одного исходного имени — ни когда локальный
- * сервис распознавания работает, ни когда он лежит.
+ * в тексте не должно остаться ни одного исходного имени, а когда локальный
+ * сервис распознавания лежит, maskText не отдаёт текст вовсе — только ошибку.
  */
 
 /** Подменяет ответ сервиса NER, не поднимая его по-настоящему. */
@@ -15,11 +15,9 @@ function nerReturns(spans: { start: number; stop: number; text: string; type: "P
   vi.stubGlobal("fetch", async () => ({ ok: true, json: async () => ({ spans }) }));
 }
 
-/** Сервис лежит: fetch падает так же, как при недоступной сети. */
-function nerIsDown() {
-  vi.stubGlobal("fetch", async () => {
-    throw new Error("connect ECONNREFUSED");
-  });
+/** Подменяет fetch целиком — для сбоев сервиса NER. */
+function nerFetch(impl: () => Promise<unknown>) {
+  vi.stubGlobal("fetch", impl);
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -29,9 +27,8 @@ describe("маскировка имён", () => {
     const text = "Пациентка Анна снова говорила о матери.";
     nerReturns([{ start: 10, stop: 14, text: "Анна", type: "PER" }]);
 
-    const { masked, map, degraded } = await maskText(text);
+    const { masked, map } = await maskText(text);
 
-    expect(degraded).toBe(false);
     expect(masked.includes("Анна"), `имя осталось в тексте: ${masked}`).toBe(false);
     expect(masked).toMatch(/\[\[PER1\]\]/);
     expect(map["[[PER1]]"]).toBe("Анна");
@@ -67,25 +64,64 @@ describe("маскировка имён", () => {
     expect(map["[[LOC1]]"]).toBe("Тверь");
   });
 
-  test("сервис распознавания лежит — имена всё равно скрыты", async () => {
-    const text = "Сегодня Анна говорила о брате, потом вспомнила Тверь.";
-    nerIsDown();
+  test("имён нет — текст уходит как есть", async () => {
+    nerReturns([]);
 
-    const { masked, degraded } = await maskText(text);
-
-    expect(degraded, "падение сервиса должно быть видно вызывающему").toBe(true);
-    expect(masked.includes("Анна"), `имя утекло через запасной путь: ${masked}`).toBe(false);
-    expect(masked.includes("Тверь"), `город утёк через запасной путь: ${masked}`).toBe(false);
-  });
-
-  test("запасной путь не трогает первое слово предложения", async () => {
-    // Эвристика прячет заглавные слова в середине фразы. Начало предложения
-    // всегда с заглавной, и прятать его значило бы съесть текст целиком.
-    nerIsDown();
-
-    const { masked } = await maskText("Сегодня она молчала.");
+    const { masked, map } = await maskText("Сегодня она молчала.");
 
     expect(masked).toBe("Сегодня она молчала.");
+    expect(map).toEqual({});
+  });
+});
+
+describe("сервис распознавания недоступен — текст не отдаём", () => {
+  // Запасной эвристики больше нет: она пропускала имя в начале предложения.
+  // Любой сбой NER — отказ, а не «как-нибудь замаскированный» текст.
+  const text = "Анна говорила о брате, потом вспомнила Тверь.";
+
+  test("сеть недоступна", async () => {
+    nerFetch(async () => {
+      throw new TypeError("fetch failed", { cause: new Error("connect ECONNREFUSED") });
+    });
+    await expect(maskText(text)).rejects.toBeInstanceOf(NerUnavailableError);
+  });
+
+  test("сервис ответил 500", async () => {
+    nerFetch(async () => ({ ok: false, status: 500, json: async () => ({}) }));
+    await expect(maskText(text)).rejects.toBeInstanceOf(NerUnavailableError);
+  });
+
+  test("сервис не ответил вовремя", async () => {
+    nerFetch(async () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    });
+    await expect(maskText(text)).rejects.toBeInstanceOf(NerUnavailableError);
+  });
+
+  test("сервис вернул битый JSON", async () => {
+    nerFetch(async () => ({
+      ok: true,
+      json: async () => {
+        throw new SyntaxError("Unexpected token < in JSON");
+      },
+    }));
+    await expect(maskText(text)).rejects.toBeInstanceOf(NerUnavailableError);
+  });
+
+  test("ответ без списка spans не считается «имён нет»", async () => {
+    nerFetch(async () => ({ ok: true, json: async () => ({ error: "model not loaded" }) }));
+    await expect(maskText(text)).rejects.toBeInstanceOf(NerUnavailableError);
+  });
+
+  test("ошибка понятна человеку и называется по-своему", async () => {
+    nerFetch(async () => {
+      throw new Error("connect ECONNREFUSED");
+    });
+    const err = await maskText(text).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NerUnavailableError);
+    expect((err as Error).name).toBe("NerUnavailableError");
+    expect((err as Error).message).toMatch(/Сервис скрытия имён недоступен/);
+    expect((err as Error).message.includes("Анна")).toBe(false);
   });
 });
 
@@ -97,6 +133,16 @@ describe("возврат имён на место", () => {
     });
 
     expect(result).toBe("Пациентка [[Анна]] говорила о [[Тверь]].");
+  });
+
+  test("без скобок — настоящие имена обычным текстом", () => {
+    const result = unmaskText(
+      "Пациентка [[PER1]] говорила о [[LOC1]].",
+      { "[[PER1]]": "Анна Петровна", "[[LOC1]]": "Тверь" },
+      { brackets: false },
+    );
+
+    expect(result).toBe("Пациентка Анна Петровна говорила о Тверь.");
   });
 
   test("выдуманная моделью метка не остаётся мусором в тексте", () => {

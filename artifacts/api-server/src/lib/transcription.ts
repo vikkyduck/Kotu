@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { toFile } from "openai";
 import { openai } from "@workspace/integrations-openai-ai-server/audio";
 import type { TranscriptSegment } from "@workspace/db";
-import { maskText, unmaskText } from "./privacy";
+import { maskText, unmaskText, NerUnavailableError } from "./privacy";
 
 const execFileAsync = promisify(execFile);
 
@@ -106,10 +106,14 @@ export class ChunkError extends Error {
     super(`chunk ${part}/${total} failed to ${verb}`);
     this.name = "ChunkError";
     this.cause = cause;
+    // Сервис скрытия имён лёг — запись и файл тут ни при чём, очередь повторит
+    // задачу. Текст дойдёт до человека, только если все попытки кончатся.
     this.userMessage =
-      total > 1
-        ? `Не удалось ${verb} часть ${part} из ${total}. Попробуйте загрузить запись ещё раз.`
-        : `Не удалось ${verb} запись. Попробуйте другой файл.`;
+      cause instanceof NerUnavailableError
+        ? "Сервис скрытия имён временно недоступен, а без него текст на оформление не отправляется. Попробуйте загрузить запись чуть позже."
+        : total > 1
+          ? `Не удалось ${verb} часть ${part} из ${total}. Попробуйте загрузить запись ещё раз.`
+          : `Не удалось ${verb} запись. Попробуйте другой файл.`;
   }
 }
 
@@ -180,14 +184,22 @@ export async function transcribeLongAudio(
 }
 
 interface StructureOptions {
+  /**
+   * Только про хранение и показ: true — имена сохраняются в скобках [[Анна]]
+   * и на экране видны как «имя скрыто»; false — обычным текстом. Наружу имена
+   * не уходят НИ при каком значении: маскировка перед моделью безусловная.
+   * Название поля осталось прежним — оно живёт в БД и API.
+   */
   hideNames: boolean;
   markSpeakers: boolean;
 }
 
 /**
- * Turn a raw transcript into clean, structured segments. Optionally redacts
- * personal names / places and labels the two speakers. Best-effort: if the
- * model output can't be parsed, falls back to a single plain-text segment.
+ * Turn a raw transcript into clean, structured segments. Always masks personal
+ * names / places before the model call and optionally labels the two speakers.
+ * Best-effort: if the model output can't be parsed, falls back to a single
+ * plain-text segment. Throws {@link NerUnavailableError} without calling the
+ * model if names can't be masked.
  */
 export async function structureTranscript(
   rawText: string,
@@ -198,15 +210,12 @@ export async function structureTranscript(
     return [{ who: "", text: "В записи не удалось распознать речь." }];
   }
 
-  // Персональные данные прячем ЛОКАЛЬНО до отправки в зарубежную модель:
-  // наружу уходит текст с метками, настоящие имена остаются на сервере.
-  let payload = trimmed;
-  let nameMap: Record<string, string> = {};
-  if (hideNames) {
-    const masked = await maskText(trimmed);
-    payload = masked.masked;
-    nameMap = masked.map;
-  }
+  // Персональные данные прячем ЛОКАЛЬНО до отправки в зарубежную модель —
+  // всегда, независимо от hideNames: галочка в форме решает, как показывать
+  // имена, а не можно ли их вывезти (зона А не покидает РФ). Если NER лежит,
+  // maskText бросает, и запрос к модели не уходит вовсе.
+  const { masked: payload, map: nameMap } = await maskText(trimmed);
+  const reveal = (text: string) => unmaskText(text, nameMap, { brackets: hideNames });
 
   const rules: string[] = [
     "Ты помогаешь психологу аккуратно оформить расшифровку аудиозаписи на русском языке.",
@@ -221,11 +230,9 @@ export async function structureTranscript(
     rules.push('Не помечай говорящих: у каждой реплики "who" должно быть пустой строкой "".');
   }
 
-  if (hideNames) {
-    rules.push(
-      'В тексте уже стоят метки вида [[PER1]], [[LOC1]] — за ними скрыты имена людей и названия мест. Переноси эти метки в ответ ДОСЛОВНО и на то же место: не переводи, не склоняй, не раскрывай и не придумывай новых меток. Больше двойные квадратные скобки ни для чего не используй.',
-    );
-  }
+  rules.push(
+    'В тексте уже стоят метки вида [[PER1]], [[LOC1]] — за ними скрыты имена людей и названия мест. Переноси эти метки в ответ ДОСЛОВНО и на то же место: не переводи, не склоняй, не раскрывай и не придумывай новых меток. Больше двойные квадратные скобки ни для чего не используй.',
+  );
 
   rules.push(
     'Верни СТРОГО JSON-объект вида {"segments":[{"who":"...","text":"..."}]} без какого-либо другого текста.',
@@ -253,7 +260,7 @@ export async function structureTranscript(
         return {
           who: typeof seg.who === "string" ? seg.who : "",
           // Возвращаем настоящие имена на место меток — уже на нашем сервере.
-          text: hideNames ? unmaskText(text, nameMap) : text,
+          text: reveal(text),
         };
       })
       .filter((s) => s.text.trim() !== "");
@@ -263,8 +270,8 @@ export async function structureTranscript(
     // fall through to plain-text fallback
   }
 
-  // Оформление не удалось — отдаём то, что отправляли, вернув имена на место.
-  // Повторно за границу ничего не шлём.
-  const fallbackText = hideNames ? unmaskText(payload, nameMap) : trimmed;
+  // Оформление не удалось — отдаём исходный текст, повторно за границу ничего
+  // не шлём. Со скрытием имён — через метки, чтобы имена легли в скобки.
+  const fallbackText = hideNames ? reveal(payload) : trimmed;
   return [{ who: "", text: fallbackText }];
 }
