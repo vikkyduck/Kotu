@@ -2,7 +2,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdir, open, readdir, rename, rm, rmdir, type FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import type { Query } from "./archive-sql";
 
 /**
@@ -94,12 +93,40 @@ export async function writeFileAtomic(filePath: string, data: string | Uint8Arra
   }
 }
 
+/** Размер куска при чтении файла для хэша и копии. */
+const CHUNK = 1 << 20;
+
+/**
+ * Хэш и копия — простым циклом fh.read по позиции, без потоков из FileHandle:
+ * поток с autoClose:false держит ссылку на дескриптор, и fh.close() после
+ * него не завершается никогда — архивация повисала бы навсегда.
+ */
 async function hashHandle(fh: FileHandle): Promise<string> {
   const hash = createHash("sha256");
-  for await (const chunk of fh.createReadStream({ start: 0, autoClose: false })) {
-    hash.update(chunk as Buffer);
+  const buf = Buffer.allocUnsafe(CHUNK);
+  for (let pos = 0; ; ) {
+    const { bytesRead } = await fh.read(buf, 0, buf.length, pos);
+    if (bytesRead === 0) break;
+    hash.update(buf.subarray(0, bytesRead));
+    pos += bytesRead;
   }
   return hash.digest("hex");
+}
+
+/** Копия содержимого from → to с начала файла; дописанное до конца, с fsync. */
+async function copyHandle(from: FileHandle, to: FileHandle): Promise<void> {
+  const buf = Buffer.allocUnsafe(CHUNK);
+  for (let pos = 0; ; ) {
+    const { bytesRead } = await from.read(buf, 0, buf.length, pos);
+    if (bytesRead === 0) break;
+    // write может записать меньше, чем просили, — дописываем остаток.
+    for (let off = 0; off < bytesRead; ) {
+      const { bytesWritten } = await to.write(buf, off, bytesRead - off, pos + off);
+      off += bytesWritten;
+    }
+    pos += bytesRead;
+  }
+  await to.sync();
 }
 
 async function lstatOrNull(p: string): Promise<Stats | null> {
@@ -125,6 +152,11 @@ export interface FileArchiveOptions {
   ready: () => Promise<boolean>;
   log?: Log;
   /**
+   * Жёсткая ссылка — подменяется в тестах, чтобы проверить запасной путь
+   * (копию) без второго диска и без запретов ядра.
+   */
+  link?: typeof link;
+  /**
    * Сверка не трогает файлы моложе этого: их, возможно, ещё дописывает
    * multer. Жёсткая ссылка на недописанный файл легла бы в архив под
    * хэшем обрывка.
@@ -136,6 +168,7 @@ export function createFileArchive(opts: FileArchiveOptions) {
   const { archiveDir, dataDirs, query } = opts;
   const log = opts.log ?? silent;
   const minAgeMs = opts.minAgeMs ?? 2 * 60 * 1000;
+  const hardLink = opts.link ?? link;
 
   const storedPathFor = (sha: string) => path.join(archiveDir, sha.slice(0, 2), sha);
 
@@ -153,7 +186,7 @@ export function createFileArchive(opts: FileArchiveOptions) {
 
     const linkTmp = path.join(dir, tmpName(sha));
     try {
-      await link(filePath, linkTmp);
+      await hardLink(filePath, linkTmp);
       const linked = await lstat(linkTmp);
       if (linked.ino === st.ino && linked.dev === st.dev) {
         await rename(linkTmp, target);
@@ -173,11 +206,7 @@ export function createFileArchive(opts: FileArchiveOptions) {
     const copyTmp = path.join(dir, tmpName(sha));
     const out = await open(copyTmp, "wx", 0o600);
     try {
-      await pipeline(
-        fh.createReadStream({ start: 0, autoClose: false }),
-        out.createWriteStream({ autoClose: false }),
-      );
-      await out.sync();
+      await copyHandle(fh, out);
     } finally {
       await out.close();
     }
@@ -358,7 +387,8 @@ export function createFileArchive(opts: FileArchiveOptions) {
         try {
           const st = await lstatOrNull(f);
           if (!st || !st.isFile()) continue;
-          if (Date.now() - st.mtimeMs < minAgeMs) continue;
+          // 0 — без порога: mtime с наносекундами бывает «впереди» Date.now().
+          if (minAgeMs > 0 && Date.now() - st.mtimeMs < minAgeMs) continue;
           const { rows } = await query(
             `SELECT size, mtime_ms, ino, sha256 FROM archive.file_seen WHERE path = $1`,
             [path.resolve(f)],

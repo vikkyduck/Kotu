@@ -1,6 +1,7 @@
 import { test, describe, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { ensureArchiveWith, type Query } from "./archive-sql";
 import { createTestDb, type TestDb } from "./archive-test-db";
@@ -28,14 +29,32 @@ let failQueries = false;
 const query: Query = (text, params) =>
   failQueries ? Promise.reject(new Error("база недоступна")) : db.query(text, params);
 
-function makeArchive() {
+function makeArchive(extra: Partial<Parameters<typeof createFileArchive>[0]> = {}) {
   return createFileArchive({
     archiveDir,
     dataDirs: [lib, decks],
     query,
     ready: async () => isReady,
     minAgeMs: 0,
+    ...extra,
   });
+}
+
+/** Обещание, которое обязано успеть: зависание — это провал, а не вечный тест. */
+function inTime<T>(p: Promise<T>, ms = 5_000): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`не завершилось за ${ms} мс`)), ms).unref(),
+    ),
+  ]);
+}
+
+/** link, который ведёт себя как на другом диске или под запретом ядра. */
+function failingLink(code: string) {
+  return async () => {
+    throw Object.assign(new Error(code), { code });
+  };
 }
 
 async function scalar(sql: string, params: unknown[] = []): Promise<number> {
@@ -86,6 +105,44 @@ describe("архив файлов", () => {
         [r!.sha256],
       ),
     ).toBe(1);
+  });
+
+  test("жёсткая ссылка невозможна (EXDEV) — копия: завершается, байт в байт, свой inode", async () => {
+    const a = makeArchive({ link: failingLink("EXDEV") });
+    const f = path.join(lib, "session.m4a");
+    // Больше куска чтения — чтобы цикл копирования сделал несколько шагов.
+    const data = randomBytes(2 * 1024 * 1024 + 12_345);
+    await writeFile(f, data);
+
+    const r = await inTime(a.archiveFile(f, { kind: "upload", entityType: "transcription", entityId: 5 }));
+    expect(r!.sha256).toBe(createHash("sha256").update(data).digest("hex"));
+    expect(r!.stored).toBe(true);
+    expect((await readFile(r!.storedPath)).equals(data)).toBe(true);
+    expect((await stat(r!.storedPath)).ino).not.toBe((await stat(f)).ino);
+    // Временных файлов копирования в архиве не осталось — всё переименовано.
+    const shard = await readdir(path.dirname(r!.storedPath));
+    expect(shard).toEqual([r!.sha256]);
+
+    const removed = await inTime(a.archiveAndRemove(f, { entityType: "transcription", entityId: 5 }));
+    expect(removed!.sha256).toBe(r!.sha256);
+    await expect(stat(f)).rejects.toThrow();
+    expect((await readFile(r!.storedPath)).equals(data)).toBe(true);
+  });
+
+  test("EPERM на ссылке (protected_hardlinks) — та же копия, и сверка не виснет", async () => {
+    const a = makeArchive({ link: failingLink("EPERM") });
+    await writeFile(path.join(lib, "a.txt"), "первый");
+    await writeFile(path.join(decks, "b.txt"), "второй");
+    const r = await inTime(a.sweep());
+    expect(r).toMatchObject({ archived: 2, failed: 0 });
+  });
+
+  test("другая ошибка ссылки не маскируется копией", async () => {
+    const a = makeArchive({ link: failingLink("EIO") });
+    const f = path.join(lib, "c.txt");
+    await writeFile(f, "третий");
+    await expect(inTime(a.archiveAndRemove(f, { entityType: "document" }))).rejects.toThrow("EIO");
+    expect(await readFile(f, "utf8")).toBe("третий");
   });
 
   test("одинаковое содержимое хранится один раз, события — все", async () => {
