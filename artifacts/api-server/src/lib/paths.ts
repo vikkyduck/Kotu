@@ -14,10 +14,16 @@ import path from "node:path";
  * Поэтому эти каталоги входят в ночной бэкап (ops/kotu-backup.sh).
  */
 
-/** Книги, статьи и текстовые копии работ — то, по чему идёт поиск. */
+/**
+ * Книги, статьи и текстовые копии работ — то, по чему идёт поиск. В
+ * разработке — свой подкаталог tmp, а не сам tmp: сверка архива обходит
+ * каталоги данных целиком и иначе утащила бы в архив всё содержимое /tmp.
+ */
 export const LIBRARY_DIR =
   process.env["LIBRARY_DIR"] ??
-  (process.env["NODE_ENV"] === "production" ? "/opt/kotu/library" : tmpdir());
+  (process.env["NODE_ENV"] === "production"
+    ? "/opt/kotu/library"
+    : path.join(tmpdir(), "kotu-library"));
 
 /** Картинки презентаций: по каталогу на колоду, внутри — файлы попыток. */
 export const DECKS_DIR =
@@ -37,8 +43,23 @@ export const UPLOAD_DIR =
     ? "/opt/kotu/uploads"
     : path.join(tmpdir(), "kotu-uploads"));
 
+/**
+ * Архив файлов: всё, что когда-либо лежало в трёх каталогах выше, по одному
+ * экземпляру на содержимое (имя — sha256). Только пополняется: решение
+ * владелицы 23.09.2026 — ничего загруженного не стирается, кроме как ею самой
+ * вручную. Подробности — lib/archive-files.ts.
+ */
+export const ARCHIVE_DIR =
+  process.env["ARCHIVE_DIR"] ??
+  (process.env["NODE_ENV"] === "production"
+    ? "/opt/kotu/archive"
+    : path.join(tmpdir(), "kotu-archive"));
+
+/** Каталоги, чьё содержимое уходит в архив файлов. */
+export const DATA_DIRS = [LIBRARY_DIR, UPLOAD_DIR, DECKS_DIR] as const;
+
 // Каталоги создаём здесь же, один раз на запуск: раньше каждый файл делал
 // это сам, и появление каталога зависело от того, кто первым загрузится.
-for (const dir of [LIBRARY_DIR, DECKS_DIR, UPLOAD_DIR]) {
+for (const dir of [LIBRARY_DIR, DECKS_DIR, UPLOAD_DIR, ARCHIVE_DIR]) {
   mkdirSync(dir, { recursive: true });
 }

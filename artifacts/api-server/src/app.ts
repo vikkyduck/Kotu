@@ -1,9 +1,10 @@
-import express, { type Express } from "express";
+import express, { type Express, type ErrorRequestHandler } from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { ArchiveUnavailableError } from "./lib/archive-files";
 
 const app: Express = express();
 
@@ -38,5 +39,19 @@ app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
+
+// Удаление без архива не выполняется (lib/archive.ts). Вместо безымянной
+// 500 — понятный ответ: ничего не удалено, можно повторить позже. Ключей два,
+// потому что ручки расшифровок читают error, остальные — message.
+const archiveUnavailable: ErrorRequestHandler = (err, req, res, next) => {
+  if (!(err instanceof ArchiveUnavailableError)) {
+    next(err);
+    return;
+  }
+  req.log.error({ err }, "Удаление отклонено: архив недоступен");
+  const message = "Архив сейчас недоступен, поэтому ничего не удалено. Попробуйте позже";
+  res.status(503).json({ message, error: message });
+};
+app.use(archiveUnavailable);
 
 export default app;

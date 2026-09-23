@@ -1,8 +1,8 @@
-import { writeFile, rm, readdir } from "node:fs/promises";
 import path from "node:path";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { db, documentsTable, transcriptionsTable, decksTable, type Transcription } from "@workspace/db";
 import { LIBRARY_DIR } from "./paths";
+import { archiveAndRemove, writeDataFile } from "./archive";
 import { maskText, NerUnavailableError } from "./privacy";
 import { enqueue } from "./jobs";
 import { logger } from "./logger";
@@ -64,7 +64,12 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
   if (!alive) return;
 
   const filePath = path.join(LIBRARY_DIR, `transcript-${t.id}.txt`);
-  await writeFile(filePath, masked, "utf8");
+  // Прежняя копия уходит в архив, новая пишется атомарно (lib/archive-files.ts).
+  await writeDataFile(filePath, masked, {
+    entityType: "transcription",
+    entityId: t.id,
+    mime: "text/plain",
+  });
 
   // Уникальный индекс по transcription_id превращает гонку двух sync в
   // спокойный «второй просто обновит».
@@ -106,7 +111,11 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
   logger.info({ transcriptionId: t.id, docId }, "Расшифровка отправлена в библиотеку");
 }
 
-/** Убирает расшифровку из библиотеки — все копии, с файлами и фрагментами. */
+/**
+ * Убирает расшифровку из библиотеки — все копии, с файлами и фрагментами.
+ * Строка документа уходит в архив триггером, файл — archiveAndRemove; не
+ * заархивировался файл — исключение, и ничего не удалено.
+ */
 export async function deleteTranscriptionDoc(
   transcriptionId: number,
   ownerId: number,
@@ -122,8 +131,12 @@ export async function deleteTranscriptionDoc(
     );
 
   for (const doc of docs) {
-    await rm(doc.sourcePath, { force: true }).catch(() => undefined);
-    // Фрагменты уйдут каскадом по FK documentId.
+    await archiveAndRemove(doc.sourcePath, {
+      entityType: "document",
+      entityId: doc.id,
+      mime: doc.mime,
+    });
+    // Фрагменты уйдут каскадом по FK documentId (индекс, не данные).
     await db.delete(documentsTable).where(eq(documentsTable.id, doc.id));
   }
 }
@@ -132,8 +145,8 @@ export async function deleteTranscriptionDoc(
  * Стартовая сверка, в обе стороны:
  * — готовые расшифровки без библиотечной копии → создать (бэкфилл и
  *   самолечение после сбоев);
- * — transcript-документы, чья расшифровка исчезла → удалить (хвосты гонок
- *   удаления; уничтожение — без остатков, §10).
+ * — transcript-документы, чья расшифровка исчезла → убрать (хвосты гонок
+ *   удаления). Строка и файл при этом остаются в архиве.
  */
 export async function sweepTranscriptionsToLibrary(): Promise<number> {
   // Сначала уборка сирот — она же страхует гонку «PATCH-sync после DELETE».
@@ -148,8 +161,17 @@ export async function sweepTranscriptionsToLibrary(): Promise<number> {
       .where(eq(transcriptionsTable.id, doc.transcriptionId!))
       .limit(1);
     if (alive) continue;
-    logger.warn({ docId: doc.id }, "Библиотечная копия без расшифровки — удаляю");
-    await rm(doc.sourcePath, { force: true }).catch(() => undefined);
+    logger.warn({ docId: doc.id }, "Библиотечная копия без расшифровки — убираю в архив");
+    try {
+      await archiveAndRemove(doc.sourcePath, {
+        entityType: "document",
+        entityId: doc.id,
+        mime: doc.mime,
+      });
+    } catch (err) {
+      logger.error({ err, docId: doc.id }, "Копия не заархивировалась — оставил как есть");
+      continue;
+    }
     await db.delete(documentsTable).where(eq(documentsTable.id, doc.id));
   }
 
