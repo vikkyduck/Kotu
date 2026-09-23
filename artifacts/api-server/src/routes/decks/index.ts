@@ -15,7 +15,7 @@ import {
   type StylePack,
   type SlideLayout,
 } from "@workspace/db";
-import { inArray, sql } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import { SLIDE_LAYOUTS } from "@workspace/db/slides";
 import { enqueue } from "../../lib/jobs";
 import { ownFolderId } from "../../lib/folders";
@@ -24,7 +24,12 @@ import { DECKS_DIR } from "../../lib/paths";
 import { buildDeckPptx } from "../../lib/pptx";
 import { buildDeckPdf } from "../../lib/pdf";
 import { sanitizeSlideContent } from "../../lib/slide-content";
-import { archiveInputSql, archiveTreeAndRemove, requireArchive } from "../../lib/archive";
+import {
+  archiveInputSql,
+  archiveTreeAndRemove,
+  deleteJobsArchivingInput,
+  requireArchive,
+} from "../../lib/archive";
 
 const router: IRouter = Router();
 
@@ -628,23 +633,10 @@ router.delete("/decks/:id", async (req, res): Promise<void> => {
   // Удалять можно на любом этапе — ждать окончания работы человек не обязан.
   // Задачи снимаем первыми: воркер, начав слайд, проверит колоду перед
   // записью файла и остановится сам (см. handlers/illustrate.ts).
-  // Вставленный текст из payload — в архив (op='INPUT'; у новых колод он
-  // там с создания, повтор не пишется) в одной транзакции со снятием задач.
-  await db.transaction(async (tx) => {
-    const jobs = await tx
-      .select({ payload: jobsTable.payload })
-      .from(jobsTable)
-      .where(and(sql`${jobsTable.kind} LIKE 'deck.%'`, eq(jobsTable.entityId, deck.id)));
-    for (const job of jobs) {
-      const raw = job.payload["rawText"];
-      if (typeof raw === "string" && raw !== "") {
-        await tx.execute(archiveInputSql("decks", deck.id, { raw_text: raw }));
-      }
-    }
-    await tx
-      .delete(jobsTable)
-      .where(and(sql`${jobsTable.kind} LIKE 'deck.%'`, eq(jobsTable.entityId, deck.id)));
-  });
+  // payload КАЖДОЙ снимаемой задачи — в архив (op='INPUT') тем же
+  // оператором, что и снятие: вставленный текст, указания к переделке
+  // слайда и образа владелица вводила руками, и больше их нигде нет.
+  await db.execute(deleteJobsArchivingInput("deck.%", "decks", deck.id));
   // Текстовая копия в поиске — часть той же презентации, а не отдельный
   // документ: убираем вместе, иначе в библиотеке остался бы призрак колоды,
   // которую уже не открыть.

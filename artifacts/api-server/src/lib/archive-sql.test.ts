@@ -1,10 +1,11 @@
 import { test, describe, expect, beforeAll } from "vitest";
-import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
+import { getTableConfig, PgDialect, type PgTable } from "drizzle-orm/pg-core";
 import * as schema from "@workspace/db/schema";
 import {
   ARCHIVED_TABLES,
   TRIGGER_NAME,
   TRUNCATE_TRIGGER_NAME,
+  deleteJobsArchivingInput,
   deleteJobsArchivingInputSql,
   ensureArchiveWith,
   findMissingTriggers,
@@ -334,6 +335,15 @@ describe("архив строк", () => {
       payload: { slideId: 3, instruction: "сделай мягче" },
     });
     expect(() => deleteJobsArchivingInputSql("deck'; drop", "decks")).toThrow();
+
+    // Вариант для drizzle — тот же текст с id параметром, а не вклейкой.
+    await db.pg.exec(`INSERT INTO jobs (kind, entity_id, payload) VALUES ('transcribe', 77, '{"filename": "сеанс.m4a"}')`);
+    const q = new PgDialect().sqlToQuery(deleteJobsArchivingInput("transcribe", "transcriptions", 77));
+    expect(q.sql).toBe(deleteJobsArchivingInputSql("transcribe", "transcriptions"));
+    expect(q.params).toEqual([77]);
+    await db.query(q.sql, q.params);
+    const t = (await archived(db, "transcriptions", 77)).filter((r) => r["op"] === "INPUT");
+    expect(t[0]!["data"]).toMatchObject({ job_kind: "transcribe", payload: { filename: "сеанс.m4a" } });
   });
 
   test("без архива не перезаписываем: упала вставка — упала и правка", async () => {

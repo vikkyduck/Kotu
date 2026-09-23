@@ -17,7 +17,12 @@ import { UPLOAD_DIR } from "../../lib/paths";
 import { syncTranscriptionDoc, deleteTranscriptionDoc } from "../../lib/transcript-doc";
 import { decodeUploadName } from "../../lib/filename";
 import { resolveInsideDir } from "../../lib/uploads";
-import { archiveAndRemove, archiveUpload, requireArchive } from "../../lib/archive";
+import {
+  archiveAndRemove,
+  archiveUpload,
+  deleteJobsArchivingInput,
+  requireArchive,
+} from "../../lib/archive";
 import type { TranscribePayload } from "../../lib/handlers/transcribe";
 
 // Long recordings (2–3 hours) are split server-side, so allow large uploads.
@@ -187,9 +192,9 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
       });
     }
   }
-  await db
-    .delete(jobsTable)
-    .where(and(eq(jobsTable.kind, "transcribe"), eq(jobsTable.entityId, params.data.id)));
+  // Строки задач снимаются вместе с их payload в архив (имя файла записи,
+  // настройки расшифровки) — одним оператором.
+  await db.execute(deleteJobsArchivingInput("transcribe", "transcriptions", params.data.id));
 
   const [row] = await db
     .delete(transcriptionsTable)

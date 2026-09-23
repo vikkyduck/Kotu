@@ -19,6 +19,8 @@
  * на настоящем Postgres (PGlite) — проверяется ровно то, что уедет в прод.
  */
 
+import { sql, type SQL } from "drizzle-orm";
+
 export type Query = (
   text: string,
   params?: unknown[],
@@ -336,6 +338,7 @@ export async function findMissingTriggers(q: Query): Promise<string[]> {
  * весь payload и что это была за задача. Пустой payload не пишется.
  *
  * $1 — id сущности (jobs.entity_id). kindLike — образец LIKE для jobs.kind.
+ * В коде — через deleteJobsArchivingInput (тот же текст для drizzle).
  */
 export function deleteJobsArchivingInputSql(kindLike: string, entityTable: string): string {
   if (!/^[a-z.%]+$/.test(kindLike)) throw new Error(`Недопустимый вид задачи: ${kindLike}`);
@@ -359,6 +362,19 @@ export function snapshotSql(t: ArchivedTable): string {
       SELECT '${name}', 'INITIAL', s.id::text, to_jsonb(s) FROM public.${name} s ORDER BY s.id
       RETURNING 1
     ) SELECT count(*)::int AS n FROM ins`;
+}
+
+/**
+ * Снять задачи сущности с архивом их входа — для drizzle (db.execute).
+ * Все удаления строк jobs идут только через него. Текст — ровно
+ * deleteJobsArchivingInputSql, который проверяют тесты на PGlite.
+ */
+export function deleteJobsArchivingInput(kindLike: string, entityTable: string, entityId: number): SQL {
+  const parts = deleteJobsArchivingInputSql(kindLike, entityTable).split("$1");
+  return sql.join(
+    parts.map((p) => sql.raw(p)),
+    sql`${entityId}`,
+  );
 }
 
 export interface EnsureResult {

@@ -189,3 +189,4 @@ export function startFileSweep(): void {
 }
 
 export { ArchiveUnavailableError };
+export { deleteJobsArchivingInput } from "./archive-sql";
