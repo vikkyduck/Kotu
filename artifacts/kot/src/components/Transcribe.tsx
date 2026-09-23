@@ -8,7 +8,7 @@ import {
 import type { Document } from '@workspace/db/schema';
 import { useApp } from '@/hooks/use-app';
 import { useUnsavedWarning } from '@/hooks/use-draft';
-import { send } from '@/lib/http';
+import { saveBlob, send } from '@/lib/http';
 import { Icon } from '@/lib/icons';
 import { Celebrate } from '@/lib/celebrate';
 
@@ -496,17 +496,7 @@ function ResultView({
     const body = segments
       .map((s) => (s.who ? `${s.who}: ${reveal(s.text)}` : reveal(s.text)))
       .join('\n\n');
-    const blob = new Blob([body], { type: 'text/plain;charset=utf-8' });
-    // Как downloadFile в lib/http: ссылка в документе и отзыв с задержкой —
-    // немедленный revoke в Safari срывает скачивание.
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${data.title || 'расшифровка'}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    saveBlob(new Blob([body], { type: 'text/plain;charset=utf-8' }), `${data.title || 'расшифровка'}.txt`);
     toast('Текст сохранён в файл');
   };
 
