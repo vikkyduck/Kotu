@@ -43,7 +43,8 @@ async function findValidReset(token: string) {
 }
 
 router.post("/auth/login", async (req, res) => {
-  const ip = req.ip ?? "unknown";
+  // Адрес как есть: в ключ счётчика (IPv6 → /64) его сводит lib/auth.
+  const ip = req.ip;
   if (tooManyAttempts(ip)) {
     res.status(429).json({ message: "Слишком много попыток. Подождите 15 минут." });
     return;
@@ -95,7 +96,7 @@ router.get("/me", requireAuth, (req, res) => {
  * иначе форму можно использовать, чтобы проверять, кто зарегистрирован.
  */
 router.post("/auth/forgot", async (req, res) => {
-  const ip = req.ip ?? "unknown";
+  const ip = req.ip;
   const raw = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   // Тело может весить до 5 МБ; почту длиннее RFC-предела не ищем в базе и не
   // пишем в журнал — отвечаем как на пустую, расходуя только лимит адреса.
@@ -194,7 +195,7 @@ router.post("/auth/password", requireAuth, async (req, res) => {
 
   // Тот же счётчик, что у входа: иначе с чужой украденной сессией текущий
   // пароль можно было бы подбирать здесь без ограничений.
-  const ip = req.ip ?? "unknown";
+  const ip = req.ip;
   if (tooManyAttempts(ip)) {
     res.status(429).json({ message: "Слишком много попыток. Подождите 15 минут." });
     return;

@@ -12,6 +12,7 @@ import {
   allowForgotRequest,
   forgotLimiterSizes,
   MAX_EMAIL_LENGTH,
+  clientKey,
 } from "./auth";
 
 const MIN = 60 * 1000;
@@ -69,6 +70,32 @@ describe("createRateLimiter", () => {
   });
 });
 
+describe("clientKey", () => {
+  test("IPv6 сводится к /64: смена адреса внутри подсети ничего не даёт", () => {
+    const keys = new Set<string>();
+    for (let i = 1; i <= 0xffff; i += 257) keys.add(clientKey(`2001:db8::${i.toString(16)}`));
+    keys.add(clientKey("2001:0DB8:0000:0000:ffff:ffff:ffff:ffff"));
+    keys.add(clientKey("2001:db8::1%eth0"));
+    expect([...keys]).toEqual(["2001:db8:0:0::/64"]);
+    expect(clientKey("2a03:6f00:1:2:aaaa:bbbb:cccc:dddd")).toBe("2a03:6f00:1:2::/64");
+    expect(clientKey("2001:db8:0:1::1")).not.toBe(clientKey("2001:db8::1"));
+  });
+
+  test("IPv4 внутри IPv6 — тот же клиент, что и обычный IPv4", () => {
+    expect(clientKey("::ffff:203.0.113.1")).toBe("203.0.113.1");
+    expect(clientKey("::FFFF:cb00:7101")).toBe("203.0.113.1");
+    expect(clientKey("203.0.113.1")).toBe("203.0.113.1");
+    // Встроенный IPv4 без ::ffff: — это уже не IPv4-клиент, а обычная IPv6-сеть.
+    expect(clientKey("64:ff9b::203.0.113.1")).toBe("64:ff9b:0:0::/64");
+  });
+
+  test("мусор и пустота складываются в одну корзину", () => {
+    expect(clientKey(undefined)).toBe("unknown");
+    expect(clientKey("")).toBe("unknown");
+    expect(clientKey("not-an-ip")).toBe("unknown");
+  });
+});
+
 describe("неудачные входы", () => {
   test("10 неудач с адреса запирают его на 15 минут, соседние адреса свободны", () => {
     for (let i = 0; i < 10; i++) registerFailedAttempt("203.0.113.1");
@@ -76,6 +103,12 @@ describe("неудачные входы", () => {
     expect(tooManyAttempts("203.0.113.2")).toBe(false);
     vi.advanceTimersByTime(15 * MIN);
     expect(tooManyAttempts("203.0.113.1")).toBe(false);
+  });
+
+  test("перебор с разных адресов одной IPv6-подсети запирает всю подсеть", () => {
+    for (let i = 1; i <= 10; i++) registerFailedAttempt(`2001:db8:aa::${i}`);
+    expect(tooManyAttempts("2001:db8:aa::beef")).toBe(true);
+    expect(tooManyAttempts("2001:db8:aa:1::1")).toBe(false);
   });
 
   test("успешный вход обнуляет счётчик", () => {
@@ -99,6 +132,11 @@ describe("забыли пароль", () => {
     expect(allowForgotRequest(ip, "another@ip2.test")).toBe(false);
     vi.advanceTimersByTime(60 * MIN);
     expect(allowForgotRequest(ip, "another@ip2.test")).toBe(true);
+  });
+
+  test("по адресу — ротация IPv6 внутри /64 не обходит лимит", () => {
+    for (let i = 1; i <= 5; i++) expect(allowForgotRequest(`2001:db8:bb::${i}`, "")).toBe(true);
+    expect(allowForgotRequest("2001:db8:bb::ffff", "")).toBe(false);
   });
 
   test("по почте — 3 в час, даже с разных адресов", () => {
