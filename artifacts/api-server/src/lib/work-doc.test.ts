@@ -12,8 +12,10 @@ const chain = {
   limit: async () => selects.shift() ?? [],
 };
 
-vi.mock("@workspace/db", () => ({
-  db: {
+vi.mock("@workspace/db", () => {
+  const db = {
+    // Транзакция в тесте — те же запросы к той же подделке.
+    transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(db),
     select: () => chain,
     insert: () => ({
       values: (v: object) => {
@@ -28,14 +30,17 @@ vi.mock("@workspace/db", () => ({
         return { where: async () => undefined };
       },
     }),
-  },
-  documentsTable: {},
-  decksTable: {},
-  deckSlidesTable: {},
-  jobsTable: {},
-}));
+  };
+  return {
+    db,
+    documentsTable: {},
+    decksTable: {},
+    deckSlidesTable: {},
+    jobsTable: {},
+  };
+});
 vi.mock("./archive", () => ({ writeDataFile: vi.fn(async () => undefined), archiveAndRemove: vi.fn() }));
-vi.mock("./jobs", () => ({ enqueue: vi.fn(async () => undefined) }));
+vi.mock("./jobs", () => ({ enqueue: vi.fn(async () => undefined), QUEUED_MESSAGE: "В очереди…" }));
 
 const { deckToLibrary, upsertWorkDoc } = await import("./work-doc");
 const { documentsTable } = await import("@workspace/db");
