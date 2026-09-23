@@ -1,9 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import mammoth from "mammoth";
 import JSZip from "jszip";
-
-const require = createRequire(import.meta.url);
 
 export interface ExtractedDoc {
   text: string;
@@ -46,6 +43,55 @@ function normalize(text: string): string {
     .trim();
 }
 
+let pdfParseModule: Promise<typeof import("pdf-parse")> | undefined;
+
+/**
+ * pdf-parse v2 грузим лениво, но строкой-литералом: esbuild всё равно кладёт
+ * его в бандл (на сервере node_modules нет), а исполняется он только при
+ * первом PDF. Лениво — из-за pdfjs внутри: при загрузке модуля он делает
+ * `new DOMMatrix()`, а DOMMatrix в Node берётся из нативного @napi-rs/canvas,
+ * которого на сервере нет. Статический импорт ронял бы весь сервер на старте.
+ * Для извлечения текста DOMMatrix не нужен (он для отрисовки страниц), поэтому
+ * на время загрузки подставляем пустышку и сразу убираем, чтобы не выдавать
+ * её остальному коду за настоящий DOMMatrix.
+ */
+function loadPdfParse(): Promise<typeof import("pdf-parse")> {
+  pdfParseModule ??= (async () => {
+    const g = globalThis as { DOMMatrix?: unknown };
+    const stub = g.DOMMatrix === undefined;
+    if (stub) g.DOMMatrix = class {};
+    try {
+      return await import("pdf-parse");
+    } finally {
+      if (stub) delete g.DOMMatrix;
+    }
+  })().catch((err: unknown) => {
+    // Не запоминаем провал: следующий PDF попробует загрузить модуль заново.
+    pdfParseModule = undefined;
+    throw err;
+  });
+  return pdfParseModule;
+}
+
+/**
+ * Текст PDF через pdf-parse v2 (обёртка над pdfjs). В Node pdfjs работает без
+ * настоящего воркера: подгружает pdf.worker.mjs динамическим import рядом с
+ * собой, поэтому build.mjs кладёт этот файл в dist рядом с бандлом.
+ */
+export async function extractPdf(data: Uint8Array): Promise<ExtractedDoc> {
+  const { PDFParse } = await loadPdfParse();
+  const parser = new PDFParse({ data });
+  try {
+    // Без pageJoiner v2 вставляет между страницами «-- 1 of 12 --», а это
+    // мусор во фрагментах и цитатах; страницы разделяем пустой строкой, как v1.
+    const result = await parser.getText({ pageJoiner: "" });
+    return { text: normalize(result.text), pages: result.total };
+  } finally {
+    // Документ pdfjs держит память и фейковый воркер — освобождаем даже при ошибке.
+    await parser.destroy();
+  }
+}
+
 /** Достаёт текст из файла. Формат определяется по расширению и mime. */
 export async function extractText(
   path: string,
@@ -55,13 +101,7 @@ export async function extractText(
   const ext = (filename.match(/\.([^.]+)$/)?.[1] ?? "").toLowerCase();
 
   if (ext === "pdf" || mime === "application/pdf") {
-    // Импорт именно из lib/: корневой index у pdf-parse при загрузке лезет
-    // читать собственный тестовый файл и падает в собранном бандле.
-    const pdfParse = require("pdf-parse/lib/pdf-parse.js") as (
-      b: Buffer,
-    ) => Promise<{ text: string; numpages: number }>;
-    const data = await pdfParse(await readFile(path));
-    return { text: normalize(data.text), pages: data.numpages };
+    return extractPdf(await readFile(path));
   }
 
   if (ext === "docx" || mime.includes("wordprocessingml")) {
