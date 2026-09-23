@@ -33,9 +33,6 @@ catalogs:
     vite:
       specifier: ^7.3.2
       version: 7.3.3
-    zod:
-      specifier: ^3.25.76
-      version: 3.25.76
 
 overrides:
   '@esbuild-kit/esm-loader': npm:tsx@^4.21.0
@@ -89,7 +86,7 @@ importers:
         version: 9.0.3
       openai:
         specifier: ^6.27.0
-        version: 6.42.0(zod@3.25.76)
+        version: 6.42.0
       pdf-parse:
         specifier: ^2.4.5
         version: 2.4.5
@@ -2031,9 +2028,6 @@ packages:
   yallist@3.1.1:
     resolution: {integrity: sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==}
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
 snapshots:
 
   '@babel/code-frame@7.29.0':
@@ -3192,9 +3186,7 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  openai@6.42.0(zod@3.25.76):
-    optionalDependencies:
-      zod: 3.25.76
+  openai@6.42.0: {}
 
   option@0.2.4: {}
 
@@ -3752,5 +3744,3 @@ snapshots:
   xtend@4.0.2: {}
 
   yallist@3.1.1: {}
-
-  zod@3.25.76: {}
