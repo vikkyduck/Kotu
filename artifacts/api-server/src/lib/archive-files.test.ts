@@ -1,5 +1,5 @@
 import { test, describe, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile, readdir } from "node:fs/promises";
+import { link, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
@@ -254,11 +254,51 @@ describe("архив файлов", () => {
     failQueries = false;
     expect(await a.archiveTreeAndRemove(dir, { entityType: "deck", entityId: 12 })).toBe(2);
     await expect(stat(dir)).rejects.toThrow();
+    // Ровно по одному событию на файл — без повторной архивации при rm.
     expect(
       await scalar(
-        `SELECT count(DISTINCT sha256) FROM archive.file_events WHERE entity_type = 'deck' AND entity_id = 12`,
+        `SELECT count(*) FROM archive.file_events WHERE entity_type = 'deck' AND entity_id = 12 AND kind = 'remove'`,
       ),
     ).toBe(2);
+  });
+
+  test("гонка двух архиваций одного содержимого: объект не подменяется", async () => {
+    const one = path.join(lib, "race-1.txt");
+    const two = path.join(decks, "race-2.txt");
+    await writeFile(one, "одно содержимое");
+    await writeFile(two, "одно содержимое");
+
+    // Обе архивации проходят проверку «объекта ещё нет», затем первая
+    // публикует объект целиком, и только потом вторая пытается свой.
+    let secondReached!: () => void;
+    const secondAtLink = new Promise<void>((r) => (secondReached = r));
+    let firstDone!: () => void;
+    const firstFinished = new Promise<void>((r) => (firstDone = r));
+    const racyLink: typeof link = async (from, to) => {
+      if (String(from) === one) await secondAtLink;
+      if (String(from) === two) {
+        secondReached();
+        await firstFinished;
+      }
+      return link(from, to);
+    };
+    const a = makeArchive({ link: racyLink });
+    const p1 = a.archiveFile(one, { kind: "upload" }).then((r) => {
+      firstDone();
+      return r;
+    });
+    const p2 = a.archiveFile(two, { kind: "upload" });
+    const [r1, r2] = await inTime(Promise.all([p1, p2]));
+
+    expect(r1!.sha256).toBe(r2!.sha256);
+    expect(r1!.stored).toBe(true);
+    expect(r2!.stored).toBe(false);
+    // Объект — по-прежнему первый файл (тот же inode), rename поверх его бы заменил.
+    expect((await stat(r1!.storedPath)).ino).toBe((await stat(one)).ino);
+    expect(await readFile(r1!.storedPath, "utf8")).toBe("одно содержимое");
+    const shard = await readdir(path.dirname(r1!.storedPath));
+    expect(shard).toEqual([r1!.sha256]);
+    expect(await scalar(`SELECT count(*) FROM archive.file_events WHERE sha256 = $1`, [r1!.sha256])).toBe(2);
   });
 
   test("запись поверх существующего файла без архива не идёт", async () => {
