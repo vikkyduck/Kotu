@@ -459,7 +459,7 @@ function ResultView({
       </div>
       <p className="tnote"><Icon name="info" /> Если слово распознано неверно — просто исправьте его прямо в тексте, как в обычном документе. Всё сохраняется само.</p>
       {data.hideNames && (
-        <p className="tnote"><Icon name="eye" /> Имена пациентов скрыты. Нажмите «имя скрыто», чтобы увидеть — это видно только вам.</p>
+        <p className="tnote"><Icon name="eye" /> Имена скрыты. Нажмите «имя скрыто», чтобы увидеть — это видно только вам.</p>
       )}
 
       <div className="panel" id="transcript">

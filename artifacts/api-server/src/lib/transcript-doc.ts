@@ -19,11 +19,33 @@ function neutralTitle(t: Transcription): string {
 }
 
 /**
- * Без скрытия имён (лекции, воркшопы) название записи — обычное название,
- * по нему копию и ищут в библиотеке. Со скрытием — нейтральное (см. выше).
+ * Текст и название библиотечной копии. Со скрытием имён — маскировка (NER
+ * недоступен → исключение, копия не пишется) и нейтральное название. Без
+ * скрытия (лекции, воркшопы) — текст как есть и настоящее название записи:
+ * по нему копию и ищут в библиотеке. Отдельно от записи в базу — ради тестов.
  */
-function libraryTitle(t: Transcription): string {
-  return t.hideNames ? neutralTitle(t) : t.title;
+export async function prepareLibraryCopy(
+  t: Transcription,
+  plain: string,
+): Promise<{ text: string; title: string }> {
+  if (!t.hideNames) {
+    // Ограничения — как у PATCH /documents: название в библиотеке до 200 знаков.
+    return { text: plain, title: t.title.trim().slice(0, 200) || neutralTitle(t) };
+  }
+  const { masked: rawMasked } = await maskText(plain).catch((err: unknown) => {
+    // Без настоящего NER наружу нельзя: отказываемся, стартовая сверка
+    // повторит, когда сервис вернётся.
+    if (err instanceof NerUnavailableError) {
+      throw new Error("Сервис маскировки недоступен — расшифровку в библиотеку не отправляю", {
+        cause: err,
+      });
+    }
+    throw err;
+  });
+  // Если текст УЖЕ содержал плейсхолдеры (маскировка на этапе расшифровки),
+  // повторная маскировка оборачивает их второй парой скобок — схлопываем.
+  const masked = rawMasked.replace(/\[{3,}((?:PER|LOC)\d+)\]{3,}/g, "[[$1]]");
+  return { text: masked, title: neutralTitle(t) };
 }
 
 /**
@@ -50,31 +72,9 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
   }
 
   // Имена скрывали при расшифровке — скрываем и в библиотечной копии: по ней
-  // собираются лекции, а это отправка в модель. Не скрывали (лекции, воркшопы)
-  // — копия как есть, сервис имён не нужен.
-  if (!t.hideNames) {
-    await writeTranscriptCopy(t, plain);
-    return;
-  }
-  const { masked: rawMasked } = await maskText(plain).catch((err: unknown) => {
-    // Без настоящего NER наружу нельзя: отказываемся, стартовая сверка
-    // повторит, когда сервис вернётся.
-    if (err instanceof NerUnavailableError) {
-      throw new Error("Сервис маскировки недоступен — расшифровку в библиотеку не отправляю", {
-        cause: err,
-      });
-    }
-    throw err;
-  });
-  // Если текст УЖЕ содержал плейсхолдеры (маскировка на этапе расшифровки),
-  // повторная маскировка оборачивает их второй парой скобок — схлопываем.
-  const masked = rawMasked.replace(/\[{3,}((?:PER|LOC)\d+)\]{3,}/g, "[[$1]]");
+  // собираются лекции, а это отправка в модель.
+  const { text, title } = await prepareLibraryCopy(t, plain);
 
-  await writeTranscriptCopy(t, masked);
-}
-
-/** Файл копии, строка документа и переиндексация — общее для обеих веток. */
-async function writeTranscriptCopy(t: Transcription, text: string): Promise<void> {
   // Расшифровку могли удалить, пока считалась маскировка, — не воскрешаем.
   const [alive] = await db
     .select({ id: transcriptionsTable.id })
@@ -97,7 +97,7 @@ async function writeTranscriptCopy(t: Transcription, text: string): Promise<void
     .insert(documentsTable)
     .values({
       ownerId: t.ownerId,
-      title: libraryTitle(t),
+      title,
       kind: "transcript",
       transcriptionId: t.id,
       sourcePath: filePath,
@@ -119,7 +119,7 @@ async function writeTranscriptCopy(t: Transcription, text: string): Promise<void
     docId = existing.id;
     await db
       .update(documentsTable)
-      .set({ title: libraryTitle(t), status: "parsing", statusMessage: "В очереди…", error: null })
+      .set({ title, status: "parsing", statusMessage: "В очереди…", error: null })
       .where(eq(documentsTable.id, docId));
   }
 
