@@ -68,7 +68,18 @@ export function ItemCard({
 
         <div className="doc-body">
           {item.open ? (
-            <b className="doc-title doc-link" onClick={item.open}>
+            // Название — ссылка и для клавиатуры: Tab до него, Enter или пробел.
+            <b
+              className="doc-title doc-link"
+              role="button"
+              tabIndex={0}
+              onClick={item.open}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                e.preventDefault();
+                item.open?.();
+              }}
+            >
               {item.title}
             </b>
           ) : (
