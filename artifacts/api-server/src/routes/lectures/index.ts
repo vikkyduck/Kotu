@@ -14,6 +14,7 @@ import {
   type PlannedSection,
 } from "@workspace/db";
 import { parseId } from "../../lib/parse-id";
+import { QUEUED_MESSAGE, enqueue } from "../../lib/jobs";
 import { attachmentHeader } from "../../lib/filename";
 import { ownFolderId } from "../../lib/folders";
 import { lectureToLibrary, dropLectureCopies } from "../../lib/work-doc";
@@ -194,10 +195,10 @@ router.post("/lectures", async (req, res): Promise<void> => {
         title,
         brief,
         status: "planning",
-        statusMessage: "В очереди…",
+        statusMessage: QUEUED_MESSAGE,
       })
       .returning();
-    await tx.insert(jobsTable).values({ kind: "lecture.plan", entityId: row.id, payload: {} });
+    await enqueue("lecture.plan", row.id, {}, tx);
     return row;
   });
   res.status(201).json(lecture);
@@ -277,7 +278,7 @@ router.post("/lectures/:id/plan/approve", async (req, res): Promise<void> => {
   const queued = await db.transaction(async (tx) => {
     const [updated] = await tx
       .update(lecturesTable)
-      .set({ planApproved: true, status: "writing", statusMessage: "В очереди…", error: null })
+      .set({ planApproved: true, status: "writing", statusMessage: QUEUED_MESSAGE, error: null })
       .where(and(eq(lecturesTable.id, id), eq(lecturesTable.status, "plan_ready")))
       .returning({ plan: lecturesTable.plan });
     if (!updated) return false;
@@ -297,7 +298,7 @@ router.post("/lectures/:id/plan/approve", async (req, res): Promise<void> => {
         })),
       );
     }
-    await tx.insert(jobsTable).values({ kind: "lecture.write", entityId: id, payload: {} });
+    await enqueue("lecture.write", id, {}, tx);
     return true;
   });
   if (!queued) {
@@ -349,13 +350,13 @@ router.post("/lectures/:id/retry", async (req, res): Promise<void> => {
       .update(lecturesTable)
       .set({
         status: lecture.planApproved ? "writing" : "planning",
-        statusMessage: "В очереди…",
+        statusMessage: QUEUED_MESSAGE,
         error: null,
       })
       .where(and(eq(lecturesTable.id, lecture.id), eq(lecturesTable.status, "error")))
       .returning({ id: lecturesTable.id });
     if (!updated) return false;
-    await tx.insert(jobsTable).values({ kind, entityId: lecture.id, payload: {} });
+    await enqueue(kind, lecture.id, {}, tx);
     return true;
   });
   if (!queued) {

@@ -10,7 +10,6 @@ import {
   stylePacksTable,
   lecturesTable,
   documentsTable,
-  jobsTable,
   type Deck,
   type DeckSlide,
   type DeckStatus,
@@ -28,6 +27,7 @@ import { sanitizeSlideContent, settleSlides } from "../../lib/slide-content";
 import { deckStylePack } from "../../lib/deck-style";
 import { MAX_SOURCE_CHARS, SOURCE_GONE } from "../../lib/handlers/storyboard";
 import { parseId } from "../../lib/parse-id";
+import { QUEUED_MESSAGE, enqueue, lastJob } from "../../lib/jobs";
 import { attachmentHeader } from "../../lib/filename";
 import {
   archiveInputSql,
@@ -121,7 +121,7 @@ async function queueDeckJob(
       .returning({ id: decksTable.id });
     if (!row) return false;
     if (before) await before(tx);
-    await tx.insert(jobsTable).values({ kind, entityId: deckId, payload });
+    await enqueue(kind, deckId, payload, tx);
     return true;
   });
 }
@@ -258,14 +258,12 @@ router.post("/decks", async (req, res): Promise<void> => {
         sourceId,
         stylePackId,
         status: "storyboarding",
-        statusMessage: "В очереди…",
+        statusMessage: QUEUED_MESSAGE,
       })
       .returning();
     if (rawText) await tx.execute(archiveInputSql("decks", row.id, { raw_text: rawText }));
     // Задача — в той же транзакции: колода «раскладываю» без задачи висела бы вечно.
-    await tx
-      .insert(jobsTable)
-      .values({ kind: "deck.storyboard", entityId: row.id, payload: rawText ? { rawText } : {} });
+    await enqueue("deck.storyboard", row.id, rawText ? { rawText } : {}, tx);
     return row;
   });
 
@@ -320,7 +318,7 @@ function startDrawing(
   return queueDeckJob(
     deckId,
     ["ready"],
-    { status: "drawing", statusMessage: "В очереди…" },
+    { status: "drawing", statusMessage: QUEUED_MESSAGE },
     "deck.illustrate",
     instruction ? { slideIds: [slideId], instruction } : { slideIds: [slideId] },
     before,
@@ -446,7 +444,7 @@ router.post("/decks/:id/approve", async (req, res): Promise<void> => {
   const queued = await queueDeckJob(
     deck.id,
     ["storyboard_ready"],
-    { storyboardApproved: true, status: "drawing", statusMessage: "В очереди…" },
+    { storyboardApproved: true, status: "drawing", statusMessage: QUEUED_MESSAGE },
     "deck.illustrate",
     {},
   );
@@ -640,13 +638,8 @@ router.post("/decks/:id/retry", async (req, res): Promise<void> => {
   }
 
   if (!deck.storyboardApproved) {
-    const [lastJob] = await db
-      .select()
-      .from(jobsTable)
-      .where(and(eq(jobsTable.kind, "deck.storyboard"), eq(jobsTable.entityId, deck.id)))
-      .orderBy(desc(jobsTable.id))
-      .limit(1);
-    const rawText = (lastJob?.payload as { rawText?: string } | undefined)?.rawText;
+    const prev = await lastJob("deck.storyboard", deck.id);
+    const rawText = (prev?.payload as { rawText?: string } | undefined)?.rawText;
     if (deck.sourceKind === "raw" && !rawText) {
       res.status(409).json({ message: "Текст не сохранился — создайте презентацию заново" });
       return;
@@ -659,7 +652,7 @@ router.post("/decks/:id/retry", async (req, res): Promise<void> => {
     const queued = await queueDeckJob(
       deck.id,
       ["error"],
-      { status: "storyboarding", statusMessage: "В очереди…" },
+      { status: "storyboarding", statusMessage: QUEUED_MESSAGE },
       "deck.storyboard",
       rawText ? { rawText } : {},
     );
@@ -670,7 +663,7 @@ router.post("/decks/:id/retry", async (req, res): Promise<void> => {
   const queued = await queueDeckJob(
     deck.id,
     ["error"],
-    { status: "drawing", statusMessage: "В очереди…" },
+    { status: "drawing", statusMessage: QUEUED_MESSAGE },
     "deck.illustrate",
     {},
     (tx) =>

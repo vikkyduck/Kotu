@@ -1,4 +1,4 @@
-import { sql, eq } from "drizzle-orm";
+import { sql, eq, and, desc } from "drizzle-orm";
 import { db, jobsTable, type Job, type JobKind } from "@workspace/db";
 import { logger } from "./logger";
 
@@ -36,6 +36,20 @@ export async function enqueue(
 ): Promise<Job> {
   const [job] = await tx.insert(jobsTable).values({ kind, entityId, payload }).returning();
   return job;
+}
+
+/**
+ * Последняя задача сущности. Payload у задач не затирается (см. finish) —
+ * из него повтор берёт то, с чем работать: путь к файлу, вставленный текст.
+ */
+export async function lastJob(kind: JobKind, entityId: number): Promise<Job | null> {
+  const [job] = await db
+    .select()
+    .from(jobsTable)
+    .where(and(eq(jobsTable.kind, kind), eq(jobsTable.entityId, entityId)))
+    .orderBy(desc(jobsTable.id))
+    .limit(1);
+  return job ?? null;
 }
 
 /**
