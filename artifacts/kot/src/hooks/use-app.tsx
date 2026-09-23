@@ -103,7 +103,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [sheet, setSheet] = useState<FixSheetState>({ isOpen: false, title: '', kind: 'N', callback: null, initial: '' });
   const toastT = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [theme, setThemeState] = useState<Theme>('light');
+  // Тему до загрузки уже выставил скрипт в index.html (по умолчанию — бумага),
+  // здесь её только читаем: правило живёт в одном месте.
+  const [theme, setThemeState] = useState<Theme>(() =>
+    document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light',
+  );
   // Что именно открыто в инструменте. null = «делаем новое»: инструмент
   // открывается формой, а список сделанного живёт в библиотеке.
   const activeTranscriptionId = nav.transcriptionId;
@@ -112,27 +116,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [deckSeed, setDeckSeed] = useState<DeckSeed | null>(null);
   const activeLectureId = nav.lectureId;
   const activeDeckId = nav.deckId;
-
-  useEffect(() => {
-    let t = '';
-    try {
-      t = localStorage.getItem('kot-theme') || '';
-    } catch (e) {}
-    // По умолчанию — бумага: платформа читается как документ, а не как ночь.
-    // Тёмная тема осталась переключателем в меню; сохранённый выбор уважается.
-    if (!t) t = 'light';
-    const next = (t === 'dark' ? 'dark' : 'light') as Theme;
-    document.documentElement.setAttribute('data-theme', next);
-    setThemeState(next);
-  }, []);
-
-  const setTheme = useCallback((t: Theme) => {
-    document.documentElement.setAttribute('data-theme', t);
-    setThemeState(t);
-    try {
-      localStorage.setItem('kot-theme', t);
-    } catch (e) {}
-  }, []);
 
   const toggleTheme = useCallback(() => {
     setThemeState(prev => {
