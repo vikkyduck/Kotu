@@ -1,10 +1,8 @@
-import path from "node:path";
 import { and, eq, isNotNull } from "drizzle-orm";
-import { db, documentsTable, transcriptionsTable, decksTable, type Transcription } from "@workspace/db";
-import { LIBRARY_DIR } from "./paths";
-import { archiveAndRemove, writeDataFile } from "./archive";
+import { db, documentsTable, transcriptionsTable, type Transcription } from "@workspace/db";
+import { archiveAndRemove } from "./archive";
 import { maskText, NerUnavailableError } from "./privacy";
-import { enqueue } from "./jobs";
+import { dropCopies, MIN_LIBRARY_TEXT, upsertWorkDoc } from "./work-doc";
 import { logger } from "./logger";
 
 /**
@@ -64,8 +62,9 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
     .map((s) => (s.who ? `${s.who}: ${s.text}` : s.text))
     .join("\n\n")
     .trim();
-  if (plain.length < 200) {
+  if (plain.length < MIN_LIBRARY_TEXT) {
     // Правка могла ужать текст ниже порога — тогда и копия больше не нужна.
+    // Проверка до маскировки: короткий текст незачем гонять через NER.
     await deleteTranscriptionDoc(t.id, t.ownerId);
     logger.info({ transcriptionId: t.id }, "Расшифровка коротка для библиотеки — пропускаю");
     return;
@@ -83,83 +82,23 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<void> {
     .limit(1);
   if (!alive) return;
 
-  const filePath = path.join(LIBRARY_DIR, `transcript-${t.id}.txt`);
-  // Прежняя копия уходит в архив, новая пишется атомарно (lib/archive-files.ts).
-  await writeDataFile(filePath, text, {
-    entityType: "transcription",
-    entityId: t.id,
-    mime: "text/plain",
+  const docId = await upsertWorkDoc({
+    ownerId: t.ownerId,
+    title,
+    kind: "transcript",
+    link: { column: documentsTable.transcriptionId, id: t.id },
+    values: { transcriptionId: t.id },
+    folderId: null,
+    fileName: `transcript-${t.id}.txt`,
+    text,
   });
-
-  // Уникальный индекс по transcription_id превращает гонку двух sync в
-  // спокойный «второй просто обновит».
-  const inserted = await db
-    .insert(documentsTable)
-    .values({
-      ownerId: t.ownerId,
-      title,
-      kind: "transcript",
-      transcriptionId: t.id,
-      sourcePath: filePath,
-      mime: "text/plain",
-      status: "parsing",
-      statusMessage: "В очереди…",
-    })
-    .onConflictDoNothing()
-    .returning({ id: documentsTable.id });
-
-  let docId = inserted[0]?.id;
-  if (docId === undefined) {
-    const [existing] = await db
-      .select({ id: documentsTable.id })
-      .from(documentsTable)
-      .where(eq(documentsTable.transcriptionId, t.id))
-      .limit(1);
-    if (!existing) return;
-    docId = existing.id;
-    await db
-      .update(documentsTable)
-      .set({ title, status: "parsing", statusMessage: "В очереди…", error: null })
-      .where(eq(documentsTable.id, docId));
-  }
-
-  await enqueue("doc.ingest", docId, {
-    sourcePath: filePath,
-    mime: "text/plain",
-    filename: `transcript-${t.id}.txt`,
-  });
+  if (docId === null) return;
   logger.info({ transcriptionId: t.id, docId }, "Расшифровка отправлена в библиотеку");
 }
 
-/**
- * Убирает расшифровку из библиотеки — все копии, с файлами и фрагментами.
- * Строка документа уходит в архив триггером, файл — archiveAndRemove; не
- * заархивировался файл — исключение, и ничего не удалено.
- */
-export async function deleteTranscriptionDoc(
-  transcriptionId: number,
-  ownerId: number,
-): Promise<void> {
-  const docs = await db
-    .select()
-    .from(documentsTable)
-    .where(
-      and(
-        eq(documentsTable.transcriptionId, transcriptionId),
-        eq(documentsTable.ownerId, ownerId),
-      ),
-    );
-
-  for (const doc of docs) {
-    await archiveAndRemove(doc.sourcePath, {
-      entityType: "document",
-      entityId: doc.id,
-      mime: doc.mime,
-    });
-    // Фрагменты уйдут каскадом по FK documentId (индекс, не данные).
-    await db.delete(documentsTable).where(eq(documentsTable.id, doc.id));
-  }
-}
+/** Убирает расшифровку из библиотеки — все копии, с файлами и фрагментами. */
+export const deleteTranscriptionDoc = (transcriptionId: number, ownerId: number) =>
+  dropCopies(documentsTable.transcriptionId, transcriptionId, ownerId);
 
 /**
  * Стартовая сверка, в обе стороны:
