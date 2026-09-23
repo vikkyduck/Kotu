@@ -17,12 +17,14 @@ export function FixSheet() {
 
   useEffect(() => {
     if (!sheet.isOpen) return;
-    setText('');
+    setText(sheet.initial);
     const t = setTimeout(() => {
       inputRef.current?.focus();
+      // Прежний текст выделен: мелкая правка — курсором, новое — просто поверх.
+      inputRef.current?.select();
     }, 150);
     return () => clearTimeout(t);
-  }, [sheet.isOpen]);
+  }, [sheet.isOpen, sheet.initial]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

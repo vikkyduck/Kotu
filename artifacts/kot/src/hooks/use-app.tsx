@@ -12,6 +12,8 @@ interface FixSheetState {
   title: string;
   kind: 'A' | 'B' | 'C' | 'N';
   callback: ((text: string) => void) | null;
+  /** Текст, с которым поле открывается (прежнее имя при переименовании). */
+  initial: string;
 }
 
 interface AppContextType {
@@ -20,7 +22,7 @@ interface AppContextType {
   toast: (msg: string) => void;
   toastMsg: string | null;
   sheet: FixSheetState;
-  openSheet: (title: string, kind: 'A' | 'B' | 'C' | 'N', cb: (text: string) => void) => void;
+  openSheet: (title: string, kind: 'A' | 'B' | 'C' | 'N', cb: (text: string) => void, initial?: string) => void;
   closeSheet: () => void;
   theme: Theme;
   toggleTheme: () => void;
@@ -98,7 +100,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [nav, setNav] = useState<Nav>(() => navOf(window.location.hash));
   const screen = nav.screen;
   const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const [sheet, setSheet] = useState<FixSheetState>({ isOpen: false, title: '', kind: 'A', callback: null });
+  const [sheet, setSheet] = useState<FixSheetState>({ isOpen: false, title: '', kind: 'A', callback: null, initial: '' });
   const toastT = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [theme, setThemeState] = useState<Theme>('light');
@@ -210,8 +212,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const openSheet = useCallback((title: string, kind: 'A' | 'B' | 'C' | 'N', cb: (text: string) => void) => {
-    setSheet({ isOpen: true, title, kind, callback: cb });
+  const openSheet = useCallback((title: string, kind: 'A' | 'B' | 'C' | 'N', cb: (text: string) => void, initial = '') => {
+    setSheet({ isOpen: true, title, kind, callback: cb, initial });
   }, []);
 
   const closeSheet = useCallback(() => {
