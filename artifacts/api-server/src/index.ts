@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { purgeExpiredSessions } from "./lib/auth";
 import { requeueOrphans, startWorker } from "./lib/jobs";
 import { sweepTranscriptionsToLibrary } from "./lib/transcript-doc";
+import { sweepUploads } from "./lib/upload-sweep";
 import { sweepWorkToLibrary, sweepOrphanDeckDirs, sweepStuckDeckImages } from "./lib/work-doc";
 import { registerTranscribeHandler } from "./lib/handlers/transcribe";
 import { registerIngestHandler } from "./lib/handlers/ingest";
@@ -50,6 +51,12 @@ void sweepTranscriptionsToLibrary()
     if (n > 0) logger.info({ count: n }, "Отправил расшифровки в библиотеку");
   })
   .catch((err) => logger.error({ err }, "Сверка расшифровок с библиотекой не удалась"));
+
+// Аудио записей, которому больше некуда идти: брошенные загрузки, хвосты
+// удалённых записей и провалы старше 14 дней (зона А не лежит вечно).
+void sweepUploads().catch((err) =>
+  logger.error({ err }, "Сверка каталога загрузок не удалась"),
+);
 
 void sweepOrphanDeckDirs().catch((err) =>
   logger.error({ err }, "Сверка каталогов презентаций не удалась"),

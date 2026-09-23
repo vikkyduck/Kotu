@@ -5,7 +5,8 @@ import { useCallback, useEffect, useState } from 'react';
  *
  * Пока сервер распознаёт речь, запись опрашивается — так прогресс на экране
  * движется сам. Как только работа закончена (готово или ошибка), опрос
- * прекращается: дальше меняет запись только автор.
+ * прекращается: дальше меняет запись только автор. Повтор после ошибки
+ * возвращает запись в работу — и опрос возобновляется сам, по статусу.
  */
 
 export interface TranscriptSegment {
@@ -37,6 +38,8 @@ export function useTranscription(id: number | null): {
   reload: () => Promise<void>;
   /** Правка текста автором: сохраняет и подставляет ответ сервера. */
   save: (patch: { segments?: TranscriptSegment[]; title?: string }) => Promise<boolean>;
+  /** Повтор проваленной расшифровки из сохранённого на сервере аудио. */
+  retry: () => Promise<boolean>;
 } {
   const [data, setData] = useState<Transcription | null>(null);
   const [loading, setLoading] = useState(id !== null);
@@ -91,7 +94,21 @@ export function useTranscription(id: number | null): {
     [id],
   );
 
-  return { data, loading, reload, save };
+  const retry = useCallback(async () => {
+    if (id === null) return false;
+    try {
+      const res = await fetch(`/api/transcriptions/${id}/retry`, { method: 'POST' });
+      if (!res.ok) return false;
+      // Ответ — уже запись в работе: подставляем сразу, чтобы экран ошибки
+      // сменился прогрессом без ожидания, а опрос пошёл по новому статусу.
+      setData(await res.json());
+      return true;
+    } catch {
+      return false;
+    }
+  }, [id]);
+
+  return { data, loading, reload, save, retry };
 }
 
 /** Удалить запись вместе с аудио и библиотечной копией. */

@@ -1,7 +1,8 @@
+import { rm, stat } from "node:fs/promises";
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { eq, and, desc } from "drizzle-orm";
-import { db, transcriptionsTable, type TranscriptSegment } from "@workspace/db";
+import { db, jobsTable, transcriptionsTable, type TranscriptSegment } from "@workspace/db";
 import {
   GetTranscriptionParams,
   GetTranscriptionResponse,
@@ -15,6 +16,8 @@ import { enqueue } from "../../lib/jobs";
 import { UPLOAD_DIR } from "../../lib/paths";
 import { syncTranscriptionDoc, deleteTranscriptionDoc } from "../../lib/transcript-doc";
 import { decodeUploadName } from "../../lib/filename";
+import { resolveInsideDir } from "../../lib/upload-sweep";
+import type { TranscribePayload } from "../../lib/handlers/transcribe";
 
 // Long recordings (2–3 hours) are split server-side, so allow large uploads.
 // Files are streamed to disk (not held in memory) and split with ffmpeg.
@@ -138,10 +141,42 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
     return;
   }
 
+  // Чужую запись не трогаем даже косвенно: задачи и аудио ниже ищутся по id
+  // записи без владельца, поэтому владельца проверяем заранее.
+  const [owned] = await db
+    .select({ id: transcriptionsTable.id })
+    .from(transcriptionsTable)
+    .where(
+      and(
+        eq(transcriptionsTable.id, params.data.id),
+        eq(transcriptionsTable.ownerId, req.user!.id),
+      ),
+    );
+  if (!owned) {
+    res.status(404).json({ error: "Расшифровка не найдена" });
+    return;
+  }
+
   // Уничтожение — без остатков (§10): сначала библиотечная копия, потом сама
   // запись. Упади чистка копии — запись останется, и можно повторить; в
   // обратном порядке копия зависала бы сиротой до стартовой сверки.
   await deleteTranscriptionDoc(params.data.id, req.user!.id);
+
+  // Затем задачи расшифровки и их аудио: ждущая задача иначе взялась бы за
+  // удалённую запись, а проваленная держала бы запись сеанса на диске.
+  // Сначала файлы, потом строки задач — упади rm, ссылки останутся и повтор
+  // удаления дочистит; в обратном порядке файл остался бы без хозяина.
+  const jobs = await db
+    .select({ payload: jobsTable.payload })
+    .from(jobsTable)
+    .where(and(eq(jobsTable.kind, "transcribe"), eq(jobsTable.entityId, params.data.id)));
+  for (const job of jobs) {
+    const audio = resolveInsideDir(UPLOAD_DIR, job.payload["inputPath"]);
+    if (audio) await rm(audio, { force: true });
+  }
+  await db
+    .delete(jobsTable)
+    .where(and(eq(jobsTable.kind, "transcribe"), eq(jobsTable.entityId, params.data.id)));
 
   const [row] = await db
     .delete(transcriptionsTable)
@@ -159,6 +194,92 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
   }
 
   res.sendStatus(204);
+});
+
+/**
+ * Повтор проваленной расшифровки из сохранённого аудио — без новой загрузки.
+ * Попытки задачи сжигает и деплой посреди работы, и сбой транзита, поэтому
+ * «ошибка» часто не про файл, и заставлять заново грузить час записи незачем.
+ */
+router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "Неверный номер записи" });
+    return;
+  }
+
+  const [row] = await db
+    .select()
+    .from(transcriptionsTable)
+    .where(and(eq(transcriptionsTable.id, id), eq(transcriptionsTable.ownerId, req.user!.id)));
+  if (!row) {
+    res.status(404).json({ error: "Расшифровка не найдена" });
+    return;
+  }
+  if (row.status !== "error") {
+    res.status(409).json({ error: "Повторять нечего — ошибки нет" });
+    return;
+  }
+
+  // Путь к аудио и настройки — из последней задачи: у проваленных payload
+  // не затирается как раз ради такого повтора (lib/jobs.ts).
+  const [lastJob] = await db
+    .select()
+    .from(jobsTable)
+    .where(and(eq(jobsTable.kind, "transcribe"), eq(jobsTable.entityId, id)))
+    .orderBy(desc(jobsTable.id))
+    .limit(1);
+  const prev = (lastJob?.payload ?? {}) as Partial<TranscribePayload>;
+  const inputPath = resolveInsideDir(UPLOAD_DIR, prev.inputPath);
+  const onDisk = inputPath
+    ? await stat(inputPath).then((st) => st.isFile(), () => false)
+    : false;
+  if (!inputPath || !onDisk) {
+    res
+      .status(409)
+      .json({ error: "Запись не сохранилась на сервере — загрузите запись заново" });
+    return;
+  }
+
+  const payload: TranscribePayload = {
+    inputPath,
+    filename: typeof prev.filename === "string" ? prev.filename : row.filename,
+    hideNames: typeof prev.hideNames === "boolean" ? prev.hideNames : row.hideNames,
+    markSpeakers: typeof prev.markSpeakers === "boolean" ? prev.markSpeakers : row.markSpeakers,
+  };
+
+  // Смена статуса и новая задача — в одной транзакции: запись «в работе» без
+  // задачи висела бы вечно. Условие status = 'error' в UPDATE закрывает
+  // двойной клик — второй запрос не найдёт ошибки и не поставит вторую задачу.
+  // Поэтому вставка прямо в jobs, а не через enqueue(): тот пишет мимо транзакции.
+  const queued = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(transcriptionsTable)
+      .set({ status: "processing", progress: 0, statusMessage: "В очереди…", error: null })
+      .where(
+        and(
+          eq(transcriptionsTable.id, id),
+          eq(transcriptionsTable.ownerId, req.user!.id),
+          eq(transcriptionsTable.status, "error"),
+        ),
+      )
+      .returning();
+    if (!updated) return null;
+    await tx.insert(jobsTable).values({
+      kind: "transcribe",
+      entityId: id,
+      payload: payload as unknown as Record<string, unknown>,
+    });
+    return updated;
+  });
+
+  if (!queued) {
+    res.status(409).json({ error: "Повторять нечего — ошибки нет" });
+    return;
+  }
+
+  req.log.info({ id }, "Queued transcription retry");
+  res.status(202).json(GetTranscriptionResponse.parse(queued));
 });
 
 router.post(
