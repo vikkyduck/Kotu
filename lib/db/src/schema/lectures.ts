@@ -18,7 +18,9 @@ export type LectureStatus =
   | "ready"
   | "error";
 
-export type LectureFocus = "clinical" | "theoretical" | "historical";
+/** Акценты лекции: список один — и для типа, и для проверки брифа в роуте. */
+export const LECTURE_FOCI = ["clinical", "theoretical", "historical"] as const;
+export type LectureFocus = (typeof LECTURE_FOCI)[number];
 
 /** Что человек попросил: тема своими словами и рамки. */
 export interface LectureBrief {

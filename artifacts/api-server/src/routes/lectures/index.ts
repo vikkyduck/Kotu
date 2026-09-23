@@ -1,16 +1,21 @@
 import { Router, type IRouter } from "express";
-import { eq, and, asc, desc, ne } from "drizzle-orm";
+import { eq, and, asc, desc, ne, inArray } from "drizzle-orm";
 import {
   db,
+  jobsTable,
   lecturesTable,
   lectureSectionsTable,
   lectureSourcesTable,
   documentsTable,
+  LECTURE_FOCI,
+  type Lecture,
   type LectureBrief,
   type LectureFocus,
   type PlannedSection,
 } from "@workspace/db";
 import { enqueue } from "../../lib/jobs";
+import { parseId } from "../../lib/parse-id";
+import { attachmentHeader } from "../../lib/filename";
 import { ownFolderId } from "../../lib/folders";
 import { lectureToLibrary, dropLectureCopies } from "../../lib/work-doc";
 import { buildLectureDocx, buildLectureMarkdown } from "../../lib/lecture-export";
@@ -19,27 +24,54 @@ import { LECTURE_PLANNING, PLAN_BUSY_MESSAGE, planEditBlocked } from "../../lib/
 
 const router: IRouter = Router();
 
-/** Лекция вместе с главами и источниками — фронту нужен цельный объект. */
-async function loadFull(id: number, ownerId: number) {
+const NOT_FOUND = { message: "Лекция не найдена" };
+
+/**
+ * Лекция строго своего владельца — проверка в каждой ручке, как loadDeck.
+ * Кривой id — как чужая лекция: null, и ручка отвечает 404.
+ */
+async function loadLecture(rawId: string, ownerId: number): Promise<Lecture | null> {
+  const id = parseId(rawId);
+  if (id === null) return null;
   const [lecture] = await db
     .select()
     .from(lecturesTable)
     .where(and(eq(lecturesTable.id, id), eq(lecturesTable.ownerId, ownerId)))
     .limit(1);
+  return lecture ?? null;
+}
+
+/** Лекция вместе с главами и источниками — фронту нужен цельный объект. */
+async function loadFull(rawId: string, ownerId: number) {
+  const lecture = await loadLecture(rawId, ownerId);
   if (!lecture) return null;
 
   const sections = await db
     .select()
     .from(lectureSectionsTable)
-    .where(eq(lectureSectionsTable.lectureId, id))
+    .where(eq(lectureSectionsTable.lectureId, lecture.id))
     .orderBy(asc(lectureSectionsTable.ord));
 
+  // Порядок вставки = номера ссылок [n] в тексте главы (handlers/lecture.ts).
   const sources = await db
     .select()
     .from(lectureSourcesTable)
-    .where(eq(lectureSourcesTable.lectureId, id));
+    .where(eq(lectureSourcesTable.lectureId, lecture.id))
+    .orderBy(asc(lectureSourcesTable.id));
 
   return { ...lecture, sections, sources };
+}
+
+/**
+ * Название из темы: первая фраза без точки в конце. Длинная режется по
+ * границе слова и получает «…» — а не обрывается посреди слова.
+ */
+function titleFromTopic(topic: string): string {
+  const first = topic.split(/(?<=[.!?])\s|\n/)[0]!.trim().replace(/\.+$/, "");
+  if (first === "") return topic.slice(0, 70);
+  if (first.length <= 70) return first;
+  const cut = first.slice(0, 71).replace(/\s+\S*$/, "").replace(/[\s,;:—–-]+$/, "");
+  return `${cut !== "" && cut.length <= 70 ? cut : first.slice(0, 70)}…`;
 }
 
 router.get("/lectures", async (req, res): Promise<void> => {
@@ -52,30 +84,32 @@ router.get("/lectures", async (req, res): Promise<void> => {
 });
 
 router.get("/lectures/:id", async (req, res): Promise<void> => {
-  const full = await loadFull(Number(req.params.id), req.user!.id);
+  const full = await loadFull(req.params.id, req.user!.id);
   if (!full) {
-    res.status(404).json({ message: "Лекция не найдена" });
+    res.status(404).json(NOT_FOUND);
     return;
   }
   res.json(full);
 });
 
-/** Переложить лекцию в папку библиотеки — она такой же житель, как книга. */
+/**
+ * Переименовать лекцию или переложить её в папку библиотеки — она такой же
+ * житель, как книга. Копия текста в поиске меняется вместе с ней.
+ */
 router.patch("/lectures/:id", async (req, res): Promise<void> => {
-  const id = Number(req.params.id);
-  const [lecture] = Number.isInteger(id)
-    ? await db
-        .select({ id: lecturesTable.id })
-        .from(lecturesTable)
-        .where(and(eq(lecturesTable.id, id), eq(lecturesTable.ownerId, req.user!.id)))
-        .limit(1)
-    : [];
+  const lecture = await loadLecture(req.params.id, req.user!.id);
   if (!lecture) {
-    res.status(404).json({ message: "Лекция не найдена" });
+    res.status(404).json(NOT_FOUND);
     return;
   }
 
   const body = req.body ?? {};
+  const title: string | undefined =
+    "title" in body ? (typeof body.title === "string" ? body.title.trim() : "") : undefined;
+  if (title !== undefined && (title === "" || title.length > 200)) {
+    res.status(400).json({ message: "Название — от 1 до 200 знаков" });
+    return;
+  }
   if ("folderId" in body) {
     const folderId = await ownFolderId(body.folderId, req.user!.id);
     if (folderId === undefined) {
@@ -87,6 +121,13 @@ router.patch("/lectures/:id", async (req, res): Promise<void> => {
     await db
       .update(documentsTable)
       .set({ folderId })
+      .where(eq(documentsTable.lectureId, lecture.id));
+  }
+  if (title !== undefined) {
+    await db.update(lecturesTable).set({ title }).where(eq(lecturesTable.id, lecture.id));
+    await db
+      .update(documentsTable)
+      .set({ title })
       .where(eq(documentsTable.lectureId, lecture.id));
   }
   res.json({ ok: true });
@@ -126,9 +167,8 @@ router.post("/lectures", async (req, res): Promise<void> => {
     useResearch,
     // Акцентов может быть несколько — или ни одного.
     focus: Array.isArray(body.focus)
-      ? body.focus.filter(
-          (f: unknown): f is LectureFocus =>
-            f === "clinical" || f === "historical" || f === "theoretical",
+      ? body.focus.filter((f: unknown): f is LectureFocus =>
+          (LECTURE_FOCI as readonly unknown[]).includes(f),
         )
       : [],
   };
@@ -136,7 +176,7 @@ router.post("/lectures", async (req, res): Promise<void> => {
   const title =
     typeof body.title === "string" && body.title.trim() !== ""
       ? body.title.trim()
-      : topic.slice(0, 70);
+      : titleFromTopic(topic);
 
   const [lecture] = await db
     .insert(lecturesTable)
@@ -155,15 +195,9 @@ router.post("/lectures", async (req, res): Promise<void> => {
 
 /** Правка плана до утверждения: автор может переписать, переставить, удалить. */
 router.patch("/lectures/:id/plan", async (req, res): Promise<void> => {
-  const id = Number(req.params.id);
-  const [lecture] = await db
-    .select()
-    .from(lecturesTable)
-    .where(and(eq(lecturesTable.id, id), eq(lecturesTable.ownerId, req.user!.id)))
-    .limit(1);
-
+  const lecture = await loadLecture(req.params.id, req.user!.id);
   if (!lecture) {
-    res.status(404).json({ message: "Лекция не найдена" });
+    res.status(404).json(NOT_FOUND);
     return;
   }
   if (lecture.planApproved) {
@@ -205,7 +239,7 @@ router.patch("/lectures/:id/plan", async (req, res): Promise<void> => {
   const saved = await db
     .update(lecturesTable)
     .set({ plan })
-    .where(and(eq(lecturesTable.id, id), ne(lecturesTable.status, LECTURE_PLANNING)))
+    .where(and(eq(lecturesTable.id, lecture.id), ne(lecturesTable.status, LECTURE_PLANNING)))
     .returning({ id: lecturesTable.id });
   if (saved.length === 0) {
     res.status(409).json({ message: PLAN_BUSY_MESSAGE });
@@ -216,17 +250,12 @@ router.patch("/lectures/:id/plan", async (req, res): Promise<void> => {
 
 /** Точка, где автор остаётся автором: после утверждения начинается письмо. */
 router.post("/lectures/:id/plan/approve", async (req, res): Promise<void> => {
-  const id = Number(req.params.id);
-  const [lecture] = await db
-    .select()
-    .from(lecturesTable)
-    .where(and(eq(lecturesTable.id, id), eq(lecturesTable.ownerId, req.user!.id)))
-    .limit(1);
-
+  const lecture = await loadLecture(req.params.id, req.user!.id);
   if (!lecture) {
-    res.status(404).json({ message: "Лекция не найдена" });
+    res.status(404).json(NOT_FOUND);
     return;
   }
+  const id = lecture.id;
   const plan = lecture.plan ?? [];
   if (plan.length === 0) {
     res.status(409).json({ message: "План пуст" });
@@ -263,50 +292,113 @@ router.post("/lectures/:id/plan/approve", async (req, res): Promise<void> => {
   res.status(202).json({ ok: true });
 });
 
+/**
+ * Повтор после ошибки. План не утверждён — составляем его заново, утверждён —
+ * дописываем главы: готовые и правленные автором письмо пропускает само.
+ * Бриф хранится в лекции, поэтому задаче ничего передавать не нужно.
+ */
+router.post("/lectures/:id/retry", async (req, res): Promise<void> => {
+  const lecture = await loadLecture(req.params.id, req.user!.id);
+  if (!lecture) {
+    res.status(404).json(NOT_FOUND);
+    return;
+  }
+  if (lecture.status !== "error") {
+    res.status(409).json({ message: "Повторять нечего — ошибки нет" });
+    return;
+  }
+
+  // Лекция в ошибке, а задача ещё в очереди или в работе (сбой между концом
+  // задачи и onGiveUp) — вторая задача писала бы те же главы параллельно.
+  const [running] = await db
+    .select({ id: jobsTable.id })
+    .from(jobsTable)
+    .where(
+      and(
+        inArray(jobsTable.kind, ["lecture.plan", "lecture.write"]),
+        eq(jobsTable.entityId, lecture.id),
+        inArray(jobsTable.status, ["queued", "running"]),
+      ),
+    )
+    .limit(1);
+  if (running) {
+    res.status(409).json({ message: "Лекция уже в работе" });
+    return;
+  }
+
+  // Смена статуса и задача — в одной транзакции: лекция «в работе» без задачи
+  // висела бы вечно. Условие status = 'error' в UPDATE закрывает двойной клик.
+  const kind = lecture.planApproved ? "lecture.write" : "lecture.plan";
+  const queued = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(lecturesTable)
+      .set({
+        status: lecture.planApproved ? "writing" : "planning",
+        statusMessage: "В очереди…",
+        error: null,
+      })
+      .where(and(eq(lecturesTable.id, lecture.id), eq(lecturesTable.status, "error")))
+      .returning({ id: lecturesTable.id });
+    if (!updated) return false;
+    await tx.insert(jobsTable).values({ kind, entityId: lecture.id, payload: {} });
+    return true;
+  });
+  if (!queued) {
+    res.status(409).json({ message: "Повторять нечего — ошибки нет" });
+    return;
+  }
+  res.status(202).json({ ok: true });
+});
+
 /** Правка главы автором. С этого момента глава считается его, а не машины. */
 router.patch("/lectures/:id/sections/:sectionId", async (req, res): Promise<void> => {
-  const id = Number(req.params.id);
-  const sectionId = Number(req.params.sectionId);
-  const text = typeof req.body?.text === "string" ? req.body.text : null;
-
-  if (text === null) {
+  const text = typeof req.body?.text === "string" ? req.body.text : "";
+  // Пустая глава пропала бы с экрана вместе с кнопкой «Править», а машина
+  // правленную главу не переписывает — вернуть её было бы нечем.
+  if (text.trim() === "") {
     res.status(400).json({ message: "Нужен текст" });
     return;
   }
 
-  const [lecture] = await db
-    .select()
-    .from(lecturesTable)
-    .where(and(eq(lecturesTable.id, id), eq(lecturesTable.ownerId, req.user!.id)))
-    .limit(1);
+  const lecture = await loadLecture(req.params.id, req.user!.id);
   if (!lecture) {
-    res.status(404).json({ message: "Лекция не найдена" });
+    res.status(404).json(NOT_FOUND);
+    return;
+  }
+  const sectionId = parseId(req.params.sectionId);
+  const saved =
+    sectionId === null
+      ? []
+      : await db
+          .update(lectureSectionsTable)
+          .set({ text, editedByHuman: true, status: "ready" })
+          .where(
+            and(
+              eq(lectureSectionsTable.id, sectionId),
+              eq(lectureSectionsTable.lectureId, lecture.id),
+            ),
+          )
+          .returning({ id: lectureSectionsTable.id });
+  if (saved.length === 0) {
+    res.status(404).json({ message: "Глава не найдена" });
     return;
   }
 
-  await db
-    .update(lectureSectionsTable)
-    .set({ text, editedByHuman: true, status: "ready" })
-    .where(
-      and(eq(lectureSectionsTable.id, sectionId), eq(lectureSectionsTable.lectureId, id)),
-    );
-
   // Правка главы должна доехать до поиска: иначе следующая лекция будет
   // опираться на текст, которого автор уже не признаёт.
-  if (lecture.status === "ready") await lectureToLibrary(lecture.id).catch(() => undefined);
+  if (lecture.status === "ready") {
+    await lectureToLibrary(lecture.id).catch((err) =>
+      req.log.error({ err, id: lecture.id }, "Не смог обновить копию лекции в библиотеке"),
+    );
+  }
 
   res.json({ ok: true });
 });
 
 router.delete("/lectures/:id", async (req, res): Promise<void> => {
-  const id = Number(req.params.id);
-  const [lecture] = await db
-    .select()
-    .from(lecturesTable)
-    .where(and(eq(lecturesTable.id, id), eq(lecturesTable.ownerId, req.user!.id)))
-    .limit(1);
+  const lecture = await loadLecture(req.params.id, req.user!.id);
   if (!lecture) {
-    res.status(404).json({ message: "Лекция не найдена" });
+    res.status(404).json(NOT_FOUND);
     return;
   }
   // Лекция, главы и источники уходят в архив триггерами (каскад по FK тоже),
@@ -321,19 +413,17 @@ router.delete("/lectures/:id", async (req, res): Promise<void> => {
   // Текст лекции в поиске — часть самой лекции, а не отдельный документ:
   // уходит вместе с ней, иначе в библиотеке остался бы призрак.
   await dropLectureCopies(lecture.id);
-  await db.delete(lecturesTable).where(eq(lecturesTable.id, id));
+  await db.delete(lecturesTable).where(eq(lecturesTable.id, lecture.id));
   res.sendStatus(204);
 });
 
 /** Выгрузка в Markdown: текст глав со списком источников под каждой. */
 router.get("/lectures/:id/export", async (req, res): Promise<void> => {
-  const full = await loadFull(Number(req.params.id), req.user!.id);
+  const full = await loadFull(req.params.id, req.user!.id);
   if (!full) {
-    res.status(404).json({ message: "Лекция не найдена" });
+    res.status(404).json(NOT_FOUND);
     return;
   }
-
-  const safe = full.title.replace(/[^\p{L}\p{N} .-]/gu, "").slice(0, 60) || "лекция";
 
   // Word — для кафедр и оргкомитетов; он же открывается Google Документами
   // после загрузки на Диск. Markdown — для всех остальных случаев.
@@ -343,19 +433,13 @@ router.get("/lectures/:id/export", async (req, res): Promise<void> => {
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename*=UTF-8''${encodeURIComponent(`${safe}.docx`)}`,
-    );
+    res.setHeader("Content-Disposition", attachmentHeader(full.title, "docx", "лекция"));
     res.send(buffer);
     return;
   }
 
   res.setHeader("Content-Type", "text/markdown; charset=utf-8");
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename*=UTF-8''${encodeURIComponent(`${safe}.md`)}`,
-  );
+  res.setHeader("Content-Disposition", attachmentHeader(full.title, "md", "лекция"));
   res.send(buildLectureMarkdown(full));
 });
 
