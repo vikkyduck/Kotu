@@ -122,12 +122,30 @@ async function finish(job: Job, error?: string): Promise<void> {
 
 let running = false;
 
-/** Однопоточный цикл: расшифровка упирается в процессор, параллелить нечего. */
-export function startWorker(): void {
+/**
+ * Однопоточный цикл: расшифровка упирается в процессор, параллелить нечего.
+ * canRun — можно ли брать новую задачу. Сейчас это «архив включён»: если он
+ * выключится на ходу (пропал триггер, база не отвечает), новые задачи ждут,
+ * чтобы машина не писала поверх текстов мимо архива.
+ */
+export function startWorker(canRun: () => boolean = () => true): void {
   if (running) return;
   running = true;
+  let paused = false;
 
   const tick = async (): Promise<void> => {
+    if (!canRun()) {
+      if (!paused) {
+        paused = true;
+        logger.warn("Очередь стоит: архив не включён — задачи ждут");
+      }
+      setTimeout(() => void tick(), IDLE_POLL_MS);
+      return;
+    }
+    if (paused) {
+      paused = false;
+      logger.info("Архив снова включён — очередь продолжает работу");
+    }
     try {
       const job = await claimNext();
       if (!job) {
