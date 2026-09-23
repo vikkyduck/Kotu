@@ -87,11 +87,15 @@ async function run(job: Job): Promise<void> {
   } catch (err) {
     // Понятная человеку формулировка попадёт в last_error и дальше — в карточку
     // записи, если попытки закончатся.
-    const message =
-      err instanceof ChunkError
-        ? err.userMessage
-        : "Не удалось распознать запись. Попробуйте другой файл.";
+    const message = err instanceof ChunkError ? err.userMessage : "Не удалось распознать запись";
     logger.error({ err, id }, "Расшифровка сорвалась");
+    // До повтора очередь ждёт до двух минут — полоса не должна молча стоять.
+    // Попытки кончились — onGiveUp тут же перепишет строку в ошибку.
+    await db
+      .update(transcriptionsTable)
+      .set({ statusMessage: "Не получилось, пробую ещё раз…" })
+      .where(eq(transcriptionsTable.id, id))
+      .catch((e) => logger.error({ err: e, id }, "Не смог записать статус повтора"));
     throw new Error(message);
   }
 }
