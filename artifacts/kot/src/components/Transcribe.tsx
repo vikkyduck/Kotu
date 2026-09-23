@@ -8,6 +8,7 @@ import {
 import type { Document } from '@workspace/db/schema';
 import { useApp } from '@/hooks/use-app';
 import { useUnsavedWarning } from '@/hooks/use-draft';
+import { LIBRARY_CHANGED } from '@/hooks/use-library-data';
 import { saveBlob, send } from '@/lib/http';
 import { Icon } from '@/lib/icons';
 import { Celebrate } from '@/lib/celebrate';
@@ -148,7 +149,7 @@ export function Transcribe() {
       // Библиотеке — сигнал перечитать списки: новой записи в «сейчас в работе»
       // иначе не будет, пока не уйти с главной и не вернуться.
       if (here.current.screen !== 's-transcribe' || here.current.activeTranscriptionId != null) {
-        window.dispatchEvent(new Event('kot:library'));
+        window.dispatchEvent(new Event(LIBRARY_CHANGED));
         toast('Запись загружена — расшифровываю');
         return;
       }
