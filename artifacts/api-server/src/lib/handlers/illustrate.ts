@@ -10,7 +10,7 @@ import {
   type StylePack,
   type ImageSide,
 } from "@workspace/db";
-import { layoutSided } from "@workspace/db/slides";
+import { layoutHasImage, layoutSided } from "@workspace/db/slides";
 import { askJson, type ImageAttachment } from "../claude";
 import { geminiJson } from "../gemini";
 import { renderIllustration } from "../images";
@@ -20,7 +20,7 @@ import { deckToLibrary } from "../work-doc";
 import { writeDataFile } from "../archive";
 import { deckStylePack } from "../deck-style";
 import { logger } from "../logger";
-import { onGiveUp } from "./storyboard";
+import { NO_PACK, onGiveUp } from "./storyboard";
 
 /** Потолок перерисовок: после второй попытки слайд идёт с тем, что есть. */
 const MAX_ATTEMPTS = 2;
@@ -233,7 +233,11 @@ async function run(job: Job): Promise<void> {
         inArray(deckSlidesTable.imageStatus, [...pending]),
       ),
     )
-    .orderBy(asc(deckSlidesTable.ord));
+    .orderBy(asc(deckSlidesTable.ord))
+    // Макет без образа (финал, схема) картинку не покажет, даже если бриф
+    // остался от прежнего макета: рисовать её — платить зря. Бриф не трогаем —
+    // вернёт автор макет, образ снова будет нужен.
+    .then((rows) => rows.filter((s) => layoutHasImage(s.layout)));
 
   const slides = allTargets.slice(0, MAX_IMAGES);
   if (allTargets.length > slides.length) {
@@ -246,7 +250,7 @@ async function run(job: Job): Promise<void> {
   // Стиль живёт в базе, а не в коде: это вопрос вкуса автора. Без пакета
   // рисовать нечем — нет ни мастер-промпта, ни запретов.
   const pack = await deckStylePack(deck.stylePackId);
-  if (!pack) throw new Error("Стилевой пакет не найден");
+  if (!pack) throw new Error(NO_PACK);
 
   await db.update(decksTable).set({ status: "drawing", error: null }).where(eq(decksTable.id, id));
 
@@ -254,7 +258,9 @@ async function run(job: Job): Promise<void> {
   for (const [i, slide] of slides.entries()) {
     await db
       .update(decksTable)
-      .set({ statusMessage: `Рисую образ ${i + 1} из ${slides.length}…` })
+      // Остаток, а не «N из M»: хвост за потолком прогона дорисует следующая
+      // задача, и счёт «из 12», а потом «1 из 4» шёл бы назад.
+      .set({ statusMessage: `Рисую образы — осталось ${allTargets.length - i}…` })
       .where(eq(decksTable.id, id));
     await db
       .update(deckSlidesTable)

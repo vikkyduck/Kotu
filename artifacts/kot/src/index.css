@@ -756,12 +756,13 @@ input.field,textarea.topic,.sheet textarea{font-size:17px}
 .stg-plate{position:relative;overflow:hidden;align-self:stretch;min-width:0}
 .stg-band{overflow:hidden;width:100%;position:relative}
 .stg-img{width:100%;height:100%;object-fit:cover;display:block}
-.stg-display{font-family:var(--display);font-weight:800;line-height:1.06;
+/* Межстрочный у текста пластины задаёт SlideStage из SLIDE_LEADING — как в выгрузке */
+.stg-display{font-family:var(--display);font-weight:800;
   letter-spacing:-.015em;overflow-wrap:anywhere}
-.stg-body{line-height:1.35;overflow-wrap:anywhere;margin:0}
+.stg-body{overflow-wrap:anywhere;margin:0}
 .stg-eyebrow{text-transform:uppercase;letter-spacing:.24em;font-weight:500}
 .stg-flow{display:flex;flex-direction:column;gap:1.1cqw;flex:1;min-height:0;overflow:hidden}
-.stg-bullet{display:flex;gap:1.3cqw;line-height:1.25}
+.stg-bullet{display:flex;gap:1.3cqw}
 .stg-dia{font-family:var(--display);flex-shrink:0}
 .stg-quote{flex:1}
 .stg-cols{display:flex;flex:1;min-height:0;gap:3cqw;margin-top:.8cqw}
@@ -769,7 +770,7 @@ input.field,textarea.topic,.sheet textarea{font-size:17px}
 .stg-cell+.stg-cell{border-left:1px solid;border-color:inherit;padding-left:3cqw}
 .stg-folio{position:absolute;left:var(--m);bottom:3.4cqw;letter-spacing:.2em}
 .stg-cap{position:absolute;left:3cqw;right:3cqw;bottom:2.4cqw;text-align:center;
-  text-transform:uppercase;letter-spacing:.18em}
+  text-transform:uppercase;letter-spacing:.18em;font-weight:500}
 .stg-flowbox{display:flex;flex-direction:column;flex:1;min-height:0;
   justify-content:center;align-items:center}
 .stg-step{display:flex;flex-direction:column;align-items:center;width:52%}
