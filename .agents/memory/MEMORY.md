@@ -1,4 +1,0 @@
-- [OpenAI AI Integration proxy quirks](openai-integration-quirks.md) — proxy rejects TTS (/audio/speech); transcription works and detects format from filename.
-- [Long recording transcription](long-recording-transcription.md) — >25MB audio is ffmpeg-chunked + transcribed as a polled background job (status/progress on the row), not one long request.
-- [API server port orphan](api-server-port-orphan.md) — recurring EADDRINUSE 8080 = orphaned node from restart; fix is `exec node` in dev script + SIGTERM/SIGINT graceful shutdown.
-- [Deploy as Reserved VM, not autoscale](deployment-target-vm-required.md) — transcription is a post-response in-memory background job; autoscale freezes the instance and "loses" recordings. User must pick Reserved VM in the Publish dialog (agent can't set deploymentTarget).

@@ -10,93 +10,14 @@ globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
 
-// Some packages may not be bundleable, so we externalize them, we can add more here as needed.
-// Some of the packages below may not be imported or installed, but we're adding them in case they are in the future.
-// Examples of unbundleable packages:
-// - uses native modules and loads them dynamically (e.g. sharp)
-// - use path traversal to read files (e.g. @google-cloud/secret-manager loads sibling .proto files)
 // Помни: на сервере нет node_modules, поэтому external = «в проде этого пакета
 // не будет». Годится только то, без чего код живёт (require в try/catch).
+// Всё прочее бандлится, а чего нет ни в бандле, ни здесь — валит сборку.
 export const external = [
+  // нативные бинарные модули
   "*.node",
-  "sharp",
-  "better-sqlite3",
-  "sqlite3",
-  "canvas",
-  "bcrypt",
-  "argon2",
-  "fsevents",
-  "re2",
-  "farmhash",
-  "xxhash-addon",
-  "bufferutil",
-  "utf-8-validate",
-  "ssh2",
-  "cpu-features",
-  "dtrace-provider",
-  "isolated-vm",
-  "lightningcss",
+  // pg берёт pg-native в try/catch и без него работает на чистом JS.
   "pg-native",
-  "oracledb",
-  "mongodb-client-encryption",
-  // nodemailer намеренно НЕ исключён: на сервере нет node_modules,
-  // туда уезжает только бандл — значит почта должна быть внутри него.
-  "handlebars",
-  "knex",
-  "typeorm",
-  "protobufjs",
-  "onnxruntime-node",
-  "@tensorflow/*",
-  "@prisma/client",
-  "@mikro-orm/*",
-  "@grpc/*",
-  // @swc/core — нативный бинарь, ему в бандле не место; а вот чистый JS
-  // @swc/helpers обязан бандлиться: на сервере нет node_modules.
-  "@swc/core",
-  "@swc/wasm",
-  "@aws-sdk/*",
-  "@azure/*",
-  "@opentelemetry/*",
-  "@google-cloud/*",
-  "@google/*",
-  "googleapis",
-  "firebase-admin",
-  "@parcel/watcher",
-  "@sentry/profiling-node",
-  "@tree-sitter/*",
-  "aws-sdk",
-  "classic-level",
-  "dd-trace",
-  "ffi-napi",
-  "grpc",
-  "hiredis",
-  "kerberos",
-  "leveldown",
-  "miniflare",
-  "mysql2",
-  "newrelic",
-  "odbc",
-  "piscina",
-  "realm",
-  "ref-napi",
-  "rocksdb",
-  "sass-embedded",
-  "sequelize",
-  "serialport",
-  "snappy",
-  "tinypool",
-  "usb",
-  "workerd",
-  "wrangler",
-  "zeromq",
-  "zeromq-prebuilt",
-  "playwright",
-  "puppeteer",
-  "puppeteer-core",
-  "electron",
-  // Ниже — не выбор, а признание: эти пакеты грузятся в рантайме по строке
-  // внутри try/catch, и их отсутствие на сервере код переживает. Список
-  // нужен проверке бандла: всё, чего в нём нет, валит сборку.
   // pdfjs (через pdf-parse) берёт canvas только для отрисовки страниц,
   // текст из PDF достаётся без него.
   "@napi-rs/canvas",
