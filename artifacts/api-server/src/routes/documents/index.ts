@@ -1,18 +1,33 @@
+import { stat } from "node:fs/promises";
+import path from "node:path";
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { eq, and, desc, sql, inArray } from "drizzle-orm";
-import { db, documentsTable, docChunksTable, foldersTable } from "@workspace/db";
+import {
+  db,
+  documentsTable,
+  foldersTable,
+  jobsTable,
+  lecturesTable,
+  decksTable,
+  type Document,
+} from "@workspace/db";
 import { enqueue } from "../../lib/jobs";
 import { LIBRARY_DIR } from "../../lib/paths";
 import { embedAll } from "../../lib/embeddings";
 import { ownFolderId } from "../../lib/folders";
-import { decodeUploadName } from "../../lib/filename";
+import { attachmentHeader, decodeUploadName } from "../../lib/filename";
+import { parseId } from "../../lib/parse-id";
+import { resolveInsideDir } from "../../lib/uploads";
 import { archiveAndRemove, archiveUpload, requireArchive } from "../../lib/archive";
+import { logger } from "../../lib/logger";
 
 // Книги бывают толстыми, но не гигабайтными.
 const MAX_FILE_BYTES = 200 * 1024 * 1024;
 
-const ALLOWED_EXT = /\.(pdf|docx|epub|txt|md|markdown|html?|rtf)$/i;
+// Ровно то, что умеет разобрать extractText (lib/documents.ts): RTF, например,
+// ушёл бы туда «как текст» и лёг в поиск разметкой {\rtf1…}.
+const ALLOWED_EXT = /\.(pdf|docx|epub|txt|md|markdown|html?)$/i;
 
 const upload = multer({
   dest: LIBRARY_DIR,
@@ -37,38 +52,121 @@ router.get("/documents", async (req, res): Promise<void> => {
   res.json(rows);
 });
 
-router.get("/documents/:id", async (req, res): Promise<void> => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    res.status(400).json({ message: "Неверный адрес документа" });
-    return;
-  }
-
+/** Документ автора по номеру из адреса; чужой, удалённый и кривой номер — null (404). */
+async function ownDoc(rawId: unknown, ownerId: number): Promise<Document | null> {
+  const id = parseId(rawId);
+  if (id === null) return null;
   const [doc] = await db
     .select()
     .from(documentsTable)
-    .where(and(eq(documentsTable.id, id), eq(documentsTable.ownerId, req.user!.id)))
+    .where(and(eq(documentsTable.id, id), eq(documentsTable.ownerId, ownerId)))
     .limit(1);
+  return doc ?? null;
+}
 
+/** Последняя задача разбора документа: в её payload — путь к файлу и исходное имя. */
+async function lastIngest(docId: number) {
+  const [job] = await db
+    .select()
+    .from(jobsTable)
+    .where(and(eq(jobsTable.kind, "doc.ingest"), eq(jobsTable.entityId, docId)))
+    .orderBy(desc(jobsTable.id))
+    .limit(1);
+  return job ?? null;
+}
+
+interface IngestPayload {
+  sourcePath: string;
+  mime: string;
+  filename: string;
+}
+
+/**
+ * Сам загруженный файл — открыть во вкладке. inline, а не attachment: PDF
+ * браузер покажет сразу, остальное скачает под исходным именем.
+ */
+router.get("/documents/:id/file", async (req, res): Promise<void> => {
+  const doc = await ownDoc(req.params.id, req.user!.id);
+  const file = doc ? resolveInsideDir(LIBRARY_DIR, doc.sourcePath) : null;
+  const onDisk = file ? await stat(file).then((st) => st.isFile(), () => false) : false;
+  if (!doc || !file || !onDisk) {
+    res.status(404).json({ message: "Файл не найден" });
+    return;
+  }
+  const prev = (await lastIngest(doc.id))?.payload as Partial<IngestPayload> | undefined;
+  const ext = path.extname(typeof prev?.filename === "string" ? prev.filename : "").slice(1);
+  const headers: Record<string, string> = {
+    // Кириллица в .txt без charset открылась бы кракозябрами.
+    "Content-Type": doc.mime.startsWith("text/") && !doc.mime.includes("charset")
+      ? `${doc.mime}; charset=utf-8`
+      : doc.mime,
+  };
+  if (ext) headers["Content-Disposition"] = attachmentHeader(doc.title, ext, "document").replace(/^attachment/, "inline");
+  res.sendFile(file, { headers });
+});
+
+/**
+ * Разобрать документ заново — после ошибки. Очередь сама делает три попытки
+ * за пару минут; если причина была дольше (лежал сервис векторов), без
+ * повтора оставалось только удалить книгу и загрузить снова.
+ */
+router.post("/documents/:id/retry", async (req, res): Promise<void> => {
+  const doc = await ownDoc(req.params.id, req.user!.id);
   if (!doc) {
     res.status(404).json({ message: "Документ не найден" });
     return;
   }
-  res.json(doc);
+  if (doc.status !== "error") {
+    res.status(409).json({ message: "Повторять нечего — ошибки нет" });
+    return;
+  }
+  const lastJob = await lastIngest(doc.id);
+  // Документ в ошибке, а задача ещё в очереди или в работе — вторая задача
+  // на тот же файл разбирала бы его дважды. Ждём, пока текущая закончит.
+  if (lastJob && (lastJob.status === "queued" || lastJob.status === "running")) {
+    res.status(409).json({ message: "Документ уже в работе" });
+    return;
+  }
+  const prev = (lastJob?.payload ?? {}) as Partial<IngestPayload>;
+  const sourcePath = resolveInsideDir(LIBRARY_DIR, prev.sourcePath ?? doc.sourcePath);
+  const onDisk = sourcePath
+    ? await stat(sourcePath).then((st) => st.isFile(), () => false)
+    : false;
+  if (!sourcePath || !onDisk) {
+    res.status(409).json({ message: "Файл не сохранился на сервере — загрузите его заново" });
+    return;
+  }
+  const payload: IngestPayload = {
+    sourcePath,
+    mime: typeof prev.mime === "string" ? prev.mime : doc.mime,
+    filename: typeof prev.filename === "string" ? prev.filename : doc.title,
+  };
+
+  // Статус и задача — в одной транзакции: документ «в разборе» без задачи
+  // висел бы вечно. Условие status = 'error' в UPDATE закрывает двойной клик.
+  const queued = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(documentsTable)
+      .set({ status: "parsing", statusMessage: "В очереди…", error: null })
+      .where(and(eq(documentsTable.id, doc.id), eq(documentsTable.status, "error")))
+      .returning();
+    if (!updated) return null;
+    await tx.insert(jobsTable).values({
+      kind: "doc.ingest",
+      entityId: doc.id,
+      payload: payload as unknown as Record<string, unknown>,
+    });
+    return updated;
+  });
+  if (!queued) {
+    res.status(409).json({ message: "Повторять нечего — ошибки нет" });
+    return;
+  }
+  res.status(202).json(queued);
 });
 
 router.delete("/documents/:id", async (req, res): Promise<void> => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    res.status(404).json({ message: "Документ не найден" });
-    return;
-  }
-  const [doc] = await db
-    .select()
-    .from(documentsTable)
-    .where(and(eq(documentsTable.id, id), eq(documentsTable.ownerId, req.user!.id)))
-    .limit(1);
-
+  const doc = await ownDoc(req.params.id, req.user!.id);
   if (!doc) {
     res.status(404).json({ message: "Документ не найден" });
     return;
@@ -91,20 +189,13 @@ router.delete("/documents/:id", async (req, res): Promise<void> => {
     originalName: doc.title,
     mime: doc.mime,
   });
-  await db.delete(documentsTable).where(eq(documentsTable.id, id));
+  await db.delete(documentsTable).where(eq(documentsTable.id, doc.id));
   res.sendStatus(204);
 });
 
-/** Переложить документ в папку (или вынуть: folderId null). */
+/** Переложить документ в папку (или вынуть: folderId null) и переименовать. */
 router.patch("/documents/:id", async (req, res): Promise<void> => {
-  const id = Number(req.params.id);
-  const [doc] = Number.isInteger(id)
-    ? await db
-        .select()
-        .from(documentsTable)
-        .where(and(eq(documentsTable.id, id), eq(documentsTable.ownerId, req.user!.id)))
-        .limit(1)
-    : [];
+  const doc = await ownDoc(req.params.id, req.user!.id);
   if (!doc) {
     res.status(404).json({ message: "Документ не найден" });
     return;
@@ -125,7 +216,7 @@ router.patch("/documents/:id", async (req, res): Promise<void> => {
     // У библиотечной копии расшифровки имя нейтральное и своё: правка здесь
     // перезатёрлась бы следующей синхронизацией, а имя из зоны А сюда нельзя.
     if (doc.kind === "transcript") {
-      res.status(400).json({ message: "Переименуйте саму запись — на её экране" });
+      res.status(400).json({ message: "Расшифровку переименовывают как запись, а не как копию" });
       return;
     }
     patch.title = body.title.trim().slice(0, 200);
@@ -194,17 +285,32 @@ router.delete("/folders/:id", async (req, res): Promise<void> => {
   const id = Number(req.params.id);
   // Строка папки уходит в архив триггером — без архива не удаляем.
   await requireArchive();
-  const [row] = Number.isInteger(id)
-    ? await db
-        .delete(foldersTable)
-        .where(and(eq(foldersTable.id, id), eq(foldersTable.ownerId, req.user!.id)))
-        .returning()
-    : [];
+  const ownerId = req.user!.id;
+  const row = Number.isInteger(id)
+    ? await db.transaction(async (tx) => {
+        const [folder] = await tx
+          .delete(foldersTable)
+          .where(and(eq(foldersTable.id, id), eq(foldersTable.ownerId, ownerId)))
+          .returning();
+        if (!folder) return null;
+        // Документы выносит «без папки» внешний ключ (set null), а у лекций и
+        // презентаций ключа нет: без этого они ссылались бы на исчезнувшую
+        // папку и пропадали из библиотеки — ни в корне, ни в папке.
+        await tx
+          .update(lecturesTable)
+          .set({ folderId: null })
+          .where(and(eq(lecturesTable.folderId, id), eq(lecturesTable.ownerId, ownerId)));
+        await tx
+          .update(decksTable)
+          .set({ folderId: null })
+          .where(and(eq(decksTable.folderId, id), eq(decksTable.ownerId, ownerId)));
+        return folder;
+      })
+    : null;
   if (!row) {
     res.status(404).json({ message: "Папка не найдена" });
     return;
   }
-  // Документы остаются «без папки» — FK set null сделал своё.
   res.sendStatus(204);
 });
 
@@ -250,16 +356,7 @@ router.post(
 
     // Файл можно бросить сразу на папку — тогда он и уляжется в неё, без
     // второго действия «а теперь переложи». Чужая папка молча игнорируется.
-    let folderId: number | null = null;
-    const rawFolderId = Number(req.body?.folderId);
-    if (Number.isInteger(rawFolderId)) {
-      const [folder] = await db
-        .select({ id: foldersTable.id })
-        .from(foldersTable)
-        .where(and(eq(foldersTable.id, rawFolderId), eq(foldersTable.ownerId, req.user!.id)))
-        .limit(1);
-      folderId = folder?.id ?? null;
-    }
+    const folderId = (await ownFolderId(req.body?.folderId, req.user!.id)) ?? null;
 
     const [doc] = await db
       .insert(documentsTable)
@@ -351,7 +448,12 @@ router.get("/search", async (req, res): Promise<void> => {
     return;
   }
 
-  const [vector] = await embedAll([q], undefined, "query");
+  // Сервис векторов лежит — embedAll бросает; без перехвата клиент получил
+  // бы голую 500 вместо понятной фразы ниже.
+  const [vector] = await embedAll([q], undefined, "query").catch((err: unknown) => {
+    logger.warn({ err }, "Поиск: не удалось посчитать вектор запроса");
+    return [];
+  });
   if (!vector) {
     res.status(503).json({ message: "Поиск сейчас недоступен — попробуйте чуть позже" });
     return;
