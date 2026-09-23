@@ -25,6 +25,9 @@ const act: ItemActions = {
   newDeck: vi.fn(),
   newLecture: vi.fn(),
   remove: vi.fn(),
+  rename: vi.fn(),
+  retry: vi.fn(),
+  openFile: vi.fn(),
 };
 
 const doc = (over: Partial<Doc> = {}): Doc => ({
@@ -116,6 +119,32 @@ describe('что лежит в библиотеке', () => {
     expect(without[0]?.meta).toBe('лекция · готова');
   });
 
+  test('копия ещё без фрагментов — в поиске её нет, подпись этого не обещает', () => {
+    const [item] = buildItems(
+      data({
+        docs: [doc({ id: 5, kind: 'lecture', lectureId: 1, status: 'parsing', chunkCount: 0 })],
+        lectures: [lecture()],
+      }),
+      act,
+    );
+    expect(item?.meta).toBe('лекция · готова');
+  });
+
+  test('готовая запись без библиотечной копии всё равно видна — одной карточкой', () => {
+    const done = transcription({ id: 3, status: 'done', title: 'Лекция о Винникотте' });
+    const alone = buildItems(data({ transcriptions: [done] }), act);
+    const withCopy = buildItems(
+      data({ transcriptions: [done], docs: [doc({ id: 9, kind: 'transcript', transcriptionId: 3 })] }),
+      act,
+    );
+
+    expect(alone.map((i) => i.key)).toEqual(['tr:3']);
+    expect(alone[0]?.title).toBe('Лекция о Винникотте');
+    // Строки в папке у неё нет — и перекладывать её некуда.
+    expect(alone[0]?.api).toBeUndefined();
+    expect(withCopy.map((i) => i.key)).toEqual(['doc:9']);
+  });
+
   test('свежее сверху', () => {
     const d = data({
       docs: [doc({ id: 1, createdAt: '2026-07-01T00:00:00Z' })],
@@ -191,6 +220,35 @@ describe('что можно сделать с материалом', () => {
     expect(without?.makeLecture).toBeUndefined();
     // Презентацию из лекции собирают напрямую — там главы целиком.
     expect(without?.makeDeck).toBeTypeOf('function');
+  });
+
+  test('книгу открывают файлом, а сломанную — разбирают заново', () => {
+    const [book] = buildItems(data({ docs: [doc({ id: 4 })] }), act);
+    const [broken] = buildItems(data({ docs: [doc({ id: 4, status: 'error' })] }), act);
+    book?.open?.();
+    broken?.open?.();
+    expect(act.openFile).toHaveBeenCalledWith('/api/documents/4/file');
+    expect(act.retry).toHaveBeenCalledWith('/api/documents/4/retry');
+  });
+
+  test('расшифровку переименовывают как запись — под её настоящим именем', () => {
+    const [item] = buildItems(
+      data({
+        docs: [doc({ kind: 'transcript', transcriptionId: 3, title: 'Расшифровка от 1 июля' })],
+        transcriptions: [transcription({ id: 3, status: 'done', title: 'Семинар, вторник' })],
+      }),
+      act,
+    );
+    expect(item?.title).toBe('Семинар, вторник');
+    item?.rename?.();
+    expect(act.rename).toHaveBeenCalledWith('/api/transcriptions/3', 'Семинар, вторник');
+  });
+
+  test('незаконченную лекцию можно убрать прямо из «в работе»', () => {
+    const [item] = buildWorking(data({ lectures: [lecture({ id: 2, status: 'error' })] }), act);
+    item?.del?.();
+    expect(act.remove).toHaveBeenCalledWith('/api/lectures/2', 'Лекция удалена');
+    expect(item?.api).toBeUndefined();
   });
 
   test('расшифровку удаляют вместе с записью, а не из библиотеки', () => {

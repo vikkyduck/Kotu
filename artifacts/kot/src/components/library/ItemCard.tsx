@@ -14,8 +14,6 @@ export type CardMenu = 'move' | 'use';
 
 interface Props {
   item: Item;
-  /** Незаконченную работу по папкам не раскладывают: она ещё не материал. */
-  movable: boolean;
   folders: Folder[];
   menu: CardMenu | null;
   onMenu: (menu: CardMenu | null) => void;
@@ -28,7 +26,6 @@ interface Props {
 
 export function ItemCard({
   item,
-  movable,
   folders,
   menu,
   onMenu,
@@ -44,6 +41,7 @@ export function ItemCard({
    * источник перетаскивания вверх по дереву и всё равно упирался бы в неё.
    */
   const [grabbable, setGrabbable] = useState(false);
+  const movable = item.api !== undefined;
   /** Удаление в два шага: спросили — и через несколько секунд забыли. */
   const [confirming, setConfirming] = useState(false);
 
@@ -89,6 +87,12 @@ export function ItemCard({
           </button>
         )}
 
+        {item.rename && (
+          <button className="btn ghost doc-move" title="Переименовать" onClick={item.rename}>
+            <Icon name="edit" />
+          </button>
+        )}
+
         {movable && (
           <button
             className="btn ghost doc-move"
@@ -101,11 +105,20 @@ export function ItemCard({
 
         {item.del ? (
           confirming ? (
-            <button className="btn danger doc-del" onClick={item.del}>
+            // Второй щелчок двойного клика по корзине попадает уже сюда —
+            // его (detail 2) не считаем подтверждением.
+            <button
+              key="confirm"
+              className="btn danger doc-del"
+              onClick={(e) => {
+                if (e.detail < 2) item.del?.();
+              }}
+            >
               Точно удалить?
             </button>
           ) : (
             <button
+              key="ask"
               className="btn ghost doc-del"
               title="Удалить"
               onClick={() => {
