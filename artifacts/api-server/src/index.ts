@@ -4,6 +4,7 @@ import { purgeExpiredSessions } from "./lib/auth";
 import { onJobEvents, requeueOrphans, startWorker } from "./lib/jobs";
 import { noticeDone, noticeFailed, safely } from "./lib/done-notice";
 import { startMcpServer } from "./lib/mcp";
+import { startSelfCheck } from "./lib/self-check";
 import { sweepTranscriptionsToLibrary } from "./lib/transcript-doc";
 import { sweepWorkToLibrary, sweepStuckDeckImages } from "./lib/work-doc";
 import { archiveState, ensureArchive, startFileSweep, whenArchiveReady } from "./lib/archive";
@@ -92,6 +93,9 @@ void whenArchiveReady().then(() => {
   // Все файлы данных — в архив: первичная загрузка того, что уже лежит на
   // диске, и страховка на случай места в коде, которое пишет мимо архива.
   startFileSweep();
+  // Модели, Whisper, векторы и почта на месте? Нет — сообщение владелице
+  // (lib/self-check.ts). Через минуту после старта, затем раз в 12 часов.
+  startSelfCheck();
 });
 
 // Порт открываем после первой попытки включить архив: пока её нет, изменения

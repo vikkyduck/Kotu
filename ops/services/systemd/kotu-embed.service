@@ -1,5 +1,7 @@
 [Unit]
 Description=Kotu local embeddings (multilingual-e5-large)
+# Упала - сообщение владелице в Telegram (kotu-alert@.service).
+OnFailure=kotu-alert@%n.service
 After=network.target
 
 [Service]

@@ -1,0 +1,14 @@
+#!/bin/bash
+# Сообщение владелице в Telegram через мост ПСИ (тот же путь, что lib/notify.ts).
+# Запуск: kotu-notify "текст". Нужны права kotu или root: мост пускает только их.
+# Код 0 - сообщение ушло (или такое же уже ушло за последние 10 минут).
+set -euo pipefail
+text=${1:?текст сообщения}
+socket=${CODEX_BRIDGE_SOCKET:-/run/psy-platform-bridge.sock}
+body=$(python3 -I -c 'import json, sys; print(json.dumps({"text": sys.argv[1][:3500]}))' "$text")
+reply=$(curl -sS -m 20 --unix-socket "$socket" -H 'content-type: application/json' \
+  --data-binary "$body" http://psy-platform-bridge/notify) || exit 1
+case "$reply" in
+  *'"sent": true'*|*'"sent":true'*|*'duplicate'*) exit 0 ;;
+  *) echo "мост не отправил сообщение: $reply" >&2; exit 1 ;;
+esac

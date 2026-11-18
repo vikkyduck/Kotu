@@ -1,0 +1,8 @@
+[Unit]
+Description=Сообщение владелице: служба %i завершилась ошибкой
+
+[Service]
+Type=oneshot
+# kotu входит в группу psy-platform: мост ПСИ пускает его к /notify.
+User=kotu
+ExecStart=/usr/local/bin/kotu-alert %i
