@@ -129,8 +129,8 @@ async function reviewImage(
   };
 }
 
-/** Один слайд: режиссура → рендер → приёмка, до двух попыток. */
-async function illustrateSlide(
+/** Один слайд: режиссура → рендер → приёмка, до двух попыток. Экспортирован для тестов. */
+export async function illustrateSlide(
   deckId: number,
   slide: DeckSlide,
   pack: StylePack,
@@ -176,10 +176,10 @@ async function illustrateSlide(
         .where(eq(deckImagesTable.id, row.id));
 
       // Приёмка упала (модель молчит) — картинка уже оплачена и на диске;
-      // ставим её без проверки, а не сжигаем вторую попытку впустую.
+      // ставим её без проверки, а не сжигаем вторую попытку впустую. Так же и
+      // при ожидании подписки Codex: отложенная задача начала бы слайд заново
+      // и заплатила бы за новую картинку, а эта осталась бы брошенной.
       const review = await reviewImage(slide, filePath, art.mime).catch((err) => {
-        // Ожидание подписки - не "приемка недоступна": задача подождет и продолжит.
-        if (err instanceof ModelWaitError) throw err;
         logger.warn({ err, slideId: slide.id }, "Приёмка недоступна — образ пойдёт без проверки");
         return { accept: true, verdict: "Приёмка была недоступна — образ поставлен без проверки" };
       });
