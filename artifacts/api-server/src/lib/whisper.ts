@@ -9,6 +9,7 @@ import OpenAI from "openai";
  * /v1/audio/* в локальный Whisper (ARCHITECTURE.md §5).
  */
 export const whisper = new OpenAI({
+  // Не ключ: локальный Whisper ключей не проверяет, а библиотеке нужно непустое значение.
   apiKey: "local-whisper",
   baseURL: process.env["WHISPER_BASE_URL"] ?? "http://127.0.0.1:8444/v1",
 });
