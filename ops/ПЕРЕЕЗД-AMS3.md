@@ -150,24 +150,30 @@ ssh root@НОВЫЙ '/opt/psy-upload-venv/bin/certbot certonly --webroot -w /var
 
 Из влитого main репозитория psy, по `ops/README.md` (раздел о мосте платформы):
 
-Порядок и команды обновления живого экземпляра - в `ops/README.md` репозитория psy. Коротко:
-проверенный релиз в `/opt/psy-source`, установка изменений в Hermes от владельца checkout,
-установщик моста, включение сокета, перезапуск шлюза в спокойное время:
+Бот обновляется штатным сценарием репозитория psy, `ops/update_live.py`: он раскладывает
+модуль моста и unit-файлы вместе с остальным релизом, перезапускает только затронутые службы
+и возвращает прежние файлы при сбое (`ops/README.md` репозитория psy, разделы "Обновление
+работающего узла" и "Мост для соседней платформы"). Сначала план, потом применение:
 
 ```bash
-ssh root@НОВЫЙ 'set -e
-cd /opt/psy-source && git pull --ff-only
-sudo -u hermes -H python3 gateway/apply.py apply /home/hermes/.hermes/hermes-agent
-sudo -u hermes -H python3 gateway/apply.py verify /home/hermes/.hermes/hermes-agent
-bash ops/install-platform-bridge
-systemctl enable --now psy-platform-bridge.socket
-systemctl restart hermes-gateway'
+ssh root@НОВЫЙ 'cd /opt/psy-source && git pull --ff-only && python3 ops/update_live.py plan'
+```
+
+```bash
+ssh root@НОВЫЙ 'cd /opt/psy-source && python3 ops/update_live.py apply'
+```
+
+Пользователь kotu уже создан на шаге 2, поэтому установщик моста добавит его в группу
+`psy-platform`. Затем включить сокет:
+
+```bash
+ssh root@НОВЫЙ 'cd /opt/psy-source && bash ops/install-platform-bridge && systemctl enable --now psy-platform-bridge.socket'
 ```
 
 Проверка от имени пользователя платформы:
 
 ```bash
-ssh root@НОВЫЙ 'id kotu; sudo -u kotu curl -s --unix-socket /run/psy-platform-bridge.sock "http://bridge/health?deep=1"; echo'
+ssh root@НОВЫЙ 'id kotu; sudo -u kotu curl -s --unix-socket /run/psy-platform-bridge.sock "http://x/health?deep=1"; echo'
 ```
 
 Ответ `{"ok": true, "codex": "ready"}`, а в `id kotu` есть группа `psy-platform`.

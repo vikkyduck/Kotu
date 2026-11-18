@@ -293,6 +293,24 @@ describe("лимит подписки и запасной ключ", () => {
     expect(apiCalls).toHaveLength(0);
   });
 
+  test("часовой лимит сообщений исчерпан - на платный ключ не переходим", async () => {
+    bridgeHandler = (req, _body, res) => {
+      if (req.url === "/notify") return json(res, 429, { sent: false, reason: "rate_limited" });
+      return json(res, 429, { error: { kind: "quota", status: 429, resets_at: Math.floor(Date.now() / 1000) + 600 } });
+    };
+    await expect(askText({ model: "m", system: "s", user: "u" })).rejects.toBeInstanceOf(ModelWaitError);
+    expect(apiCalls).toHaveLength(0);
+  });
+
+  test("такое же сообщение уже ушло недавно - считается доставленным", async () => {
+    bridgeHandler = (req, _body, res) => {
+      if (req.url === "/notify") return json(res, 200, { sent: false, reason: "duplicate" });
+      return json(res, 429, { error: { kind: "quota", status: 429, resets_at: Math.floor(Date.now() / 1000) + 600 } });
+    };
+    const out = await askText({ model: "m", system: "s", user: "u" });
+    expect(out.route).toBe("api");
+  });
+
   test("мост не отвечает - тоже ожидание, а не платный ключ без уведомления", async () => {
     const saved = process.env["CODEX_BRIDGE_SOCKET"];
     process.env["CODEX_BRIDGE_SOCKET"] = path.join(dir, "missing.sock");
