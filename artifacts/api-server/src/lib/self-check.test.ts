@@ -52,8 +52,9 @@ describe("что проверяется", () => {
 
   test("одинаковые модели проверяются одним запросом", async () => {
     await runSelfCheck();
-    expect(new Set(configuredModels().map((m) => m.model)).size).toBe(1);
-    expect(codex.askText).toHaveBeenCalledTimes(1);
+    // По умолчанию две модели: лекции (gpt-6.1-sol, как у бота) и остальное (gpt-5.6-sol).
+    expect(new Set(configuredModels().map((m) => m.model)).size).toBe(2);
+    expect(codex.askText).toHaveBeenCalledTimes(2);
   });
 
   test("модель, которую подписка не принимает, - проблема с названием настройки", async () => {

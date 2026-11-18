@@ -37,7 +37,8 @@ import { registerHandler } from "../jobs";
 import { lectureToLibrary } from "../work-doc";
 import { logger } from "../logger";
 
-const MODEL = pickModel("MODEL_LECTURE", "gpt-5.6-sol");
+// Та же модель, что пишет лекции у бота ПСИ в Telegram (решение владелицы 19.11.2026).
+const MODEL = pickModel("MODEL_LECTURE", "gpt-6.1-sol");
 
 /** Сколько фрагментов библиотеки даём модели на одну главу. */
 const CHUNKS_PER_SECTION = 10;

@@ -28,7 +28,7 @@ const HTTP_TIMEOUT_MS = 20_000;
  * задач (transcription.ts, handlers/*, research.ts). Меняете там - меняйте здесь.
  */
 export function configuredModels(): { env: string; model: string }[] {
-  const lecture = pickModel("MODEL_LECTURE", "gpt-5.6-sol");
+  const lecture = pickModel("MODEL_LECTURE", "gpt-6.1-sol");
   return [
     { env: "MODEL_STRUCTURE", model: pickModel("MODEL_STRUCTURE", "gpt-5.6-sol") },
     { env: "MODEL_LECTURE", model: lecture },
