@@ -1,0 +1,19 @@
+[Unit]
+Description=Kotu local embeddings (multilingual-e5-large)
+After=network.target
+
+[Service]
+Type=simple
+User=kotu
+Environment=HF_HOME=/opt/whisper/cache
+Environment=EMBED_MODEL=intfloat/multilingual-e5-large
+Environment=OMP_NUM_THREADS=4
+ExecStart=/opt/whisper/venv/bin/uvicorn server:app --host 127.0.0.1 --port 9030
+WorkingDirectory=/opt/embed
+MemoryMax=3500M
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+

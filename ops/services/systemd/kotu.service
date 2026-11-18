@@ -1,0 +1,20 @@
+[Unit]
+Description=Kotu (Кот) — API server
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=kotu
+Group=kotu
+WorkingDirectory=/opt/kotu
+EnvironmentFile=/opt/kotu/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node --enable-source-maps /opt/kotu/server/index.mjs
+Restart=always
+RestartSec=3
+# транскрибация пишет чанки во временный каталог
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+

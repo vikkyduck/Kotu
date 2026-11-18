@@ -1,0 +1,16 @@
+# Внутренний маршрутизатор AI-запросов Кота (только loopback, наружу не смотрит):
+#   /v1/audio/*  -> локальный Whisper (порт 9010)
+# Маршруты в транзит DigitalOcean после переезда не нужны (ops/ПЕРЕЕЗД-AMS3.md, шаг 2).
+server {
+    listen 127.0.0.1:8444;
+    client_max_body_size 100m;
+
+    location /v1/audio/ {
+        proxy_pass http://127.0.0.1:9010;
+        proxy_http_version 1.1;
+        # CPU-транскрибация 10-минутного куска может идти долго
+        proxy_read_timeout 1800s;
+        proxy_send_timeout 300s;
+        proxy_request_buffering off;
+    }
+}

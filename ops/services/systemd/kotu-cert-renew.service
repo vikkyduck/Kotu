@@ -1,0 +1,10 @@
+[Unit]
+Description=Продление сертификата сайта psy3107.ru (certbot, проверка через каталог nginx)
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Сертификат продлевается, когда до конца срока остаётся около трети; в остальные дни команда ничего не делает.
+ExecStart=/opt/psy-upload-venv/bin/certbot renew --cert-name psy3107.ru --quiet --deploy-hook "systemctl reload nginx"
+UMask=0077
