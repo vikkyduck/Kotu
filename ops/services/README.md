@@ -7,12 +7,11 @@
 
 Адресов и секретов здесь нет: репозиторий публичный. Секреты живут в `/opt/kotu/.env` на сервере.
 
-## Три локальных сервиса Python
+## Два локальных сервиса Python
 
 | Служба | Порт (127.0.0.1) | Код | Окружение | Что делает |
 |---|---|---|---|---|
 | `kotu-whisper` | 9010 | `/opt/whisper/server.py` | `/opt/whisper/venv` | распознавание речи, faster-whisper large-v3-turbo |
-| `kotu-privacy` | 9020 | `/opt/privacy/server.py` | `/opt/privacy/venv` | имена людей и места в тексте, natasha |
 | `kotu-embed` | 9030 | `/opt/embed/server.py` | `/opt/whisper/venv` | векторы для библиотеки, multilingual-e5-large |
 
 У `kotu-embed` своего окружения нет: он запускается из окружения Whisper и берёт модели из того же
@@ -22,22 +21,19 @@
 
 ```bash
 id kotu >/dev/null 2>&1 || useradd --system --home-dir /opt/kotu --shell /usr/sbin/nologin kotu
-for s in whisper privacy embed; do install -d /opt/$s && install -m 644 ops/services/$s/server.py /opt/$s/; done
+for s in whisper embed; do install -d /opt/$s && install -m 644 ops/services/$s/server.py /opt/$s/; done
 install -d /opt/whisper/cache
 python3 -m venv /opt/whisper/venv
 /opt/whisper/venv/bin/pip install --extra-index-url https://download.pytorch.org/whl/cpu -r ops/services/whisper/requirements.txt
-python3 -m venv /opt/privacy/venv
-/opt/privacy/venv/bin/pip install -r ops/services/privacy/requirements.txt
-chown -R kotu:kotu /opt/whisper /opt/privacy /opt/embed
-install -m 644 ops/services/systemd/kotu-whisper.service ops/services/systemd/kotu-privacy.service ops/services/systemd/kotu-embed.service /etc/systemd/system/
-systemctl daemon-reload && systemctl enable --now kotu-whisper kotu-privacy kotu-embed
+chown -R kotu:kotu /opt/whisper /opt/embed
+install -m 644 ops/services/systemd/kotu-whisper.service ops/services/systemd/kotu-embed.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now kotu-whisper kotu-embed
 ```
 
 Проверка:
 
 ```bash
-for p in 9010 9020 9030; do curl -s http://127.0.0.1:$p/healthz; echo; done
-curl -s -X POST -H "content-type: application/json" -d '{"text":"Анна живет в Москве"}' http://127.0.0.1:9020/ner
+for p in 9010 9030; do curl -s http://127.0.0.1:$p/healthz; echo; done
 ```
 
 Списки пакетов сняты командой `pip freeze` с рабочего сервера. В списке Whisper `torch` в сборке
@@ -48,7 +44,7 @@ curl -s -X POST -H "content-type: application/json" -d '{"text":"Анна жив
 | Файл | Зачем |
 |---|---|
 | `kotu.service` | само приложение: `node /opt/kotu/server/index.mjs`, настройки из `/opt/kotu/.env` |
-| `kotu-whisper.service`, `kotu-privacy.service`, `kotu-embed.service` | три сервиса выше |
+| `kotu-whisper.service`, `kotu-embed.service` | два сервиса выше |
 | `kotu-backup.service`, `kotu-backup.timer` | ночная копия в 04:20 UTC, запускает `/usr/local/bin/kotu-backup.sh` |
 | `kotu-cert-renew.service`, `kotu-cert-renew.timer` | раз в сутки проверяет и продлевает сертификат сайта |
 

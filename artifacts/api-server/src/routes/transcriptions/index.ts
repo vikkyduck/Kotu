@@ -175,10 +175,10 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
   }
 
   // Правка текста должна доехать и до библиотечной копии — там переиндексация.
-  // Смена одного названия текст не меняет: переразбирать копию (NER, векторы,
-  // «В очереди…» на карточке) незачем. Со скрытием имён название копии
-  // нейтральное и от названия записи не зависит; без скрытия — то же, что
-  // даёт prepareLibraryCopy (title уже обрезан до 200 знаков).
+  // Смена одного названия текст не меняет: переразбирать копию (векторы,
+  // «В очереди…» на карточке) незачем. У старых записей со скрытием имён
+  // название копии нейтральное и от названия записи не зависит; у остальных —
+  // то же, что даёт prepareLibraryCopy (title уже обрезан до 200 знаков).
   if (row.status === "done" && updates.segments !== undefined) {
     void syncTranscriptionDoc(row).catch((err) =>
       req.log.error({ err, id: row.id }, "Не смог обновить расшифровку в библиотеке"),
@@ -301,8 +301,6 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
   const payload: TranscribePayload = {
     inputPath,
     filename: typeof prev.filename === "string" ? prev.filename : row.filename,
-    // Скрытие имён — строже из двух: если хоть где-то просили скрывать, скрываем.
-    hideNames: prev.hideNames === true || row.hideNames,
     markSpeakers: typeof prev.markSpeakers === "boolean" ? prev.markSpeakers : row.markSpeakers,
   };
 
@@ -366,7 +364,8 @@ router.post(
       return;
     }
 
-    const hideNames = req.body?.hideNames === "true";
+    // Скрытия имён больше нет (решение владелицы 18.11.2026): поле формы не читаем.
+    const hideNames = false;
     const markSpeakers = req.body?.markSpeakers === "true";
     const filename = decodeUploadName(req.file.originalname) || "запись";
     const inputPath = req.file.path;
@@ -380,7 +379,7 @@ router.post(
     // в одной транзакции, как в повторе: запись «в работе» без задачи висела
     // бы вечно, а повтор её не берёт — он только для записей в ошибке.
     // «В очереди…» — пока задача ждёт; обработчик сам сменит на «Готовлю запись…».
-    const payload: TranscribePayload = { inputPath, filename, hideNames, markSpeakers };
+    const payload: TranscribePayload = { inputPath, filename, markSpeakers };
     const row = await db.transaction(async (tx) => {
       const [created] = await tx
         .insert(transcriptionsTable)

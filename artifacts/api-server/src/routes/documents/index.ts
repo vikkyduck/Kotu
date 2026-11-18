@@ -19,7 +19,7 @@ import { parseId } from "../../lib/parse-id";
 import { resolveInsideDir } from "../../lib/uploads";
 import { archiveAndRemove, archiveUpload, requireArchive } from "../../lib/archive";
 import { logger } from "../../lib/logger";
-import { hideLabels } from "../../lib/privacy";
+import { hideLabels } from "../../lib/name-labels";
 import { QUEUED_MESSAGE, enqueue, lastJob } from "../../lib/jobs";
 import { NO_CHUNKS, NO_TEXT, type IngestPayload } from "../../lib/handlers/ingest";
 

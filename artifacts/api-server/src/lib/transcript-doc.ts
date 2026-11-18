@@ -1,6 +1,5 @@
 import { and, eq, isNotNull } from "drizzle-orm";
 import { db, documentsTable, transcriptionsTable, type Transcription } from "@workspace/db";
-import { maskText, NerUnavailableError } from "./privacy";
 import {
   dropCopies,
   dropOrphan,
@@ -23,42 +22,25 @@ function neutralTitle(t: Transcription): string {
 }
 
 /**
- * Текст и название библиотечной копии. Со скрытием имён — маскировка (NER
- * недоступен → исключение, копия не пишется) и нейтральное название. Без
- * скрытия (лекции, воркшопы) — текст как есть и настоящее название записи:
- * по нему копию и ищут в библиотеке. Отдельно от записи в базу — ради тестов.
+ * Текст и название библиотечной копии: текст как есть и настоящее название
+ * записи, по нему копию и ищут в библиотеке. Старые записи со скрытием имён
+ * (до 18.11.2026) получают нейтральное название и текст, уже сохранённый с
+ * именами в скобках. Отдельно от записи в базу — ради тестов.
  */
 export async function prepareLibraryCopy(
   t: Transcription,
   plain: string,
 ): Promise<{ text: string; title: string }> {
-  if (!t.hideNames) {
-    // Ограничения — как у PATCH /documents: название в библиотеке до 200 знаков.
-    return { text: plain, title: t.title.trim().slice(0, 200) || neutralTitle(t) };
-  }
-  const { masked: rawMasked } = await maskText(plain).catch((err: unknown) => {
-    // Без настоящего NER наружу нельзя: отказываемся, стартовая сверка
-    // повторит, когда сервис вернётся.
-    if (err instanceof NerUnavailableError) {
-      throw new Error("Сервис маскировки недоступен — расшифровку в библиотеку не отправляю", {
-        cause: err,
-      });
-    }
-    throw err;
-  });
-  // Если текст УЖЕ содержал плейсхолдеры (маскировка на этапе расшифровки),
-  // повторная маскировка оборачивает их второй парой скобок — схлопываем.
-  const masked = rawMasked.replace(/\[{3,}((?:PER|LOC)\d+)\]{3,}/g, "[[$1]]");
-  return { text: masked, title: neutralTitle(t) };
+  // Ограничения — как у PATCH /documents: название в библиотеке до 200 знаков.
+  const title = t.hideNames ? neutralTitle(t) : t.title.trim().slice(0, 200) || neutralTitle(t);
+  return { text: plain, title };
 }
 
 /**
  * Кладёт готовую расшифровку в библиотеку.
  *
- * Фрагменты библиотеки уходят в модели (главы лекций). Поэтому, если при
- * расшифровке попросили скрыть имена, в файл и в индекс попадает текст с
- * плейсхолдерами вместо имён; без скрытия (лекции, воркшопы — решение
- * владелицы 23.09.2026) — текст как есть.
+ * Фрагменты библиотеки уходят в модели (главы лекций) как есть: скрытия имён
+ * больше нет (решение владелицы 18.11.2026).
  *
  * Идемпотентно: повторный вызов обновляет существующий документ и
  * переиндексирует его (правки автора в расшифровке доезжают до библиотеки).
@@ -71,7 +53,6 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<number | n
     .trim();
   if (plain.length < MIN_LIBRARY_TEXT) {
     // Правка могла ужать текст ниже порога — тогда и копия больше не нужна.
-    // Проверка до маскировки: короткий текст незачем гонять через NER.
     await deleteTranscriptionDoc(t.id, t.ownerId);
     logger.info({ transcriptionId: t.id }, "Расшифровка коротка для библиотеки — пропускаю");
     return null;

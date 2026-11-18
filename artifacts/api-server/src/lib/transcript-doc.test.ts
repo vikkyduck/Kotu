@@ -2,9 +2,9 @@ import { test, describe, expect, vi, afterEach } from "vitest";
 import type { Transcription } from "@workspace/db";
 
 /**
- * Копия расшифровки в библиотеке — по галочке «Скрыть имена и города».
- * Со скрытием: имена маскируются, название нейтральное, при недоступном NER
- * копия не пишется. Без скрытия (лекции, воркшопы): текст и название как есть.
+ * Копия расшифровки в библиотеке: текст и название как есть. Скрытия имён
+ * больше нет (решение владелицы 18.11.2026); старые записи со скрытием
+ * сохраняют нейтральное название, текст копии не маскируется.
  */
 
 // Модуль тянет базу, а без DATABASE_URL она падает прямо при импорте; здесь
@@ -36,8 +36,8 @@ function transcription(over: Partial<Transcription>): Transcription {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("без скрытия имён", () => {
-  test("текст и название как есть, сервис имён не вызывается", async () => {
+describe("обычная запись", () => {
+  test("текст и название как есть, никаких внешних вызовов", async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
@@ -56,34 +56,16 @@ describe("без скрытия имён", () => {
   });
 });
 
-describe("со скрытием имён", () => {
-  test("имена замаскированы, название нейтральное", async () => {
-    vi.stubGlobal("fetch", async (_url: string, init: { body: string }) => {
-      const { text } = JSON.parse(init.body) as { text: string };
-      const spans = [...text.matchAll(/Анна/g)].map((m) => ({
-        start: m.index!,
-        stop: m.index! + 4,
-        text: "Анна",
-        type: "PER",
-      }));
-      return { ok: true, json: async () => ({ spans }) };
-    });
+describe("старая запись со скрытием имён", () => {
+  test("текст как есть, никаких внешних вызовов, название нейтральное", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
 
     const copy = await prepareLibraryCopy(transcription({ hideNames: true }), PLAIN);
 
-    expect(copy.text.includes("Анна"), `имя в копии: ${copy.text}`).toBe(false);
-    expect(copy.text).toContain("[[PER1]] рассказала");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(copy.text).toBe(PLAIN);
     expect(copy.title).toMatch(/^Расшифровка от /);
     expect(copy.title).not.toContain("Лекция о горе");
-  });
-
-  test("сервис имён недоступен — копии нет, понятная ошибка", async () => {
-    vi.stubGlobal("fetch", async () => {
-      throw new TypeError("fetch failed");
-    });
-
-    await expect(prepareLibraryCopy(transcription({ hideNames: true }), PLAIN)).rejects.toThrow(
-      "Сервис маскировки недоступен",
-    );
   });
 });
