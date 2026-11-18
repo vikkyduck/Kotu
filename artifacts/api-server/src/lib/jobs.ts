@@ -1,6 +1,7 @@
 import { sql, eq, and, desc } from "drizzle-orm";
 import { db, jobsTable, type Job, type JobKind } from "@workspace/db";
 import { logger } from "./logger";
+import { ModelWaitError } from "./codex";
 
 /** Сколько раз пробуем задачу, прежде чем признать её проваленной. */
 const MAX_ATTEMPTS = 3;
@@ -13,6 +14,11 @@ export interface JobHandler {
   run: (job: Job) => Promise<void>;
   /** Вызывается, когда попытки исчерпаны: пометить сущность как сломанную. */
   onGiveUp: (job: Job, message: string) => Promise<void>;
+  /**
+   * Задача отложена до сброса лимита подписки (или до повторного входа):
+   * показать причину и время продолжения на карточке. Попытка не тратится.
+   */
+  onWait?: (job: Job, message: string) => Promise<void>;
 }
 
 const handlers = new Map<JobKind, JobHandler>();
@@ -99,7 +105,36 @@ export async function requeueOrphans(): Promise<number> {
   return rowCount ?? 0;
 }
 
-async function finish(job: Job, error?: string): Promise<void> {
+/**
+ * Модель недоступна по причине, которая проходит сама: лимит подписки,
+ * отозванный вход, пауза агента. Задача возвращается в очередь до указанного
+ * времени, а попытка возвращается: иначе три таких отказа подряд сожгли бы
+ * задачу, которая через час прошла бы без единой ошибки.
+ */
+async function postpone(job: Job, wait: ModelWaitError): Promise<void> {
+  logger.warn({ jobId: job.id, kind: job.kind, reason: wait.kind, until: wait.until }, "Задача ждет модели");
+  await db.execute(sql`
+    UPDATE jobs SET
+      status = 'queued',
+      locked_at = NULL,
+      attempts = GREATEST(attempts - 1, 0),
+      last_error = ${wait.message},
+      run_after = ${wait.until.toISOString()}::timestamptz
+    WHERE id = ${job.id}
+  `);
+  await handlers
+    .get(job.kind)
+    ?.onWait?.(job, wait.message)
+    .catch((err) => logger.error({ err, jobId: job.id }, "Не смог показать ожидание на карточке"));
+}
+
+/** Итог одной попытки. Экспортирован для тестов очереди. */
+export async function finish(job: Job, failure?: unknown): Promise<void> {
+  if (failure instanceof ModelWaitError) {
+    await postpone(job, failure);
+    return;
+  }
+  const error = failure === undefined ? undefined : failure instanceof Error ? failure.message : String(failure);
   if (!error) {
     // Payload НЕ затираем (решение владелицы 23.09.2026: система сама ничего
     // не стирает). В нём путь к аудио записи — по нему удаление записи
@@ -184,7 +219,7 @@ export function startWorker(canRun: () => boolean = () => true): void {
           await handler.run(job);
           await finish(job);
         } catch (err) {
-          await finish(job, err instanceof Error ? err.message : String(err));
+          await finish(job, err);
         }
       }
       // Сразу пробуем следующую — очередь могла накопиться.

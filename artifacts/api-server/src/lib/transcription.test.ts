@@ -7,13 +7,16 @@ import { test, describe, expect, vi, afterEach, beforeEach } from "vitest";
  * имён лежит, запрос к модели не уходит вовсе. Выключена (лекции, воркшопы —
  * решение владелицы 23.09.2026) — текст уходит как есть, сервис имён не нужен.
  *
- * Клиент OpenAI подменён: сеть не нужна, а каждый вызов виден тесту.
+ * Клиент модели подменен: сеть не нужна, а каждый вызов виден тесту.
  */
 
 const create = vi.hoisted(() => vi.fn());
-vi.mock("./openai", () => ({
-  openai: { chat: { completions: { create } }, audio: { transcriptions: { create: vi.fn() } } },
+vi.mock("./codex", () => ({
+  askText: create,
+  pickModel: (_name: string, fallback: string) => fallback,
+  ModelWaitError: class ModelWaitError extends Error {},
 }));
+vi.mock("./whisper", () => ({ whisper: { audio: { transcriptions: { create: vi.fn() } } } }));
 
 import { structureTranscript, ChunkError } from "./transcription";
 import { NerUnavailableError } from "./privacy";
@@ -30,13 +33,13 @@ function nerFindsAnna() {
 
 /** Модель возвращает оформленный текст с той же меткой. */
 function modelAnswers(content: string) {
-  create.mockResolvedValue({ choices: [{ message: { content } }] });
+  create.mockResolvedValue({ text: content, sources: [], route: "codex" });
 }
 
 /** Всё, что ушло в модель за вызов: системный промпт и текст пользователя. */
 function sentToModel(): string {
-  const [{ messages }] = create.mock.calls[0] as [{ messages: { content: string }[] }];
-  return messages.map((m) => m.content).join("\n");
+  const [{ system, user }] = create.mock.calls[0] as [{ system: string; user: string }];
+  return [system, user].join("\n");
 }
 
 beforeEach(() => create.mockReset());
