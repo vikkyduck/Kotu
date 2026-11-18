@@ -118,6 +118,10 @@ export async function checkMail(): Promise<string | null> {
 }
 
 /** Письмо со ссылкой на сброс. Просто, коротко и без лишних обещаний. */
+export function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+}
+
 export function resetEmail(name: string, link: string): { subject: string; text: string; html: string } {
   const subject = "Восстановление пароля — Psy Библиотека";
   const text = [
@@ -131,12 +135,13 @@ export function resetEmail(name: string, link: string): { subject: string; text:
     "Если вы ничего не запрашивали — просто удалите это письмо, пароль останется прежним.",
   ].join("\n");
 
+  // Имя и ссылка - в HTML письма только экранированными: имя задаёт человек.
   const html = `
 <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:15px;line-height:1.6;color:#2b2b33;max-width:520px">
-  <p>${name}, здравствуйте.</p>
+  <p>${escapeHtml(name)}, здравствуйте.</p>
   <p>Вы запросили восстановление пароля к рабочей среде.</p>
   <p style="margin:26px 0">
-    <a href="${link}" style="display:inline-block;padding:13px 24px;border-radius:12px;background:#5b50b0;color:#fff;text-decoration:none;font-weight:600">
+    <a href="${escapeHtml(link)}" style="display:inline-block;padding:13px 24px;border-radius:12px;background:#5b50b0;color:#fff;text-decoration:none;font-weight:600">
       Задать новый пароль
     </a>
   </p>

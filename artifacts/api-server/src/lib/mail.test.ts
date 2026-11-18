@@ -11,7 +11,7 @@ vi.mock("./postbox", () => postbox);
 vi.mock("nodemailer", () => ({ default: { createTransport: () => smtp } }));
 vi.mock("./logger", () => ({ logger: { info: vi.fn() } }));
 
-import { checkMail, mailConfigured, sendMail } from "./mail";
+import { checkMail, escapeHtml, mailConfigured, resetEmail, sendMail } from "./mail";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -78,5 +78,21 @@ describe("проверка почты для самопроверки", () => {
     env({ MAIL_FROM: "sender@example.ru" });
     expect(await checkMail()).toContain("не настроена");
     expect(postbox.sendViaPostbox).not.toHaveBeenCalled();
+  });
+});
+
+describe("письмо восстановления пароля", () => {
+  test("имя и ссылка попадают в HTML только экранированными", () => {
+    const { html, text } = resetEmail('<img src=x onerror="alert(1)">', 'https://example.ru/reset?t=a"b');
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&#60;img src=x onerror=&#34;alert(1)&#34;&#62;");
+    expect(html).toContain('href="https://example.ru/reset?t=a&#34;b"');
+    // В текстовой версии HTML не исполняется - там остаётся как есть.
+    expect(text).toContain("https://example.ru/reset?t=a\"b");
+  });
+
+  test("escapeHtml", () => {
+    expect(escapeHtml(`<a href='x'>&</a>`)).toBe("&#60;a href=&#39;x&#39;&#62;&#38;&#60;/a&#62;");
+    expect(escapeHtml("Наталья")).toBe("Наталья");
   });
 });

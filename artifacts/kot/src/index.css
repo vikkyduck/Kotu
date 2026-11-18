@@ -285,7 +285,8 @@ input.field.hours{max-width:220px}
 .fieldhint{font-size:14px;color:var(--muted);opacity:.7;margin:6px 0 0}
 /* автозаполнение WebKit на тёмном — без жёлтой заливки */
 input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-webkit-text-fill-color:var(--ink)}
-.fieldlbl{font-size:15px;font-weight:500;letter-spacing:.04em;margin:18px 0 9px;color:var(--ink-2)}
+/* display:block - подпись бывает и <label> (строчный по умолчанию): поле под ней, а не рядом */
+.fieldlbl{display:block;font-size:15px;font-weight:500;letter-spacing:.04em;margin:18px 0 9px;color:var(--ink-2)}
 .fieldlbl:first-child{margin-top:0}
 .pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
 .pill-opt{font-size:17px;padding:9px 15px;border-radius:var(--r-sm);border:1px solid var(--line);
