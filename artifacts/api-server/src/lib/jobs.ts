@@ -23,6 +23,17 @@ export interface JobHandler {
 
 const handlers = new Map<JobKind, JobHandler>();
 
+/** Кому сообщать об итоге задачи (уведомления владелице). Задает index.ts. */
+export interface JobEvents {
+  done?: (job: Job) => void;
+  failed?: (job: Job, message: string) => void;
+}
+let events: JobEvents = {};
+
+export function onJobEvents(listener: JobEvents): void {
+  events = listener;
+}
+
 export function registerHandler(kind: JobKind, handler: JobHandler): void {
   handlers.set(kind, handler);
 }
@@ -143,6 +154,7 @@ export async function finish(job: Job, failure?: unknown): Promise<void> {
       UPDATE jobs SET status = 'done', finished_at = now(), last_error = NULL
       WHERE id = ${job.id}
     `);
+    events.done?.(job);
     return;
   }
 
@@ -175,6 +187,7 @@ export async function finish(job: Job, failure?: unknown): Promise<void> {
     WHERE id = ${job.id}
   `);
   await handlers.get(job.kind)?.onGiveUp(job, error);
+  events.failed?.(job, error);
 }
 
 let running = false;
