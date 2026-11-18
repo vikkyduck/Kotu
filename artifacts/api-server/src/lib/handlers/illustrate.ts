@@ -11,8 +11,7 @@ import {
   type ImageSide,
 } from "@workspace/db";
 import { layoutHasImage, layoutSided } from "@workspace/db/slides";
-import { askJson, type ImageAttachment } from "../claude";
-import { geminiJson } from "../gemini";
+import { askJson, ModelWaitError, pickModel, type ImageAttachment } from "../codex";
 import { renderIllustration } from "../images";
 import { registerHandler, enqueue } from "../jobs";
 import { DECKS_DIR } from "../paths";
@@ -20,7 +19,7 @@ import { deckToLibrary } from "../work-doc";
 import { writeDataFile } from "../archive";
 import { deckStylePack } from "../deck-style";
 import { logger } from "../logger";
-import { NO_PACK, onGiveUp } from "./storyboard";
+import { NO_PACK, onGiveUp, onWait } from "./storyboard";
 
 /** Потолок перерисовок: после второй попытки слайд идёт с тем, что есть. */
 const MAX_ATTEMPTS = 2;
@@ -74,7 +73,11 @@ async function direct(
   if (instruction) user.push(`Пожелание автора: ${instruction}`);
   if (rejectedVerdict) user.push(`Прошлая попытка отклонена приёмкой: ${rejectedVerdict}`);
 
-  const reply = await geminiJson<DirectorReply>({ system, user: user.join("\n") });
+  const reply = await askJson<DirectorReply>({
+    model: pickModel("MODEL_SCENE", "gpt-5.6-sol"),
+    system,
+    user: user.join("\n"),
+  });
   if (typeof reply.scene !== "string" || reply.scene.trim() === "") {
     throw new Error("Режиссура не придумала сюжет");
   }
@@ -95,7 +98,7 @@ function buildPrompt(reply: DirectorReply, side: ImageSide, pack: StylePack): st
 }
 
 /**
- * Приёмка готовой картинки. Смотрит Claude: проверяет мысль и композицию,
+ * Приемка готовой картинки. Смотрит модель Codex: проверяет мысль и композицию,
  * а не красоту — красоту уже задал стилевой пакет.
  */
 async function reviewImage(
@@ -115,6 +118,7 @@ async function reviewImage(
   ].join("\n");
 
   const reply = await askJson<ReviewReply>({
+    model: pickModel("MODEL_REVIEW", "gpt-5.6-sol"),
     system,
     user: `Мысль слайда: ${slide.imageBrief}`,
     images: [{ path: filePath, mediaType: mime }],
@@ -157,7 +161,7 @@ async function illustrateSlide(
         .limit(1);
       if (!alive) throw new Error("Презентация удалена");
       const dir = path.join(DECKS_DIR, String(deckId));
-      // Расширение — по настоящему формату: Anthropic сверяет заявленный
+      // Расширение - по настоящему формату: приемка сверяет заявленный
       // тип с байтами, а PowerPoint выбирает кодек по имени файла.
       const filePath = path.join(dir, `${row.id}.${art.ext}`);
       // Атомарно и сразу в архив: картинка оплачена, второй раз её не нарисовать.
@@ -174,6 +178,8 @@ async function illustrateSlide(
       // Приёмка упала (модель молчит) — картинка уже оплачена и на диске;
       // ставим её без проверки, а не сжигаем вторую попытку впустую.
       const review = await reviewImage(slide, filePath, art.mime).catch((err) => {
+        // Ожидание подписки - не "приемка недоступна": задача подождет и продолжит.
+        if (err instanceof ModelWaitError) throw err;
         logger.warn({ err, slideId: slide.id }, "Приёмка недоступна — образ пойдёт без проверки");
         return { accept: true, verdict: "Приёмка была недоступна — образ поставлен без проверки" };
       });
@@ -274,6 +280,9 @@ async function run(job: Job): Promise<void> {
       await illustrateSlide(id, { ...slide, imageSide: side }, pack, payload.instruction);
       drawn += 1;
     } catch (err) {
+      // Ждем подписку: слайд остается в "drawing" и войдет в следующий прогон,
+      // а не помечается ошибкой вместе со всеми остальными.
+      if (err instanceof ModelWaitError) throw err;
       // Один упавший образ не должен останавливать остальные: помечаем слайд
       // и рисуем дальше.
       logger.error({ deckId: id, slideId: slide.id, err }, "Образ не нарисовался");
@@ -322,5 +331,5 @@ async function run(job: Job): Promise<void> {
 }
 
 export function registerIllustrateHandler(): void {
-  registerHandler("deck.illustrate", { run, onGiveUp });
+  registerHandler("deck.illustrate", { run, onGiveUp, onWait });
 }

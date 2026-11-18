@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db, transcriptionsTable, type Job } from "@workspace/db";
 import { transcribeLongAudio, ChunkError } from "../transcription";
+import { ModelWaitError } from "../codex";
 import { registerHandler } from "../jobs";
 import { syncTranscriptionDoc } from "../transcript-doc";
 import { logger } from "../logger";
@@ -106,6 +107,9 @@ async function run(job: Job): Promise<void> {
       logger.info({ id }, "Запись удалена во время расшифровки — остановился");
       return;
     }
+    // Подписка Codex недоступна, запасного пути нет: очередь отложит задачу
+    // до сброса лимита, причину покажет onWait.
+    if (err instanceof ModelWaitError) throw err;
     // Понятная человеку формулировка попадёт в last_error и дальше — в карточку
     // записи, если попытки закончатся.
     const message = err instanceof ChunkError ? err.userMessage : "Не удалось распознать запись";
@@ -119,6 +123,11 @@ async function run(job: Job): Promise<void> {
       .catch((e) => logger.error({ err: e, id }, "Не смог записать статус повтора"));
     throw new Error(message);
   }
+}
+
+/** Ждем подписку Codex: на карточке - причина и время продолжения. */
+async function onWait(job: Job, message: string): Promise<void> {
+  await db.update(transcriptionsTable).set({ statusMessage: message }).where(eq(transcriptionsTable.id, job.entityId));
 }
 
 async function onGiveUp(job: Job, message: string): Promise<void> {
@@ -156,5 +165,5 @@ async function removeAudio(payload: TranscribePayload, id: number): Promise<void
 }
 
 export function registerTranscribeHandler(): void {
-  registerHandler("transcribe", { run, onGiveUp });
+  registerHandler("transcribe", { run, onGiveUp, onWait });
 }

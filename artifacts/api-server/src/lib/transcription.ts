@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { toFile } from "openai";
-import { openai } from "./openai";
+import { whisper } from "./whisper";
+import { askText, ModelWaitError, pickModel } from "./codex";
+import { parseModelJson } from "./model-json";
 import type { TranscriptSegment } from "@workspace/db";
 import { maskText, unmaskText, NerUnavailableError } from "./privacy";
 
@@ -20,7 +22,7 @@ const SEGMENT_SECONDS = 600;
 // Модели задаются в конфигурации, а не в коде: поменять модель можно правкой
 // одной строки в .env и перезапуском, без пересборки приложения.
 const TRANSCRIBE_MODEL = process.env["MODEL_TRANSCRIBE"] ?? "gpt-4o-transcribe";
-const STRUCTURE_MODEL = process.env["MODEL_STRUCTURE"] ?? "gpt-5.4";
+const STRUCTURE_MODEL = pickModel("MODEL_STRUCTURE", "gpt-5.4");
 
 /**
  * Transcribe a single audio chunk that is already safely under the size/duration
@@ -28,7 +30,7 @@ const STRUCTURE_MODEL = process.env["MODEL_STRUCTURE"] ?? "gpt-5.4";
  */
 async function transcribeAudio(buffer: Buffer, filename: string): Promise<string> {
   const file = await toFile(buffer, filename);
-  const response = await openai.audio.transcriptions.create({
+  const response = await whisper.audio.transcriptions.create({
     file,
     model: TRANSCRIBE_MODEL,
   });
@@ -173,6 +175,8 @@ export async function transcribeLongAudio(
       // Уже собранное — чтобы кусок продолжил нумерацию Speaker, а не начал заново.
       segs = await structureTranscript(rawText, opts, all);
     } catch (err) {
+      // Ожидание подписки - не сбой куска: очередь отложит задачу целиком.
+      if (err instanceof ModelWaitError) throw err;
       throw new ChunkError(i + 1, total, "оформить", err);
     }
     all.push(...segs);
@@ -280,20 +284,10 @@ export async function structureTranscript(
     'Верни СТРОГО JSON-объект вида {"segments":[{"who":"...","text":"..."}]} без какого-либо другого текста.',
   );
 
-  const response = await openai.chat.completions.create({
-    model: STRUCTURE_MODEL,
-    max_completion_tokens: 8192,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: rules.join("\n") },
-      { role: "user", content: payload },
-    ],
-  });
-
-  const content = response.choices[0]?.message?.content ?? "";
+  const { text: content } = await askText({ model: STRUCTURE_MODEL, system: rules.join("\n"), user: payload });
 
   try {
-    const parsed = JSON.parse(content) as { segments?: unknown };
+    const parsed = parseModelJson<{ segments?: unknown }>(content, "Codex");
     const segments = Array.isArray(parsed.segments) ? parsed.segments : [];
     const clean: TranscriptSegment[] = segments
       .map((s) => {

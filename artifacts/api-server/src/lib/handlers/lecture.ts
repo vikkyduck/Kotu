@@ -1,5 +1,6 @@
 import { eq, asc } from "drizzle-orm";
-import { openai } from "../openai";
+import { askJson, askText, ModelWaitError, pickModel } from "../codex";
+import { JSON_RULE, parseModelJson } from "../model-json";
 import {
   db,
   lecturesTable,
@@ -13,7 +14,7 @@ import {
 } from "@workspace/db";
 import { searchLibrary } from "../../routes/documents";
 import { embedAll } from "../embeddings";
-import { research, isResearchAvailable, type WebSource } from "../perplexity";
+import { research, type WebSource } from "../research";
 import {
   planPrompt,
   sectionPrompt,
@@ -36,7 +37,7 @@ import { registerHandler } from "../jobs";
 import { lectureToLibrary } from "../work-doc";
 import { logger } from "../logger";
 
-const MODEL = process.env["MODEL_LECTURE"] ?? "gpt-5.6-sol";
+const MODEL = pickModel("MODEL_LECTURE", "gpt-5.6-sol");
 
 /** Сколько фрагментов библиотеки даём модели на одну главу. */
 const CHUNKS_PER_SECTION = 10;
@@ -78,16 +79,6 @@ function strings(v: unknown): string[] {
   return Array.isArray(v)
     ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim())
     : [];
-}
-
-/** Исследование включено, а ключа нет: пишем без него и оставляем след в журнале. */
-function warnNoResearchKey(id: number, wanted: boolean): void {
-  if (wanted && !isResearchAvailable()) {
-    logger.warn(
-      { id },
-      "«Исследование ИИ» включено, но ключ Perplexity не задан (./set-ai-key.sh, пункт 3) — работаю без веб-поиска",
-    );
-  }
 }
 
 /**
@@ -137,18 +128,18 @@ async function runPlan(job: Job): Promise<void> {
   // Источники независимы: библиотека И исследование складываются в общий
   // материал; ни одного — план пишется по знаниям модели.
   const src = briefSources(brief);
-  warnNoResearchKey(id, src.res);
   const parts: string[] = [];
   if (src.lib && brief.documentIds.length > 0) {
     await setStatus(id, "Смотрю, что есть в библиотеке…");
     const excerpts = await findExcerpts(lecture.ownerId, brief.topic, brief.documentIds, 14);
     if (excerpts.length > 0) parts.push(`Выдержки из библиотеки автора:\n\n${renderExcerpts(excerpts)}`);
   }
-  if (src.res && isResearchAvailable()) {
+  if (src.res) {
     await setStatus(id, "Исследую тему в веб-источниках…");
     const found = await research(
       `Тема лекции по психоанализу: ${brief.topic}. Собери материал для плана лекции.`,
     ).catch((err) => {
+      if (err instanceof ModelWaitError) throw err;
       logger.warn({ err }, "Веб-поиск не ответил — планирую без него");
       return null;
     });
@@ -162,28 +153,20 @@ async function runPlan(job: Job): Promise<void> {
   // внутри этой вилки, а не ломает её.
   const blocks = Math.max(5, Math.min(8, Math.round(brief.durationMin / 15)));
 
-  const response = await openai.chat.completions.create({
+  const { text: raw } = await askText({
     model: MODEL,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: planPrompt(brief, lecture.title, blocks) },
-      {
-        role: "user",
-        content: material || "Материала под рукой нет — опирайся на профессиональный корпус психоанализа.",
-      },
-    ],
+    system: `${planPrompt(brief, lecture.title, blocks)}\n\n${JSON_RULE}`,
+    user: material || "Материала под рукой нет — опирайся на профессиональный корпус психоанализа.",
   });
-
-  const raw = response.choices[0]?.message?.content ?? "";
   let sections: PlannedSection[] = [];
   let notes: LecturePlanNotes = { outOfScope: [], decisions: [] };
 
   try {
-    const parsed = JSON.parse(raw) as {
+    const parsed = parseModelJson<{
       sections?: unknown;
       outOfScope?: unknown;
       decisions?: unknown;
-    };
+    }>(raw, "Codex");
     if (Array.isArray(parsed.sections)) {
       sections = parsed.sections
         .map((s) => {
@@ -234,7 +217,6 @@ async function runWrite(job: Job): Promise<void> {
 
   const total = sections.length;
   const src = briefSources(brief);
-  warnNoResearchKey(id, src.res);
 
   /**
    * Объём главы считаем от заказанной длительности, а не берём из головы.
@@ -272,12 +254,13 @@ async function runWrite(job: Job): Promise<void> {
       if (excerpts.length > 0) parts.push(`Выдержки из библиотеки автора:\n\n${renderExcerpts(excerpts)}`);
     }
 
-    if (src.res && isResearchAvailable()) {
+    if (src.res) {
       await setStatus(id, `Исследую блок ${section.ord + 1} из ${total}: ${section.heading}`);
       const found = await research(
         `Блок лекции по психоанализу: «${section.heading}». Тезис: ${section.abstract}. ` +
           `Тема всей лекции: ${brief.topic}. Собери материал для этого блока.`,
       ).catch((err) => {
+        if (err instanceof ModelWaitError) throw err;
         logger.warn({ err, sectionId: section.id }, "Веб-поиск не ответил — пишу без него");
         return null;
       });
@@ -314,24 +297,19 @@ async function runWrite(job: Job): Promise<void> {
       nextHeading: sections[section.ord + 1]?.heading ?? null,
     });
 
-    const response = await openai.chat.completions.create({
+    const answer = await askText({
       model: MODEL,
-      messages: [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content:
+      system,
+      user:
             `Блок: ${section.heading}\nТезис: ${section.abstract}` +
             ((planned?.concepts?.length ?? 0) > 0
               ? `\nОпорные концепции и авторы: ${planned!.concepts!.join("; ")}`
               : "") +
             (planned?.hook ? `\nКрючок для аудитории: ${planned.hook}` : "") +
             (material !== "" ? `\n\nМатериал:\n\n${material}` : ""),
-        },
-      ],
     });
 
-    const reply = (response.choices[0]?.message?.content ?? "").trim();
+    const reply = answer.text.trim();
     if (reply === "") throw new Error(emptyChapter(section.heading));
 
     // Записываем только те источники, на которые модель реально сослалась:
@@ -407,28 +385,21 @@ async function runWrite(job: Job): Promise<void> {
     .where(eq(lectureSectionsTable.lectureId, id))
     .orderBy(asc(lectureSectionsTable.ord));
 
-  const bibliography = await openai.chat.completions
-    .create({
-      model: MODEL,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: bibliographyPrompt(brief, lecture.title) },
-        {
-          role: "user",
-          content: written
-            .map((w) => `## ${w.heading}\n${w.text}`)
-            .join("\n\n")
-            .slice(0, 120_000),
-        },
-      ],
-    })
-    .then((r) => {
-      const parsed = JSON.parse(r.choices[0]?.message?.content ?? "{}") as Record<string, unknown>;
+  const bibliography = await askJson<Record<string, unknown>>({
+    model: MODEL,
+    system: bibliographyPrompt(brief, lecture.title),
+    user: written
+      .map((w) => `## ${w.heading}\n${w.text}`)
+      .join("\n\n")
+      .slice(0, 120_000),
+  })
+    .then((parsed) => {
       const out: Bibliography = { primary: strings(parsed.primary), modern: strings(parsed.modern) };
       return out.primary.length + out.modern.length > 0 ? out : null;
     })
     // Список — украшение, а не суть: лекция готова и без него.
     .catch((err) => {
+      if (err instanceof ModelWaitError) throw err;
       logger.warn({ err, id }, "Список литературы не собрался");
       return null;
     });
@@ -448,6 +419,11 @@ async function runWrite(job: Job): Promise<void> {
   logger.info({ id, sections: total }, "Лекция написана");
 }
 
+/** Ждем подписку Codex: на карточке - причина и время продолжения. */
+async function onWait(job: Job, message: string): Promise<void> {
+  await db.update(lecturesTable).set({ statusMessage: message }).where(eq(lecturesTable.id, job.entityId));
+}
+
 async function onGiveUp(job: Job, message: string): Promise<void> {
   await db
     .update(lecturesTable)
@@ -457,6 +433,6 @@ async function onGiveUp(job: Job, message: string): Promise<void> {
 }
 
 export function registerLectureHandlers(): void {
-  registerHandler("lecture.plan", { run: runPlan, onGiveUp });
-  registerHandler("lecture.write", { run: runWrite, onGiveUp });
+  registerHandler("lecture.plan", { run: runPlan, onGiveUp, onWait });
+  registerHandler("lecture.write", { run: runWrite, onGiveUp, onWait });
 }
