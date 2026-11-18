@@ -8,7 +8,7 @@ import { sendViaPostbox } from "./postbox";
  *
  * Основной путь — Yandex Cloud Postbox по HTTPS (lib/postbox.ts): сервер стоит
  * в DigitalOcean, где исходящие почтовые порты закрыты, и SMTP оттуда не
- * работает. Домен отправителя (vi-utkina.ru) подтверждён в Postbox записями
+ * работает. Домен отправителя (MAIL_FROM) подтверждён в Postbox записями
  * DKIM. Ключ вводится вслепую скриптом ./set-mail-postbox.sh.
  *
  * SMTP Яндекс 360 остаётся запасным путём для сервера, где почтовые порты

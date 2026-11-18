@@ -3,7 +3,7 @@
 # перед деплоем. Только числа, без содержимого. Нужно, чтобы понять, КОГДА
 # что-то исчезло (правило владелицы: система сама ничего не стирает).
 #
-# Запуск с компьютера:  ssh root@5.129.198.180 bash -s < ~/kotu/ops/dump-counts.sh
+# Запуск с компьютера:  ssh root@СЕРВЕР bash -s < ~/kotu/ops/dump-counts.sh
 set -euo pipefail
 # Тот же список, что в описи deploy.sh (строки_*).
 TABLES="transcriptions documents folders lectures decks users"

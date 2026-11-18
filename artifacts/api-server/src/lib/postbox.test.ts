@@ -44,13 +44,13 @@ describe("подпись AWS Signature V4", () => {
 
 describe("отправитель", () => {
   test("русское имя кодируется по RFC 2047", () => {
-    expect(fromHeader("Psy Библиотека", "hello@vi-utkina.ru")).toBe(
-      `=?UTF-8?B?${Buffer.from("Psy Библиотека").toString("base64")}?= <hello@vi-utkina.ru>`,
+    expect(fromHeader("Psy Библиотека", "sender@example.ru")).toBe(
+      `=?UTF-8?B?${Buffer.from("Psy Библиотека").toString("base64")}?= <sender@example.ru>`,
     );
   });
 
   test("латинское имя - в кавычках", () => {
-    expect(fromHeader('Kot "Lib"', "a@b.ru")).toBe('"Kot \\"Lib\\"" <a@b.ru>');
+    expect(fromHeader('Kot "Lib"', "a@example.ru")).toBe('"Kot \\"Lib\\"" <a@example.ru>');
   });
 });
 
@@ -58,7 +58,7 @@ describe("отправка", () => {
   const key = { keyId: "AJE-test-id", secret: "never-in-logs" };
   const msg = {
     fromName: "Psy Библиотека",
-    fromAddress: "hello@vi-utkina.ru",
+    fromAddress: "sender@example.ru",
     to: "user@example.com",
     subject: "Тема",
     text: "Текст",
@@ -83,7 +83,7 @@ describe("отправка", () => {
 
     const body = JSON.parse(String(init.body));
     expect(body.Destination).toEqual({ ToAddresses: ["user@example.com"] });
-    expect(body.FromEmailAddress).toMatch(/^=\?UTF-8\?B\?.+\?= <hello@vi-utkina\.ru>$/);
+    expect(body.FromEmailAddress).toMatch(/^=\?UTF-8\?B\?.+\?= <sender@example\.ru>$/);
     expect(body.Content.Simple.Subject).toEqual({ Data: "Тема", Charset: "UTF-8" });
     expect(body.Content.Simple.Body.Text.Data).toBe("Текст");
     expect(body.Content.Simple.Body.Html.Data).toBe("<p>Текст</p>");

@@ -7,12 +7,12 @@
 > развёртывания на старом сервере; разделы про очередь, Whisper, HTTPS и миграции схемы
 > по сути остаются верными.
 
-- **Приложение**: **https://psy3107.ru** на Timeweb VDS `5.129.198.180` (nginx-сайт `psy3107`: статика `/opt/kotu/public` + `/api` → systemd `kotu` на 127.0.0.1:5010). Секреты: `/opt/kotu/.env`.
+- **Приложение**: **https://psy3107.ru** на Timeweb VDS (адрес `СТАРЫЙ`) (nginx-сайт `psy3107`: статика `/opt/kotu/public` + `/api` → systemd `kotu` на 127.0.0.1:5010). Секреты: `/opt/kotu/.env`.
 - **Выкатка**: `./deploy.sh` (сборка локально, rsync артефактов, рестарт).
-- **OpenAI**: api.openai.com блокирует РФ-IP, поэтому запросы идут через прокси на DigitalOcean-дроплете **vikky-ai-server** (`206.189.181.64`, NYC1):
+- **OpenAI**: api.openai.com блокирует РФ-IP, поэтому запросы идут через прокси на DigitalOcean-дроплете **vikky-ai-server** (адрес `ТРАНЗИТ`, NYC1):
   - systemd `openai-proxy`, `/opt/openai-proxy/proxy.mjs` (node, без зависимостей), порт **8443**, TLS самоподписанный (`NODE_EXTRA_CA_CERTS=/opt/kotu/openai-proxy-ca.pem` в юните kotu);
   - принимает соединения только с IP Timeweb VDS (allowlist в коде + ufw);
-  - в `.env`: `AI_INTEGRATIONS_OPENAI_BASE_URL=https://206.189.181.64:8443/v1` (устарело, см. ниже).
+  - в `.env`: `AI_INTEGRATIONS_OPENAI_BASE_URL=https://ТРАНЗИТ:8443/v1` (устарело, см. ниже).
 - На том же дроплете живёт посторонний сервис `ai-agent` (порт 3000) — не трогать.
 - БД: Postgres `kotu` на Timeweb VDS; миграции — drizzle push через ssh-туннель, только вручную и по порядку из «Миграция схемы» ниже.
 
@@ -25,7 +25,7 @@
 - nginx **kotu-ai-router** (127.0.0.1:8444): `/v1/audio/*` → Whisper (таймаут 30 мин), остальные `/v1/*` (chat-структурирование) → по-прежнему OpenAI через DO-прокси
 - `/opt/kotu/.env`: `AI_INTEGRATIONS_OPENAI_BASE_URL=http://127.0.0.1:8444/v1`
 
-**Вернуться на облачную транскрибацию**: `AI_INTEGRATIONS_OPENAI_BASE_URL=https://206.189.181.64:8443/v1` + `systemctl restart kotu`.
+**Вернуться на облачную транскрибацию**: `AI_INTEGRATIONS_OPENAI_BASE_URL=https://ТРАНЗИТ:8443/v1` + `systemctl restart kotu`.
 **Качество/скорость**: base ≈ 0.5× длительности записи на этом CPU; точность ниже gpt-4o-transcribe. Модель покрупнее (`small`) в 2 ГБ RAM не влезает — нужен апгрейд тарифа.
 
 ## Апгрейд: faster-whisper large-v3-turbo (2026-07-22, вечер)
@@ -109,7 +109,7 @@ cd ../kotu-rollback && pnpm install --frozen-lockfile && ./deploy.sh
 строка `снимок:`; меньше, чем было, — стоп и разбираться):
 
 ```bash
-ssh root@5.129.198.180 "bash <снимок>/inventory.sh | diff <снимок>/inventory.txt -"
+ssh root@СЕРВЕР "bash <снимок>/inventory.sh | diff <снимок>/inventory.txt -"
 ```
 
 **Никогда** не запускать `deploy.sh` из старого коммита: прежние версии ротировали снимки
@@ -121,7 +121,7 @@ ssh root@5.129.198.180 "bash <снимок>/inventory.sh | diff <снимок>/i
 - Платформа переехала на **https://psy3107.ru** (и www), сертификат Let's Encrypt до 28.10.2026, автопродление настроено certbot'ом
 - nginx-сайт `psy3107`: статика + `/api` → 127.0.0.1:5010, редирект http → https, лимит загрузки 1 ГБ
 - `PUBLIC_BASE_URL=https://psy3107.ru` в `/opt/kotu/.env` — от него зависит флаг `secure` у cookie сессии
-- Старый адрес `http://5.129.198.180:8091` с 23.09.2026 только редиректит на https://psy3107.ru (`ops/close-8091.sh`): по голому HTTP пароль и расшифровки шли открытым текстом, а войти там всё равно было нельзя — cookie сессии secure
+- Старый адрес `http://СТАРЫЙ:8091` с 23.09.2026 только редиректил на https://psy3107.ru (скрипт `ops/close-8091.sh` удалён вместе с переездом): по голому HTTP пароль и расшифровки шли открытым текстом, а войти там всё равно было нельзя — cookie сессии secure
 - Грабля: `dig +short @сервер-реестра домен NS` НЕ показывает делегирование — записи приходят в секции AUTHORITY, короткий формат её не печатает. Проверять полным `dig` или через публичный резолвер
 
 ## Каналы к моделям (2026-07-30)

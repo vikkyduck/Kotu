@@ -27,19 +27,19 @@ function env(vars: Record<string, string>) {
 
 describe("выбор пути", () => {
   test("есть ключ Postbox - письмо уходит через Postbox, SMTP не трогается", async () => {
-    env({ POSTBOX_KEY_ID: "id", POSTBOX_SECRET_KEY: "secret", SMTP_USER: "hello@vi-utkina.ru", SMTP_PASS: "p", MAIL_FROM: "hello@vi-utkina.ru" });
+    env({ POSTBOX_KEY_ID: "id", POSTBOX_SECRET_KEY: "secret", SMTP_USER: "sender@example.ru", SMTP_PASS: "p", MAIL_FROM: "sender@example.ru" });
     expect(mailConfigured()).toBe(true);
     await sendMail("user@example.com", "Тема", "Текст", "<p>Текст</p>");
     expect(postbox.sendViaPostbox).toHaveBeenCalledTimes(1);
     expect(postbox.sendViaPostbox).toHaveBeenCalledWith(
       { keyId: "id", secret: "secret" },
-      expect.objectContaining({ fromAddress: "hello@vi-utkina.ru", to: "user@example.com" }),
+      expect.objectContaining({ fromAddress: "sender@example.ru", to: "user@example.com" }),
     );
     expect(smtp.sendMail).not.toHaveBeenCalled();
   });
 
   test("ключа Postbox нет - работает прежний SMTP", async () => {
-    env({ SMTP_USER: "hello@vi-utkina.ru", SMTP_PASS: "p", MAIL_FROM: "hello@vi-utkina.ru" });
+    env({ SMTP_USER: "sender@example.ru", SMTP_PASS: "p", MAIL_FROM: "sender@example.ru" });
     expect(mailConfigured()).toBe(true);
     await sendMail("user@example.com", "Тема", "Текст", "<p>Текст</p>");
     expect(smtp.sendMail).toHaveBeenCalledTimes(1);
@@ -52,7 +52,7 @@ describe("выбор пути", () => {
   });
 
   test("ничего нет - почта не настроена, отправка - понятная ошибка", async () => {
-    env({ MAIL_FROM: "hello@vi-utkina.ru" });
+    env({ MAIL_FROM: "sender@example.ru" });
     expect(mailConfigured()).toBe(false);
     await expect(sendMail("user@example.com", "Т", "Т", "Т")).rejects.toThrow("POSTBOX_KEY_ID");
   });
@@ -60,22 +60,22 @@ describe("выбор пути", () => {
 
 describe("проверка почты для самопроверки", () => {
   test("Postbox - настоящая отправка на адрес симулятора", async () => {
-    env({ POSTBOX_KEY_ID: "id", POSTBOX_SECRET_KEY: "secret", MAIL_FROM: "hello@vi-utkina.ru" });
+    env({ POSTBOX_KEY_ID: "id", POSTBOX_SECRET_KEY: "secret", MAIL_FROM: "sender@example.ru" });
     expect(await checkMail()).toBeNull();
     expect(postbox.sendViaPostbox).toHaveBeenCalledWith(
       { keyId: "id", secret: "secret" },
-      expect.objectContaining({ to: "success@simulator.pstbx.ru", fromAddress: "hello@vi-utkina.ru" }),
+      expect.objectContaining({ to: "success@simulator.pstbx.ru", fromAddress: "sender@example.ru" }),
     );
   });
 
   test("Postbox отказал - понятная проблема", async () => {
-    env({ POSTBOX_KEY_ID: "id", POSTBOX_SECRET_KEY: "secret", MAIL_FROM: "hello@vi-utkina.ru" });
+    env({ POSTBOX_KEY_ID: "id", POSTBOX_SECRET_KEY: "secret", MAIL_FROM: "sender@example.ru" });
     postbox.sendViaPostbox.mockRejectedValueOnce(new Error("Postbox ответил 403: Forbidden"));
     expect(await checkMail()).toBe("письма не уходят: Postbox ответил 403: Forbidden");
   });
 
   test("почта не настроена - так и говорим, ничего не отправляем", async () => {
-    env({ MAIL_FROM: "hello@vi-utkina.ru" });
+    env({ MAIL_FROM: "sender@example.ru" });
     expect(await checkMail()).toContain("не настроена");
     expect(postbox.sendViaPostbox).not.toHaveBeenCalled();
   });
