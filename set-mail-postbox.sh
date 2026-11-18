@@ -18,10 +18,16 @@ set -euo pipefail
 
 . "$(dirname "$0")/ops/server-address.sh"
 SERVER=$(kotu_server) || exit 1
-FROM_DEFAULT=noreply@example.ru
 
-read -rp "Адрес отправителя [$FROM_DEFAULT]: " FROM
-FROM=${FROM:-$FROM_DEFAULT}
+# Адрес по умолчанию - тот, что уже стоит на сервере (MAIL_FROM): адресов в
+# публичном репозитории не храним.
+FROM_DEFAULT=$(ssh "$SERVER" "sed -n 's/^MAIL_FROM=//p' /opt/kotu/.env | tail -n 1" 2>/dev/null || true)
+if [ -n "$FROM_DEFAULT" ]; then
+  read -rp "Адрес отправителя [$FROM_DEFAULT]: " FROM
+  FROM=${FROM:-$FROM_DEFAULT}
+else
+  read -rp "Адрес отправителя (на домене, подтверждённом в Postbox): " FROM
+fi
 printf "Идентификатор статического ключа (не отображается): "
 read -rs KEY_ID
 echo

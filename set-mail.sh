@@ -16,8 +16,15 @@ set -euo pipefail
 SERVER=$(kotu_server) || exit 1
 
 echo "Шаг 1 из 2. Почтовый АДРЕС, с которого будут уходить письма."
-read -rp "Адрес отправителя [noreply@example.ru]: " FROM
-FROM="${FROM:-noreply@example.ru}"
+# Адрес по умолчанию - тот, что уже стоит на сервере (MAIL_FROM): адресов в
+# публичном репозитории не храним.
+FROM_DEFAULT=$(ssh "$SERVER" "sed -n 's/^MAIL_FROM=//p' /opt/kotu/.env | tail -n 1" 2>/dev/null || true)
+if [ -n "$FROM_DEFAULT" ]; then
+  read -rp "Адрес отправителя [$FROM_DEFAULT]: " FROM
+  FROM=${FROM:-$FROM_DEFAULT}
+else
+  read -rp "Адрес отправителя (ящик Яндекс 360): " FROM
+fi
 
 # Ловим самую вероятную ошибку: в это поле вставляют пароль вместо адреса.
 # Пароль, попавший в видимое поле, остаётся в истории терминала и на экране.
