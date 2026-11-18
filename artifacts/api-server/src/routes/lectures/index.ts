@@ -159,8 +159,10 @@ router.post("/lectures", async (req, res): Promise<void> => {
   }
   const brief: LectureBrief = {
     topic,
-    audience: typeof body.audience === "string" && body.audience ? body.audience : "смешанная",
-    durationMin: Number.isFinite(durationMin) ? Math.min(480, Math.max(30, durationMin)) : 90,
+    // Аудитория необязательна: пусто - модель сама выбирает уровень изложения.
+    audience: typeof body.audience === "string" ? body.audience.trim().slice(0, 200) : "",
+    // От получаса до четырёх часов (до 16 глав, handlers/lecture.ts); не задано - полтора часа.
+    durationMin: Number.isFinite(durationMin) && durationMin > 0 ? Math.min(240, Math.max(30, Math.round(durationMin))) : 90,
     mustInclude: typeof body.mustInclude === "string" ? body.mustInclude : undefined,
     mustAvoid: typeof body.mustAvoid === "string" ? body.mustAvoid : undefined,
     documentIds,

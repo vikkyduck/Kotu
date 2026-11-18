@@ -278,7 +278,11 @@ input.field,textarea.topic,.sheet textarea{width:100%;border:1px solid var(--lin
 textarea.topic,.sheet textarea{resize:vertical;min-height:96px}
 input.field:focus,textarea.topic:focus,.sheet textarea:focus{outline:none;
   border-color:var(--accent-strong);box-shadow:0 0 0 2px rgba(182,124,90,.26)}
-input.field::placeholder,textarea.topic::placeholder,.sheet textarea::placeholder{color:var(--muted);opacity:1}
+/* Пример в пустом поле - заметно бледнее настоящего текста, иначе его принимают за уже написанный. */
+input.field::placeholder,textarea.topic::placeholder,.sheet textarea::placeholder{color:var(--muted);opacity:.38}
+.fieldlbl .opt{font-size:13px;font-weight:400;letter-spacing:0;margin-left:6px;color:var(--muted);opacity:.7}
+input.field.hours{max-width:220px}
+.fieldhint{font-size:14px;color:var(--muted);opacity:.7;margin:6px 0 0}
 /* автозаполнение WebKit на тёмном — без жёлтой заливки */
 input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-webkit-text-fill-color:var(--ink)}
 .fieldlbl{font-size:15px;font-weight:500;letter-spacing:.04em;margin:18px 0 9px;color:var(--ink-2)}

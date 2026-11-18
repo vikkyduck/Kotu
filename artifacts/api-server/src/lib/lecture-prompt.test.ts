@@ -70,3 +70,10 @@ test("указания как у бота: коротко, без отдельн
   expect(plan).not.toContain("ТРЕБОВАНИЯ К КАЧЕСТВУ");
   expect(plan.split("\n").length).toBeLessThan(25);
 });
+
+test("аудитория и акцент необязательны: пусто - строки нет", () => {
+  const plan = planPrompt({ topic: "Сны", audience: "", durationMin: 90, documentIds: [] }, "Сны", 6);
+  expect(plan).not.toContain("Аудитория:");
+  expect(plan).not.toContain("Акцент:");
+  expect(plan).toContain("6 смысловых блоков.");
+});

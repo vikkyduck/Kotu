@@ -150,9 +150,9 @@ async function runPlan(job: Job): Promise<void> {
 
   await setStatus(id, "Продумываю структуру…");
 
-  // Методика автора: 5–8 смысловых блоков. Хронометраж влияет на их число
-  // внутри этой вилки, а не ломает её.
-  const blocks = Math.max(5, Math.min(8, Math.round(brief.durationMin / 15)));
+  // Примерно блок на 15 минут: от 4 (полчаса) до 16 (четыре часа). Глава -
+  // до 1800 слов, так что 16 блоков дают почти четыре часа звучащей речи.
+  const blocks = Math.max(4, Math.min(16, Math.round(brief.durationMin / 15)));
 
   const { text: raw } = await askText({
     model: MODEL,
