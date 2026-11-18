@@ -1,36 +1,28 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# Kotu — подключить ключ OpenAI, Claude (Anthropic), Gemini (Google) или Perplexity.
+# Kotu - подключить запасной ключ OpenAI API.
 # Запуск:  ~/kotu/set-ai-key.sh
 #
-# Ключ вводится вслепую, уходит на сервер через stdin по ssh, кладётся в
-# /opt/kotu/.env (права 600) и сразу проверяется живым запросом через ваш
-# транзит. В историю команд, список процессов и чат он не попадает.
+# Модели платформы работают по подписке Codex через мост агента ПСИ, ключ не
+# нужен. Ключ OpenAI API - запасной путь: платформа переходит на него, только
+# когда подписка недоступна, и сначала присылает об этом сообщение в Telegram
+# (ARCHITECTURE.md §5). Без ключа платформа в таких случаях ждет подписку.
+#
+# Ключ вводится вслепую, уходит на сервер через stdin по ssh, кладется в
+# /opt/kotu/.env (права 600) и сразу проверяется запросом к OpenAI API.
+# В историю команд, список процессов и чат он не попадает.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-SERVER="${SERVER_USER:-root}@${SERVER_HOST:-СТАРЫЙ}"
+. "$(dirname "$0")/ops/server-address.sh"
+SERVER=$(kotu_server) || exit 1
+VAR=AI_INTEGRATIONS_OPENAI_API_KEY
 
-echo "Какой ключ подключаем?"
-echo "  1) Claude (Anthropic) — анализ текста, написание лекций, проверка достоверности"
-echo "  2) Gemini (Google)    — длинные документы, картинки"
-echo "  3) Perplexity         — поиск источников с ссылками"
-echo "  4) OpenAI             — оформление расшифровок, лекции"
-read -rp "Введите 1, 2, 3 или 4: " CHOICE
-
-case "$CHOICE" in
-  1) VAR=ANTHROPIC_API_KEY;  NAME="Claude";;
-  2) VAR=GEMINI_API_KEY;     NAME="Gemini";;
-  3) VAR=PERPLEXITY_API_KEY; NAME="Perplexity";;
-  4) VAR=AI_INTEGRATIONS_OPENAI_API_KEY; NAME="OpenAI";;
-  *) echo "❌ Нужно 1, 2, 3 или 4. Ничего не изменено."; exit 1;;
-esac
-
-printf "Вставьте ключ %s и нажмите Enter — ввод не отображается: " "$NAME"
+printf "Вставьте ключ OpenAI API и нажмите Enter - ввод не отображается: "
 read -rs KEY
 echo
 
-[ ${#KEY} -ge 20 ] || { echo "❌ Слишком короткая строка — не похоже на ключ. Ничего не изменено."; exit 1; }
+[ ${#KEY} -ge 20 ] || { echo "❌ Слишком короткая строка - не похоже на ключ. Ничего не изменено."; exit 1; }
 
 printf '%s' "$KEY" | ssh "$SERVER" "
   set -euo pipefail
@@ -43,31 +35,17 @@ printf '%s' "$KEY" | ssh "$SERVER" "
   chmod 600 \"\$ENV\" && chown kotu:kotu \"\$ENV\"
   systemctl restart kotu
 
-  echo '   Проверяю ключ живым запросом…'
-  case '$VAR' in
-    ANTHROPIC_API_KEY)
-      CODE=\$(curl -s -o /dev/null -w '%{http_code}' -m 30 \
-        -H \"x-api-key: \$KEY\" -H 'anthropic-version: 2023-06-01' \
-        http://127.0.0.1:8444/anthropic/v1/models || echo 000) ;;
-    GEMINI_API_KEY)
-      CODE=\$(curl -s -o /dev/null -w '%{http_code}' -m 30 \
-        \"http://127.0.0.1:8444/gemini/v1beta/models?key=\$KEY\" || echo 000) ;;
-    PERPLEXITY_API_KEY)
-      CODE=\$(curl -s -o /dev/null -w '%{http_code}' -m 60 \
-        -H \"Authorization: Bearer \$KEY\" -H 'content-type: application/json' \
-        -d '{\"model\":\"sonar\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}' \
-        http://127.0.0.1:8444/perplexity/chat/completions || echo 000) ;;
-    AI_INTEGRATIONS_OPENAI_API_KEY)
-      CODE=\$(curl -s -o /dev/null -w '%{http_code}' -m 30 \
-        -H \"Authorization: Bearer \$KEY\" \
-        http://127.0.0.1:8444/v1/models || echo 000) ;;
-  esac
+  BASE=\$(sed -n 's/^AI_INTEGRATIONS_OPENAI_BASE_URL=//p' \"\$ENV\" | tail -n 1)
+  BASE=\${BASE:-https://api.openai.com/v1}
+  echo '   Проверяю ключ запросом к OpenAI API...'
+  CODE=\$(curl -s -o /dev/null -w '%{http_code}' -m 30 \
+    -H \"Authorization: Bearer \$KEY\" \"\$BASE/models\" || echo 000)
 
   case \"\$CODE\" in
-    200) echo '   ✅ Ключ принят — $NAME доступен из приложения' ;;
-    401|403) echo '   ❌ Сервис не принял ключ (проверьте, что скопирован целиком)' ;;
-    000) echo '   ⚠️  Нет ответа — проверьте, жив ли транзит на дроплете' ;;
-    *) echo \"   ⚠️  Ответ \$CODE — покажите это Клоду\" ;;
+    200) echo '   ✅ Ключ принят - запасной путь готов' ;;
+    401|403) echo '   ❌ OpenAI не принял ключ (проверьте, что скопирован целиком)' ;;
+    000) echo '   ⚠️  Нет ответа от OpenAI API - проверьте сеть сервера' ;;
+    *) echo \"   ⚠️  Ответ \$CODE - покажите это Клоду\" ;;
   esac
 "
 unset KEY
