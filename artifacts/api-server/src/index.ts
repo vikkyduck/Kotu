@@ -23,6 +23,10 @@ if (!rawPort) {
 }
 
 const port = Number(rawPort);
+// Только внутри сервера: снаружи сайт открывает nginx (127.0.0.1:5010), и
+// порт приложения не должен быть доступен из сети, даже если файрвол
+// выключат. Другой адрес - явно через HOST.
+const host = process.env["HOST"] ?? "127.0.0.1";
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
@@ -98,8 +102,8 @@ void Promise.race([
   firstAttempt,
   new Promise<void>((resolve) => setTimeout(resolve, 30_000).unref()),
 ]).finally(() => {
-  const server = app.listen(port, () => {
-    logger.info({ port }, "Server listening");
+  const server = app.listen(port, host, () => {
+    logger.info({ port, host }, "Server listening");
     // MCP для агента ходит в API этого же процесса - стартует после него.
     startMcpServer();
   });
