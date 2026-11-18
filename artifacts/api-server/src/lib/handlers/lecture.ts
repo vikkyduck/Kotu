@@ -301,12 +301,12 @@ async function runWrite(job: Job): Promise<void> {
       model: MODEL,
       system,
       user:
-            `Блок: ${section.heading}\nТезис: ${section.abstract}` +
-            ((planned?.concepts?.length ?? 0) > 0
-              ? `\nОпорные концепции и авторы: ${planned!.concepts!.join("; ")}`
-              : "") +
-            (planned?.hook ? `\nКрючок для аудитории: ${planned.hook}` : "") +
-            (material !== "" ? `\n\nМатериал:\n\n${material}` : ""),
+        `Блок: ${section.heading}\nТезис: ${section.abstract}` +
+        ((planned?.concepts?.length ?? 0) > 0
+          ? `\nОпорные концепции и авторы: ${planned!.concepts!.join("; ")}`
+          : "") +
+        (planned?.hook ? `\nКрючок для аудитории: ${planned.hook}` : "") +
+        (material !== "" ? `\n\nМатериал:\n\n${material}` : ""),
     });
 
     const reply = answer.text.trim();
