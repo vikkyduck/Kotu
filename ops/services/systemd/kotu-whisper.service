@@ -1,0 +1,22 @@
+[Unit]
+Description=Kotu — локальный Whisper-транскрибатор (OpenAI-совместимый API)
+After=network.target
+
+[Service]
+User=kotu
+Group=kotu
+WorkingDirectory=/opt/whisper
+Environment=XDG_CACHE_HOME=/opt/whisper/cache
+Environment=HF_HOME=/opt/whisper/cache
+Environment=WHISPER_MODEL=large-v3-turbo
+Environment=WHISPER_LANGUAGE=ru
+ExecStart=/opt/whisper/venv/bin/uvicorn server:app --host 127.0.0.1 --port 9010
+Restart=always
+RestartSec=5
+# whisper на CPU прожорлив — не даём ему съесть весь сервер
+MemoryMax=8G
+CPUWeight=80
+
+[Install]
+WantedBy=multi-user.target
+

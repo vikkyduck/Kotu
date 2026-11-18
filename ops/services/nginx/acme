@@ -1,0 +1,6 @@
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    location /.well-known/acme-challenge/ { root /var/www/acme; }
+    location / { return 301 https://psy3107.ru$request_uri; }
+}

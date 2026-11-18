@@ -1,0 +1,7 @@
+[Unit]
+Description=Ночной бэкап баз и конфигов
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kotu-backup.sh
+
