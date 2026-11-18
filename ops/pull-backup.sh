@@ -23,7 +23,8 @@
 # Проверка без сервера: SERVER=local BACKUPS=<каталог> DEST=<каталог> — тот же
 # скрипт берёт «сервер» из локального каталога.
 set -euo pipefail
-SERVER=${SERVER:-${SERVER_USER:-root}@${SERVER_HOST:-5.129.198.180}}
+. "$(dirname "$0")/server-address.sh"
+SERVER=${SERVER:-$(kotu_server)} || exit 1
 BACKUPS=${BACKUPS:-/opt/backups}
 DEST=${DEST:-"$HOME/kotu-backups"}
 MIRRORS="library uploads decks"
