@@ -1,7 +1,9 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { purgeExpiredSessions } from "./lib/auth";
-import { requeueOrphans, startWorker } from "./lib/jobs";
+import { onJobEvents, requeueOrphans, startWorker } from "./lib/jobs";
+import { noticeDone, noticeFailed, safely } from "./lib/done-notice";
+import { startMcpServer } from "./lib/mcp";
 import { sweepTranscriptionsToLibrary } from "./lib/transcript-doc";
 import { sweepWorkToLibrary, sweepStuckDeckImages } from "./lib/work-doc";
 import { archiveState, ensureArchive, startFileSweep, whenArchiveReady } from "./lib/archive";
@@ -34,6 +36,12 @@ registerLectureHandlers();
 registerStoryboardHandler();
 registerIllustrateHandler();
 registerReslideHandler();
+
+// Итоги задач - владелице в Telegram через мост ПСИ (lib/done-notice.ts).
+onJobEvents({
+  done: (job) => safely(() => noticeDone(job)),
+  failed: (job, message) => safely(() => noticeFailed(job, message)),
+});
 
 // Архив «всего» — первым делом: и очередь, и стартовые сверки меняют и
 // удаляют строки и файлы, а без триггеров архива это шло бы мимо него.
@@ -92,6 +100,8 @@ void Promise.race([
 ]).finally(() => {
   const server = app.listen(port, () => {
     logger.info({ port }, "Server listening");
+    // MCP для агента ходит в API этого же процесса - стартует после него.
+    startMcpServer();
   });
 
   server.on("error", (err) => {

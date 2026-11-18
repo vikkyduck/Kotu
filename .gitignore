@@ -59,3 +59,6 @@ library/
 # и чистый клон не собирался (TS2307 в Library.tsx).
 !artifacts/kot/src/components/library/
 uploads/
+
+# Адрес сервера для скриптов с компьютера владелицы (ops/server-address.sh)
+ops/server.local

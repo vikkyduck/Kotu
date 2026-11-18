@@ -12,7 +12,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-SERVER="${SERVER_USER:-root}@${SERVER_HOST:-СТАРЫЙ}"
+. "$(dirname "$0")/ops/server-address.sh"
+SERVER=$(kotu_server) || exit 1
 SRC="${1:-/opt/lunario-app/.env}"
 FROM="${2:-noreply@example.ru}"
 

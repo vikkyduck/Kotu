@@ -7,12 +7,12 @@ import {
   type DeckStatus,
   type SlideContent,
 } from "@workspace/db";
-import { askJson } from "../claude";
+import { askJson, pickModel } from "../codex";
 import { fieldsLine, sanitizeSlideContent, settleContent } from "../slide-content";
 import { registerHandler } from "../jobs";
 import { deckToLibrary } from "../work-doc";
 import { logger } from "../logger";
-import { shownError } from "./storyboard";
+import { shownError, onWait } from "./storyboard";
 
 /**
  * Переделка ОДНОГО слайда словами автора. Отдельная задача, а не синхронный
@@ -104,7 +104,7 @@ async function run(job: Job): Promise<void> {
     `Что просит автор:\n${payload.instruction}`,
   ].join("\n\n");
 
-  const reply = await askJson<ReslideReply>({ system, user, maxTokens: 4000 });
+  const reply = await askJson<ReslideReply>({ model: pickModel("MODEL_DECK", "gpt-5.6-sol"), system, user });
 
   const content = settleContent(slide.layout, sanitizeSlideContent(reply.content));
   // Пустой ответ — это потеря слайда, а не правка: лучше честная ошибка.
@@ -144,5 +144,5 @@ async function onGiveUp(job: Job, message: string): Promise<void> {
 }
 
 export function registerReslideHandler(): void {
-  registerHandler("deck.reslide", { run, onGiveUp });
+  registerHandler("deck.reslide", { run, onGiveUp, onWait });
 }
