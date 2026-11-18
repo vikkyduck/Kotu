@@ -84,6 +84,39 @@ export async function sendMail(to: string, subject: string, text: string, html: 
   logger.info({ to, messageId: info.messageId, via: "smtp" }, "Письмо отправлено");
 }
 
+/** Адрес симулятора Postbox: письмо принимается как доставленное и никому не приходит. */
+const POSTBOX_SIMULATOR = "success@simulator.pstbx.ru";
+
+/**
+ * Проверка почты для самопроверки (lib/self-check.ts): null - письма уходят,
+ * иначе - что не так. Postbox проверяется настоящей отправкой на адрес
+ * симулятора, SMTP - входом на сервер без отправки.
+ */
+export async function checkMail(): Promise<string | null> {
+  const s = settings();
+  if (!mailConfigured()) return "почта не настроена: нет ключа Postbox и нет SMTP";
+  try {
+    if (postboxConfigured(s)) {
+      await sendViaPostbox(
+        { keyId: s.postboxKeyId, secret: s.postboxSecret },
+        {
+          fromName: SENDER_NAME,
+          fromAddress: s.from,
+          to: POSTBOX_SIMULATOR,
+          subject: "Проверка почты платформы",
+          text: "Самопроверка платформы.",
+          html: "<p>Самопроверка платформы.</p>",
+        },
+      );
+    } else {
+      await getTransport(s).verify();
+    }
+    return null;
+  } catch (err) {
+    return `письма не уходят: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 /** Письмо со ссылкой на сброс. Просто, коротко и без лишних обещаний. */
 export function resetEmail(name: string, link: string): { subject: string; text: string; html: string } {
   const subject = "Восстановление пароля — Psy Библиотека";

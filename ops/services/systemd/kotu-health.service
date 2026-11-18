@@ -1,0 +1,9 @@
+[Unit]
+Description=Проверка сайта psy3107.ru (сообщение владелице при смене состояния)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=kotu
+StateDirectory=kotu-health
+ExecStart=/usr/local/bin/kotu-health

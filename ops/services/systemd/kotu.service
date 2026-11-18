@@ -1,5 +1,7 @@
 [Unit]
 Description=Kotu (Кот) — API server
+# Упала - сообщение владелице в Telegram (kotu-alert@.service).
+OnFailure=kotu-alert@%n.service
 After=network.target postgresql.service
 
 [Service]

@@ -1,0 +1,25 @@
+#!/bin/bash
+# Раз в 5 минут (kotu-health.timer): отвечает ли сайт и включён ли архив.
+# Владелице пишем только о смене состояния: «не отвечает» - после двух
+# неудачных проверок подряд (перезапуск при выкладке длится секунды), и один
+# раз «снова отвечает». Состояние - в $STATE_DIRECTORY (systemd).
+set -uo pipefail
+state_file="${STATE_DIRECTORY:-/var/lib/kotu-health}/state"
+url=${HEALTH_URL:-https://psy3107.ru/api/healthz}
+prev=$(cat "$state_file" 2>/dev/null || echo ok)
+
+if curl -sS -m 20 "$url" 2>/dev/null | grep -q '"archive":"ok"'; then now=ok; else now=fail; fi
+
+case "$prev:$now" in
+  ok:ok|down:fail) exit 0 ;;
+  ok:fail) echo fail1 > "$state_file"; exit 0 ;;
+  fail1:ok) echo ok > "$state_file"; exit 0 ;;
+  fail1:fail)
+    "${KOTU_NOTIFY:-/usr/local/bin/kotu-notify}" "Платформа psy3107.ru не отвечает или архив выключен (проверка $url, две подряд). Журнал: journalctl -u kotu -n 100" \
+      && echo down > "$state_file"
+    exit 0 ;;
+  down:ok)
+    "${KOTU_NOTIFY:-/usr/local/bin/kotu-notify}" "Платформа psy3107.ru снова отвечает." && echo ok > "$state_file"
+    exit 0 ;;
+  *) echo ok > "$state_file" ;;
+esac
