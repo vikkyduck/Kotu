@@ -247,7 +247,9 @@ async function withRoute<T>(run: (route: Route) => Promise<T>): Promise<T> {
     }
 
     if (Date.now() >= state.waitingNoticeUntil) {
-      state.waitingNoticeUntil = until.getTime();
+      // Одно сообщение на эпизод: при отозванном входе подписку пробуем каждые
+      // 15 минут, но напоминаем не чаще раза в 6 часов.
+      state.waitingNoticeUntil = Math.max(until.getTime(), Date.now() + 6 * 3600_000);
       await notifyOwner(
         `Задачи платформы psy3107 ждут: ${reasonText(err.kind)}. Продолжу ${clock(until)} по Москве.`,
       );

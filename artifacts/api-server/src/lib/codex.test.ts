@@ -263,6 +263,20 @@ describe("лимит подписки и запасной ключ", () => {
     expect(apiCalls).toHaveLength(0);
   });
 
+  test("отозванный вход без ключа - напоминание не чаще раза в 6 часов", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] = "";
+    bridgeHandler = (req, _body, res) =>
+      req.url === "/notify" ? json(res, 200, { sent: true }) : json(res, 401, { error: { kind: "signin", status: 401 } });
+    await askText({ model: "m", system: "s", user: "u" }).catch(() => undefined);
+    vi.setSystemTime(Date.now() + 20 * 60_000);
+    await askText({ model: "m", system: "s", user: "u" }).catch(() => undefined);
+    expect(notices()).toHaveLength(1);
+    vi.setSystemTime(Date.now() + 6 * 3600_000);
+    await askText({ model: "m", system: "s", user: "u" }).catch(() => undefined);
+    expect(notices()).toHaveLength(2);
+  });
+
   test("MODEL_ON_LIMIT=wait - ключ есть, но платформа ждет", async () => {
     process.env["MODEL_ON_LIMIT"] = "wait";
     bridgeHandler = quota(Math.floor(Date.now() / 1000) + 600);
