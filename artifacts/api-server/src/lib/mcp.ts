@@ -212,8 +212,8 @@ const TOOLS: Tool[] = [
       type: "object",
       properties: {
         topic: { type: "string", description: "Тема и замысел лекции" },
-        durationMin: { type: "integer", description: "Длительность в минутах, 30-480, по умолчанию 90" },
-        audience: { type: "string", description: "Аудитория, по умолчанию смешанная" },
+        durationMin: { type: "integer", description: "Длительность в минутах, 30-240, по умолчанию 90" },
+        audience: { type: "string", description: "Аудитория, необязательно" },
         useResearch: { type: "boolean", description: "Собрать материал веб-поиском" },
         documentIds: {
           type: "array",

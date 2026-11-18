@@ -7,7 +7,6 @@ import { KIND_LABEL, docKind, lectureWorking, titleOf, type ItemKind } from '@/l
 import type {
   Bibliography,
   DocumentStatus,
-  LectureFocus,
   LecturePlanNotes,
   LectureStatus,
   PlannedSection,
@@ -57,21 +56,16 @@ interface LectureFull {
   sources: Source[];
 }
 
-const AUDIENCES = ['студенты', 'коллеги', 'смешанная'];
-/** Подписи акцентов: Record требует подпись у каждого акцента схемы. */
-const FOCUS_LABEL: Record<LectureFocus, string> = {
-  theoretical: 'теоретический',
-  clinical: 'клинический',
-  historical: 'исторический',
-};
-const FOCI = Object.keys(FOCUS_LABEL) as LectureFocus[];
+// Часы вписываются числом: от получаса до четырёх (до 16 глав по 1800 слов —
+// потолок handlers/lecture.ts). Пусто — сервер возьмёт полтора часа.
+const MIN_HOURS = 0.5;
+const MAX_HOURS = 4;
 
-// Больше двух часов лекция не выйдет: восемь глав по 1800 слов — потолок
-// handlers/lecture.ts.
-const DURATIONS = [
-  { label: '1 час', value: 60 },
-  { label: '2 часа', value: 120 },
-];
+/** «1,5» и «1.5» — одно и то же; пусто — null; не число — NaN. */
+function parseHours(raw: string): number | null {
+  const s = raw.trim().replace(',', '.');
+  return s === '' ? null : Number(s);
+}
 
 export function Lecture() {
   // Какую лекцию открыть, решает библиотека: инструмент — это действие,
@@ -91,15 +85,14 @@ export function Lecture() {
 
   // Бриф — тоже черновик: он ценнее всего, что есть на этом экране.
   const [topic, setTopic, clearTopic] = useDraft('lecture-topic', screen === 's-lecture');
-  const [audience, setAudience] = useState('студенты');
-  const [duration, setDuration] = useState(120);
+  const [audience, setAudience] = useState('');
+  const [hours, setHours] = useState('');
   const [picked, setPicked] = useState<number[]>([]);
   /** Откуда материал: из выбранных документов или собственное исследование ИИ. */
   /** Источники независимы: можно оба, один или ни одного. */
   const [useLibrary, setUseLibrary] = useState(false);
   const [useResearch, setUseResearch] = useState(false);
   /** Акцентов может быть несколько — или ни одного. */
-  const [focus, setFocus] = useState<LectureFocus[]>([]);
   const [busy, setBusy] = useState(false);
   /**
    * Правка главы: id главы, черновик и текст, с которого начали. Уход с
@@ -232,14 +225,18 @@ export function Lecture() {
       toast('Библиотека включена — отметьте документы или выключите её');
       return;
     }
+    const h = parseHours(hours);
+    if (h !== null && !(h >= MIN_HOURS && h <= MAX_HOURS)) {
+      toast('Часы — число от 0,5 до 4, например 1,5');
+      return;
+    }
     setBusy(true);
     const r = await send(
       '/api/lectures',
       json('POST', {
         topic,
-        audience,
-        durationMin: duration,
-        focus,
+        audience: audience.trim(),
+        ...(h === null ? {} : { durationMin: Math.round(h * 60) }),
         useLibrary,
         useResearch,
         documentIds: useLibrary ? picked : [],
@@ -711,50 +708,30 @@ export function Lecture() {
           placeholder="Например: защитные механизмы личности — для студентов второго курса. Начать с Фрейда и дойти до современных взглядов, с клиническими примерами."
         />
 
-        <div className="fieldlbl">Для кого?</div>
-        <div className="pills">
-          {AUDIENCES.map((a) => (
-            <button
-              type="button"
-              key={a}
-              className={`pill-opt ${audience === a ? 'on' : ''}`}
-              aria-pressed={audience === a}
-              onClick={() => setAudience(a)}
-            >
-              {a}
-            </button>
-          ))}
-        </div>
+        <label className="fieldlbl" htmlFor="lec-audience">
+          Для кого? <span className="opt">необязательно</span>
+        </label>
+        <input
+          id="lec-audience"
+          className="field"
+          value={audience}
+          maxLength={200}
+          onChange={(e) => setAudience(e.target.value)}
+          placeholder="Например: студенты второго курса"
+        />
 
-        <div className="fieldlbl">Примерно на сколько часов?</div>
-        <div className="pills">
-          {DURATIONS.map((d) => (
-            <button
-              type="button"
-              key={d.value}
-              className={`pill-opt ${duration === d.value ? 'on' : ''}`}
-              aria-pressed={duration === d.value}
-              onClick={() => setDuration(d.value)}
-            >
-              {d.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="fieldlbl">Что важнее в этой лекции? Можно несколько — или ничего</div>
-        <div className="pills">
-          {FOCI.map((f) => (
-            <button
-              type="button"
-              key={f}
-              className={`pill-opt ${focus.includes(f) ? 'on' : ''}`}
-              aria-pressed={focus.includes(f)}
-              onClick={() => setFocus((p) => (p.includes(f) ? p.filter((x) => x !== f) : [...p, f]))}
-            >
-              {FOCUS_LABEL[f]}
-            </button>
-          ))}
-        </div>
+        <label className="fieldlbl" htmlFor="lec-hours">
+          Примерно на сколько часов? <span className="opt">необязательно</span>
+        </label>
+        <input
+          id="lec-hours"
+          className="field hours"
+          inputMode="decimal"
+          value={hours}
+          onChange={(e) => setHours(e.target.value)}
+          placeholder="Например: 1,5"
+        />
+        <p className="fieldhint">От 0,5 до 4 часов. Если оставить пустым — около полутора часов.</p>
 
         <div className="fieldlbl">Откуда взять материал? Можно оба источника — или ни одного</div>
         <div className="pills">
