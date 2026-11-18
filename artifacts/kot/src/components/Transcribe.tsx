@@ -47,7 +47,7 @@ export function Transcribe() {
   const [dragOver, setDragOver] = useState(false);
   // Скрытие имён по умолчанию выключено: на платформе лекции и воркшопы, а не
   // сеансы (решение владелицы 23.09.2026) — включает сама, когда нужно.
-  const [opts, setOpts] = useState({ names: 'off', spk: 'on' });
+  const [opts, setOpts] = useState({ spk: 'on' });
 
   // While the upload request itself is in flight (before we have a row to poll).
   const [uploading, setUploading] = useState(false);
@@ -137,7 +137,6 @@ export function Transcribe() {
     try {
       const form = new FormData();
       form.append('audio', file);
-      form.append('hideNames', opts.names === 'on' ? 'true' : 'false');
       form.append('markSpeakers', opts.spk === 'on' ? 'true' : 'false');
 
       const r = await send('/api/transcriptions/upload', { method: 'POST', body: form }, 'Не удалось загрузить запись. Попробуйте ещё раз.');
@@ -273,27 +272,6 @@ export function Transcribe() {
           {/* Дизайн Lovable: тумблеры вместо текстовых ссылок «изменить» */}
           <div className="panel">
             <div className="setgroup-title">Настройки записи</div>
-
-            <div className="setrow">
-              <div className="st">
-                <b>Скрыть имена и города</b>
-                <p id="txtNames">
-                  {opts.names === 'on'
-                    ? 'В тексте будет «имя скрыто» — исходное можно посмотреть по клику.'
-                    : 'Оставлю текст как есть — подходит для лекций.'}
-                </p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={opts.names === 'on'}
-                aria-label="Скрыть имена и города"
-                className={`switch ${opts.names === 'on' ? 'on' : ''}`}
-                onClick={() => setOpts(s => ({ ...s, names: s.names === 'on' ? 'off' : 'on' }))}
-              >
-                <span className="knob" />
-              </button>
-            </div>
 
             <div className="setrow">
               <div className="st">

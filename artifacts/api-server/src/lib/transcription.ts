@@ -8,7 +8,6 @@ import { whisper } from "./whisper";
 import { askText, ModelWaitError, pickModel } from "./codex";
 import { parseModelJson } from "./model-json";
 import type { TranscriptSegment } from "@workspace/db";
-import { maskText, unmaskText, NerUnavailableError } from "./privacy";
 
 const execFileAsync = promisify(execFile);
 
@@ -110,16 +109,9 @@ export class ChunkError extends Error {
     super(`chunk ${part}/${total} failed to ${verb}`);
     this.name = "ChunkError";
     this.cause = cause;
-    // Сервис скрытия имён лёг — запись и файл тут ни при чём, очередь повторит
-    // задачу. Текст дойдёт до человека, только если все попытки кончатся.
     // Что делать дальше, говорит кнопка «Попробовать ещё раз» (повтор из
     // сохранённого аудио), поэтому здесь только факт — без советов грузить заново.
-    this.userMessage =
-      cause instanceof NerUnavailableError
-        ? "Сервис скрытия имён временно недоступен"
-        : total > 1
-          ? `Не удалось ${verb} часть ${part} из ${total}`
-          : `Не удалось ${verb} запись`;
+    this.userMessage = total > 1 ? `Не удалось ${verb} часть ${part} из ${total}` : `Не удалось ${verb} запись`;
   }
 }
 
@@ -130,7 +122,7 @@ export interface TranscribeProgress {
 
 /**
  * Transcribe a recording of any length: split into chunks, transcribe and
- * structure each chunk with the same privacy/speaker options, then stitch the
+ * structure each chunk with the same speaker options, then stitch the
  * resulting segments back together in order. Reports calm progress via the
  * optional callback. Throws a {@link ChunkError} if a chunk fails.
  */
@@ -196,20 +188,17 @@ export async function transcribeLongAudio(
  * Длинная запись оформляется кусками по 10 минут, и без подсказки каждый кусок
  * нумеровал бы говорящих заново: Speaker 1 в начале и в середине оказались бы
  * разными людьми. Поэтому следующему куску говорим, какие Speaker уже были и
- * кто говорил последним. Без скрытия имён — ещё и концы двух последних реплик;
- * со скрытием их текст не отправляем: в нём уже настоящие имена.
+ * кто говорил последним, и концы двух последних реплик.
  */
-function speakerContext(previous: TranscriptSegment[], hideNames: boolean): string | null {
+function speakerContext(previous: TranscriptSegment[]): string | null {
   const labeled = previous.filter((s) => /^Speaker \d+$/.test(s.who));
   if (labeled.length === 0) return null;
   const seen = [...new Set(labeled.map((s) => s.who))];
   const lines = [
     `Это продолжение записи. Уже встречались: ${seen.join(", ")}; последним говорил ${labeled[labeled.length - 1]!.who}. Продолжай ту же нумерацию: тот же человек — тот же номер, новый — следующий по порядку. Если в этой части говорит один человек — всё равно помечай его.`,
   ];
-  if (!hideNames) {
-    lines.push("Конец предыдущей части — только для справки, в ответ не включай:");
-    for (const s of labeled.slice(-2)) lines.push(`${s.who}: …${s.text.slice(-300)}`);
-  }
+  lines.push("Конец предыдущей части — только для справки, в ответ не включай:");
+  for (const s of labeled.slice(-2)) lines.push(`${s.who}: …${s.text.slice(-300)}`);
   return lines.join("\n");
 }
 
@@ -219,42 +208,28 @@ function normalizeSpeaker(who: string): string {
   return m ? `Speaker ${m[1]}` : who.trim();
 }
 
+/**
+ * Скрытия имён больше нет (решение владелицы 18.11.2026): текст уходит на
+ * оформление как есть. Колонка hide_names в базе осталась ради старых записей.
+ */
 interface StructureOptions {
-  /**
-   * Галочка «Скрыть имена и города» в форме. true — имена маскируются ДО
-   * отправки в модель (если сервис имён лежит, текст не уходит), хранятся в
-   * скобках [[Анна]] и на экране видны как «имя скрыто». false — текст уходит
-   * на оформление как есть и хранится обычным: на платформе лекции и
-   * воркшопы, а не сеансы (решение владелицы 23.09.2026: выбирает клиент).
-   */
-  hideNames: boolean;
   markSpeakers: boolean;
 }
 
 /**
- * Turn a raw transcript into clean, structured segments. With hideNames masks
- * personal names / places before the model call; optionally labels the two
+ * Turn a raw transcript into clean, structured segments; optionally labels the
  * speakers. Best-effort: if the model output can't be parsed, falls back to a
- * single plain-text segment. With hideNames throws {@link NerUnavailableError}
- * without calling the model if names can't be masked.
+ * single plain-text segment.
  */
 export async function structureTranscript(
   rawText: string,
-  { hideNames, markSpeakers }: StructureOptions,
+  { markSpeakers }: StructureOptions,
   previous: TranscriptSegment[] = [],
 ): Promise<TranscriptSegment[]> {
   const trimmed = rawText.trim();
   if (trimmed === "") {
     return [{ who: "", text: "В записи не удалось распознать речь." }];
   }
-
-  // Скрыть имена попросили — прячем их ЛОКАЛЬНО до отправки в модель. Если
-  // NER лежит, maskText бросает, и запрос к модели не уходит вовсе. Не
-  // попросили — текст уходит как есть, сервис имён не нужен.
-  const { masked: payload, map: nameMap } = hideNames
-    ? await maskText(trimmed)
-    : { masked: trimmed, map: {} };
-  const reveal = (text: string) => (hideNames ? unmaskText(text, nameMap) : text);
 
   const rules: string[] = [
     "Ты аккуратно оформляешь расшифровку аудиозаписи на русском языке — лекции, воркшопа или беседы.",
@@ -267,26 +242,20 @@ export async function structureTranscript(
     rules.push(
       'Раздели текст на реплики разных говорящих и пометь их по порядку первого появления: "who": "Speaker 1", "Speaker 2", "Speaker 3" и так далее. Один и тот же человек — всегда один и тот же номер. Если говорит один человек (например, лекция) и ниже не сказано продолжать нумерацию — оставляй "who": "" у всех реплик.',
     );
-    const context = speakerContext(previous, hideNames);
+    const context = speakerContext(previous);
     if (context) rules.push(context);
   } else {
     rules.push('Не помечай говорящих: у каждой реплики "who" должно быть пустой строкой "".');
   }
 
-  if (hideNames) {
-    rules.push(
-      'В тексте уже стоят метки вида [[PER1]], [[LOC1]] — за ними скрыты имена людей и названия мест. Переноси эти метки в ответ ДОСЛОВНО и на то же место: не переводи, не склоняй, не раскрывай и не придумывай новых меток. Больше двойные квадратные скобки ни для чего не используй.',
-    );
-  } else {
-    // [[…]] фронт читает как скрытое имя — в тексте без скрытия их быть не должно.
-    rules.push("Двойные квадратные скобки не используй.");
-  }
+  // [[…]] фронт читает как скрытое имя (старые записи) — в новом тексте их быть не должно.
+  rules.push("Двойные квадратные скобки не используй.");
 
   rules.push(
     'Верни СТРОГО JSON-объект вида {"segments":[{"who":"...","text":"..."}]} без какого-либо другого текста.',
   );
 
-  const { text: content } = await askText({ model: STRUCTURE_MODEL, system: rules.join("\n"), user: payload });
+  const { text: content } = await askText({ model: STRUCTURE_MODEL, system: rules.join("\n"), user: trimmed });
 
   try {
     const parsed = parseModelJson<{ segments?: unknown }>(content, "Codex");
@@ -297,8 +266,7 @@ export async function structureTranscript(
         const text = typeof seg.text === "string" ? seg.text : "";
         return {
           who: typeof seg.who === "string" ? normalizeSpeaker(seg.who) : "",
-          // Возвращаем настоящие имена на место меток — уже на нашем сервере.
-          text: reveal(text),
+          text,
         };
       })
       .filter((s) => s.text.trim() !== "");
@@ -308,8 +276,6 @@ export async function structureTranscript(
     // fall through to plain-text fallback
   }
 
-  // Оформление не удалось — отдаём исходный текст, повторно за границу ничего
-  // не шлём. Со скрытием имён — через метки, чтобы имена легли в скобки.
-  const fallbackText = hideNames ? reveal(payload) : trimmed;
-  return [{ who: "", text: fallbackText }];
+  // Оформление не удалось — отдаём исходный текст, повторно модель не зовём.
+  return [{ who: "", text: trimmed }];
 }

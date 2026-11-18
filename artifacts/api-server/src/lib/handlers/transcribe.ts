@@ -12,7 +12,8 @@ import { archiveAndRemove } from "../archive";
 export interface TranscribePayload {
   inputPath: string;
   filename: string;
-  hideNames: boolean;
+  /** Старые задачи в очереди ещё несут это поле; скрытия имён больше нет. */
+  hideNames?: boolean;
   markSpeakers: boolean;
 }
 
@@ -67,7 +68,7 @@ async function run(job: Job): Promise<void> {
     const segments = await transcribeLongAudio(
       payload.inputPath,
       payload.filename,
-      { hideNames: payload.hideNames, markSpeakers: payload.markSpeakers },
+      { markSpeakers: payload.markSpeakers },
       async ({ progress, message }) => {
         const alive = await db
           .update(transcriptionsTable)
