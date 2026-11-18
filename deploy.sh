@@ -215,6 +215,51 @@ REMOTE
 # (с зеркалом без архива). Проверяем синтаксис до установки.
 ssh "$SERVER" 'set -e; t=$(mktemp); cat > "$t"; bash -n "$t"; install -m 0711 -o root -g root "$t" /usr/local/bin/kotu-backup.sh; rm -f "$t"; echo "   /usr/local/bin/kotu-backup.sh обновлён"' < ops/kotu-backup.sh
 
+echo "==> [4b/6] Службы, таймеры, скрипты и сайты nginx из ops/services"
+# Всё, что раньше ставилось руками, теперь из репозитория: unit-файлы kotu*,
+# скрипты оповещений и проверки сайта, сайты nginx. Unit-файлы и скрипты
+# кладутся только при изменении. Сайты nginx - с проверкой nginx -t: не
+# прошла - прежние файлы возвращаются, выкладка останавливается до заливки.
+rsync -a --delete ops/services/ "$SERVER:/root/kotu-services/"
+ssh "$SERVER" bash -s <<'REMOTE'
+set -euo pipefail
+src=/root/kotu-services
+for f in "$src"/bin/*; do
+  n=$(basename "$f")
+  if ! cmp -s "$f" "/usr/local/bin/$n"; then install -m 0755 -o root -g root "$f" "/usr/local/bin/$n"; echo "   скрипт $n обновлён"; fi
+done
+for f in "$src"/systemd/kotu*; do
+  n=$(basename "$f")
+  if ! cmp -s "$f" "/etc/systemd/system/$n"; then install -m 0644 -o root -g root "$f" "/etc/systemd/system/$n"; echo "   unit $n обновлён"; fi
+done
+systemctl daemon-reload
+systemctl enable --quiet kotu.service kotu-whisper.service kotu-embed.service
+systemctl enable --quiet --now kotu-backup.timer kotu-cert-renew.timer kotu-health.timer
+
+bak=$(mktemp -d)
+changed=0
+for f in "$src"/nginx/*; do
+  n=$(basename "$f")
+  cmp -s "$f" "/etc/nginx/sites-available/$n" && [ -L "/etc/nginx/sites-enabled/$n" ] && continue
+  [ -f "/etc/nginx/sites-available/$n" ] && cp -a "/etc/nginx/sites-available/$n" "$bak/$n"
+  install -m 0644 -o root -g root "$f" "/etc/nginx/sites-available/$n"
+  ln -sfn "/etc/nginx/sites-available/$n" "/etc/nginx/sites-enabled/$n"
+  changed=1; echo "   сайт nginx $n обновлён"
+done
+if [ "$changed" = 1 ]; then
+  if nginx -t 2>/dev/null; then
+    systemctl reload nginx
+  else
+    for f in "$bak"/*; do [ -e "$f" ] && cp -a "$f" /etc/nginx/sites-available/; done
+    nginx -t 2>&1 | tail -3 >&2
+    echo "❌ Новые сайты nginx не прошли проверку - прежние возвращены, выкладка остановлена" >&2
+    exit 1
+  fi
+fi
+rm -rf "$bak"
+echo "   службы и сайты на месте"
+REMOTE
+
 echo "==> [5/6] Заливка на $SERVER"
 rsync -az --delete artifacts/kot/dist/public/ "$SERVER:/opt/kotu/public/"
 rsync -az --delete artifacts/api-server/dist/ "$SERVER:/opt/kotu/server/"
