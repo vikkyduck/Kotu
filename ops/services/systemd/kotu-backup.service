@@ -1,5 +1,7 @@
 [Unit]
 Description=Ночной бэкап баз и конфигов
+# Упала - сообщение владелице в Telegram (kotu-alert@.service).
+OnFailure=kotu-alert@%n.service
 
 [Service]
 Type=oneshot

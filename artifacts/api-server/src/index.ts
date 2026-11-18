@@ -4,6 +4,7 @@ import { purgeExpiredSessions } from "./lib/auth";
 import { onJobEvents, requeueOrphans, startWorker } from "./lib/jobs";
 import { noticeDone, noticeFailed, safely } from "./lib/done-notice";
 import { startMcpServer } from "./lib/mcp";
+import { startSelfCheck } from "./lib/self-check";
 import { sweepTranscriptionsToLibrary } from "./lib/transcript-doc";
 import { sweepWorkToLibrary, sweepStuckDeckImages } from "./lib/work-doc";
 import { archiveState, ensureArchive, startFileSweep, whenArchiveReady } from "./lib/archive";
@@ -23,6 +24,10 @@ if (!rawPort) {
 }
 
 const port = Number(rawPort);
+// Только внутри сервера: снаружи сайт открывает nginx (127.0.0.1:5010), и
+// порт приложения не должен быть доступен из сети, даже если файрвол
+// выключат. Другой адрес - явно через HOST.
+const host = process.env["HOST"] ?? "127.0.0.1";
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
@@ -88,6 +93,9 @@ void whenArchiveReady().then(() => {
   // Все файлы данных — в архив: первичная загрузка того, что уже лежит на
   // диске, и страховка на случай места в коде, которое пишет мимо архива.
   startFileSweep();
+  // Модели, Whisper, векторы и почта на месте? Нет — сообщение владелице
+  // (lib/self-check.ts). Через минуту после старта, затем раз в 12 часов.
+  startSelfCheck();
 });
 
 // Порт открываем после первой попытки включить архив: пока её нет, изменения
@@ -98,8 +106,8 @@ void Promise.race([
   firstAttempt,
   new Promise<void>((resolve) => setTimeout(resolve, 30_000).unref()),
 ]).finally(() => {
-  const server = app.listen(port, () => {
-    logger.info({ port }, "Server listening");
+  const server = app.listen(port, host, () => {
+    logger.info({ port, host }, "Server listening");
     // MCP для агента ходит в API этого же процесса - стартует после него.
     startMcpServer();
   });

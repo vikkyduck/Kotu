@@ -1,0 +1,7 @@
+#!/bin/bash
+# Служба платформы завершилась ошибкой - сообщение владелице.
+# Вызывается из kotu-alert@<служба>.service (OnFailure= в unit-файлах kotu*).
+set -euo pipefail
+unit=${1:?служба}
+[[ $unit =~ ^[A-Za-z0-9@._-]+$ ]] || unit="(непонятное имя службы)"
+exec "${KOTU_NOTIFY:-/usr/local/bin/kotu-notify}" "Платформа psy3107.ru: служба $unit завершилась ошибкой. Журнал: journalctl -u $unit -n 50"

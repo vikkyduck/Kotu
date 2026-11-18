@@ -1,5 +1,7 @@
 [Unit]
 Description=Kotu — локальный Whisper-транскрибатор (OpenAI-совместимый API)
+# Упала - сообщение владелице в Telegram (kotu-alert@.service).
+OnFailure=kotu-alert@%n.service
 After=network.target
 
 [Service]

@@ -1,5 +1,7 @@
 [Unit]
 Description=Продление сертификата сайта psy3107.ru (certbot, проверка через каталог nginx)
+# Упала - сообщение владелице в Telegram (kotu-alert@.service).
+OnFailure=kotu-alert@%n.service
 After=network-online.target nginx.service
 Wants=network-online.target
 

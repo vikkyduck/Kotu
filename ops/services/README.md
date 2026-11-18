@@ -1,18 +1,20 @@
 # Что стоит на сервере помимо приложения
 
-`deploy.sh` выкладывает только фронт и API (`/opt/kotu/public`, `/opt/kotu/server`) и обновляет
-скрипт ночной копии. Всё остальное на сервере ставилось руками и раньше жило только там и в
-ночном архиве настроек. Здесь лежит это «остальное» в том виде, в каком оно работает после
-переезда 18.11.2026 (`ops/ПЕРЕЕЗД-AMS3.md`): по этой папке сервер можно собрать заново.
+Всё, что на сервере есть помимо самого приложения: локальные сервисы Python, unit-файлы,
+скрипты оповещений и сайты nginx - в том виде, в каком они работают после переезда 18.11.2026
+(`ops/ПЕРЕЕЗД-AMS3.md`). По этой папке сервер можно собрать заново.
+
+`deploy.sh` (шаг 4b) сам ставит отсюда unit-файлы `kotu*`, скрипты из `bin/` и сайты nginx -
+только изменённые, сайты с проверкой `nginx -t` и возвратом прежних при ошибке. Руками ставятся
+только сервисы Python (окружения и модели), раз на новый сервер - см. ниже.
 
 Адресов и секретов здесь нет: репозиторий публичный. Секреты живут в `/opt/kotu/.env` на сервере.
 
-## Три локальных сервиса Python
+## Два локальных сервиса Python
 
 | Служба | Порт (127.0.0.1) | Код | Окружение | Что делает |
 |---|---|---|---|---|
 | `kotu-whisper` | 9010 | `/opt/whisper/server.py` | `/opt/whisper/venv` | распознавание речи, faster-whisper large-v3-turbo |
-| `kotu-privacy` | 9020 | `/opt/privacy/server.py` | `/opt/privacy/venv` | имена людей и места в тексте, natasha |
 | `kotu-embed` | 9030 | `/opt/embed/server.py` | `/opt/whisper/venv` | векторы для библиотеки, multilingual-e5-large |
 
 У `kotu-embed` своего окружения нет: он запускается из окружения Whisper и берёт модели из того же
@@ -22,22 +24,19 @@
 
 ```bash
 id kotu >/dev/null 2>&1 || useradd --system --home-dir /opt/kotu --shell /usr/sbin/nologin kotu
-for s in whisper privacy embed; do install -d /opt/$s && install -m 644 ops/services/$s/server.py /opt/$s/; done
+for s in whisper embed; do install -d /opt/$s && install -m 644 ops/services/$s/server.py /opt/$s/; done
 install -d /opt/whisper/cache
 python3 -m venv /opt/whisper/venv
 /opt/whisper/venv/bin/pip install --extra-index-url https://download.pytorch.org/whl/cpu -r ops/services/whisper/requirements.txt
-python3 -m venv /opt/privacy/venv
-/opt/privacy/venv/bin/pip install -r ops/services/privacy/requirements.txt
-chown -R kotu:kotu /opt/whisper /opt/privacy /opt/embed
-install -m 644 ops/services/systemd/kotu-whisper.service ops/services/systemd/kotu-privacy.service ops/services/systemd/kotu-embed.service /etc/systemd/system/
-systemctl daemon-reload && systemctl enable --now kotu-whisper kotu-privacy kotu-embed
+chown -R kotu:kotu /opt/whisper /opt/embed
+install -m 644 ops/services/systemd/kotu-whisper.service ops/services/systemd/kotu-embed.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now kotu-whisper kotu-embed
 ```
 
 Проверка:
 
 ```bash
-for p in 9010 9020 9030; do curl -s http://127.0.0.1:$p/healthz; echo; done
-curl -s -X POST -H "content-type: application/json" -d '{"text":"Анна живет в Москве"}' http://127.0.0.1:9020/ner
+for p in 9010 9030; do curl -s http://127.0.0.1:$p/healthz; echo; done
 ```
 
 Списки пакетов сняты командой `pip freeze` с рабочего сервера. В списке Whisper `torch` в сборке
@@ -48,17 +47,14 @@ curl -s -X POST -H "content-type: application/json" -d '{"text":"Анна жив
 | Файл | Зачем |
 |---|---|
 | `kotu.service` | само приложение: `node /opt/kotu/server/index.mjs`, настройки из `/opt/kotu/.env` |
-| `kotu-whisper.service`, `kotu-privacy.service`, `kotu-embed.service` | три сервиса выше |
+| `kotu-whisper.service`, `kotu-embed.service` | два сервиса выше |
 | `kotu-backup.service`, `kotu-backup.timer` | ночная копия в 04:20 UTC, запускает `/usr/local/bin/kotu-backup.sh` |
 | `kotu-cert-renew.service`, `kotu-cert-renew.timer` | раз в сутки проверяет и продлевает сертификат сайта |
+| `kotu-health.service`, `kotu-health.timer` | каждые 5 минут проверяет сайт (`bin/kotu-health`) |
+| `kotu-alert@.service` | сообщение владелице, когда служба упала (`bin/kotu-alert`) |
 
-`deploy.sh` unit-файлы не ставит и не обновляет. После правки файла здесь его нужно положить на
-сервер руками:
-
-```bash
-install -m 644 ops/services/systemd/<файл> /etc/systemd/system/ && systemctl daemon-reload
-systemctl enable --now kotu-backup.timer kotu-cert-renew.timer
-```
+У `kotu`, `kotu-whisper`, `kotu-embed`, `kotu-backup` и `kotu-cert-renew` стоит
+`OnFailure=kotu-alert@%n.service`: служба завершилась ошибкой - сообщение владелице.
 
 `kotu-cert-renew` пользуется `certbot` из окружения агента ПСИ (`/opt/psy-upload-venv`): своего
 certbot у платформы нет. Таймер агента продлевает только сертификат Mini App, сертификат сайта он
@@ -75,3 +71,43 @@ certbot у платформы нет. Таймер агента продлева
 Порт 80 на сервере один на платформу и на агента ПСИ, поэтому в сайте `psy3107` блока на порту 80
 нет: его обслуживает `acme`. Файлы кладутся в `/etc/nginx/sites-available` со ссылкой из
 `sites-enabled`, затем `nginx -t && systemctl reload nginx`.
+
+## Сообщения владелице (`bin/`)
+
+Все сообщения идут в личку владелицы от бота ПСИ через мост (`/run/psy-platform-bridge.sock`,
+путь `/notify`) - тот же путь, что у уведомлений о готовых задачах. Мост пускает только root и
+пользователя `kotu`.
+
+| Скрипт | Когда пишет |
+|---|---|
+| `kotu-notify "текст"` | общий: отправить одно сообщение (повтор того же за 10 минут мост отбрасывает) |
+| `kotu-alert <служба>` | служба `kotu*` завершилась ошибкой (вызывается из `kotu-alert@.service`) |
+| `kotu-health` | сайт не отвечает или архив выключен две проверки подряд; затем один раз - «снова отвечает» |
+
+Самопроверка в самом приложении (`artifacts/api-server/src/lib/self-check.ts`): через минуту после
+запуска и раз в 12 часов - каждая модель из `.env` коротким запросом через мост, Whisper, векторы
+и почта (письмо на адрес симулятора Postbox `success@simulator.pstbx.ru`, никому не приходит).
+О той же проблеме повторно не пишет, о восстановлении - один раз. `SELF_CHECK=off` выключает.
+
+Проверить путь сообщений руками: `sudo -u kotu /usr/local/bin/kotu-notify "Проверка"`.
+
+## Вторая копия вне сервера
+
+Ночная копия (`ops/kotu-backup.sh`) после проверки отправляет `/opt/backups` на другой сервер, если
+есть `/etc/kotu/offsite.env`:
+
+```
+OFFSITE_TARGET=kotu-offsite@<адрес>
+OFFSITE_KEY=/root/.ssh/kotu_offsite
+```
+
+Сейчас это старый сервер Timeweb, папка `/srv/kotu-offsite-backup`. На том сервере пользователь
+`kotu-offsite` заперт так же, как пользователь копий агента ПСИ, в `authorized_keys`:
+
+```
+from="<адрес сервера платформы>",restrict,command="/usr/bin/rrsync -wo -no-del -munge /srv/kotu-offsite-backup" ssh-ed25519 ...
+```
+
+Он может только дописывать в одну папку: удалить, прочитать или войти в оболочку нельзя. Поэтому
+порча копии на сервере платформы не сотрёт копию там. Ещё одна копия каждый день забирается на
+Mac владелицы (`ops/pull-backup.sh`).

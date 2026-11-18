@@ -14,7 +14,7 @@ import {
   type PlannedSection,
 } from "@workspace/db";
 import { parseId } from "../../lib/parse-id";
-import { hideLabels } from "../../lib/privacy";
+import { hideLabels } from "../../lib/name-labels";
 import { QUEUED_MESSAGE, enqueue } from "../../lib/jobs";
 import { attachmentHeader } from "../../lib/filename";
 import { ownFolderId } from "../../lib/folders";
