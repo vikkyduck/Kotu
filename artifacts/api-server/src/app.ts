@@ -4,6 +4,7 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { ArchiveUnavailableError } from "./lib/archive-files";
+import { cleanRequestBody } from "./lib/clean-text";
 
 const app: Express = express();
 
@@ -35,6 +36,10 @@ app.use(
 app.use(cookieParser());
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
+// Всё, что ввёл человек, - без HTML-тегов, скриптов и управляющих символов,
+// до любого маршрута и до базы (lib/clean-text.ts). Поля файловых форм
+// (multipart) разбираются внутри маршрутов и чистятся там же.
+app.use(cleanRequestBody);
 
 app.use("/api", router);
 

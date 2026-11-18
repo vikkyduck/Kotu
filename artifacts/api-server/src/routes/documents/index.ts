@@ -14,6 +14,7 @@ import { LIBRARY_DIR } from "../../lib/paths";
 import { embedAll } from "../../lib/embeddings";
 import { ownFolderId } from "../../lib/folders";
 import { decodeUploadName } from "../../lib/filename";
+import { cleanText } from "../../lib/clean-text";
 import { documentFileHeaders } from "./file-headers";
 import { parseId } from "../../lib/parse-id";
 import { resolveInsideDir } from "../../lib/uploads";
@@ -58,8 +59,10 @@ const { sourcePath: _sourcePath, ...PUBLIC_DOC } = getTableColumns(documentsTabl
  * null, ручка отвечает 400. Длинное обрезаем, а не отклоняем: имя файла на
  * macOS бывает до 255 знаков, и объяснять это автору незачем.
  */
+// cleanText - для полей файловой формы: тело multipart разбирается внутри
+// маршрута, общий фильтр из app.ts до него не дотягивается.
 function cleanTitle(raw: unknown): string | null {
-  const title = typeof raw === "string" ? raw.trim().slice(0, 200) : "";
+  const title = typeof raw === "string" ? cleanText(raw).trim().slice(0, 200) : "";
   return title === "" ? null : title;
 }
 
@@ -345,7 +348,7 @@ router.post(
       return;
     }
 
-    const filename = decodeUploadName(req.file.originalname) || "документ";
+    const filename = cleanText(decodeUploadName(req.file.originalname)).trim() || "документ";
     const title = cleanTitle(req.body?.title) ?? cleanTitle(filename.replace(/\.[^.]+$/, "")) ?? "документ";
     // 'transcript' зарезервирован за автоматическими копиями расшифровок:
     // рукотворный файл с таким kind стал бы неудаляемым.
@@ -409,7 +412,8 @@ export async function searchLibrary(
   const vec = `[${queryVector.join(",")}]`;
   const docFilter =
     documentIds && documentIds.length > 0
-      ? sql`AND d.id = ANY(${sql.raw(`ARRAY[${documentIds.join(",")}]`)})`
+      ? // Массив Drizzle раскрывает в список параметров: «IN ($1, $2, …)».
+        sql`AND d.id IN ${documentIds}`
       : sql``;
 
   const { rows } = await db.execute<{

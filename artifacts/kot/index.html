@@ -16,13 +16,10 @@
   </head>
   <body>
     <div id="root"></div>
-    <!-- Тема до загрузки приложения, чтобы не мигало. По умолчанию — бумага;
-         тёмная только по сохранённому выбору. Приложение тему отсюда читает. -->
-    <script>
-      var t = null;
-      try { t = localStorage.getItem('kot-theme'); } catch (e) {}
-      document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
-    </script>
+    <!-- Тема до загрузки приложения, чтобы не мигало (public/theme.js).
+         Файлом, а не встроенным скриптом: встроенные запрещены политикой
+         безопасности сайта (Content-Security-Policy в nginx). -->
+    <script src="/theme.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

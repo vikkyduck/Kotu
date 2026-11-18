@@ -13,6 +13,7 @@ import {
 import { UPLOAD_DIR } from "../../lib/paths";
 import { syncTranscriptionDoc, deleteTranscriptionDoc } from "../../lib/transcript-doc";
 import { decodeUploadName } from "../../lib/filename";
+import { cleanText } from "../../lib/clean-text";
 import { parseId } from "../../lib/parse-id";
 import { QUEUED_MESSAGE, enqueue, lastJob } from "../../lib/jobs";
 import { resolveInsideDir } from "../../lib/uploads";
@@ -367,7 +368,9 @@ router.post(
     // Скрытия имён больше нет (решение владелицы 18.11.2026): поле формы не читаем.
     const hideNames = false;
     const markSpeakers = req.body?.markSpeakers === "true";
-    const filename = decodeUploadName(req.file.originalname) || "запись";
+    // Имя файла становится названием записи: чистим, как любой ввод (app.ts
+    // до multipart-полей не дотягивается).
+    const filename = cleanText(decodeUploadName(req.file.originalname)).trim() || "запись";
     const inputPath = req.file.path;
     // Название — до 200 знаков, как при переименовании (PATCH выше).
     const title = filename.replace(/\.[^.]+$/, "").trim().slice(0, 200) || "Запись";
