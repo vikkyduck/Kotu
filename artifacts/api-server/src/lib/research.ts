@@ -32,7 +32,7 @@ export function isResearchAvailable(): boolean {
 /** Одно исследование: вопрос -> выжимка с пронумерованными источниками. */
 export async function research(query: string): Promise<ResearchResult> {
   const answer = await askText({
-    model: pickModel("MODEL_RESEARCH", pickModel("MODEL_LECTURE", "gpt-5.6-sol")),
+    model: pickModel("MODEL_RESEARCH", pickModel("MODEL_LECTURE", "gpt-6.1-sol")),
     system: SYSTEM,
     user: query,
     webSearch: true,

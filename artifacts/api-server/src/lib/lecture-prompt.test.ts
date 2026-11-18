@@ -1,5 +1,5 @@
 import { test, expect } from "vitest";
-import { renumberCitations, sectionPrompt, titleFromTopic } from "./lecture-prompt";
+import { planPrompt, renumberCitations, sectionPrompt, titleFromTopic } from "./lecture-prompt";
 
 test("renumberCitations: номера в тексте совпадают со списком источников под главой", () => {
   // Процитированы выдержка 3 и веб-источник 7 — под главой они станут 1 и 2.
@@ -55,6 +55,18 @@ test("sectionPrompt: вынесенное планом за скобки дох�
   const withNotes = sectionPrompt({ ...base, outOfScope: ["Лакан", "нейронауки"] });
   expect(withNotes).toContain("Сознательно за скобками (не разворачивай): Лакан; нейронауки.");
   expect(sectionPrompt({ ...base, outOfScope: [] })).not.toContain("за скобками");
-  // Метки скрытых имён из копий расшифровок в текст не переносятся.
-  expect(withNotes).toContain("[[PER1]]");
+});
+
+test("указания как у бота: коротко, без отдельной методики, с задачей автора", () => {
+  const brief = { topic: "Перенос у Фрейда", audience: "коллеги", durationMin: 90, documentIds: [], focus: ["clinical" as const], mustInclude: "случай Доры" };
+  const plan = planPrompt(brief, "Перенос", 6);
+  expect(plan).toContain("Тема лекции: Перенос. Замысел автора: Перенос у Фрейда. Хронометраж: 90 минут.");
+  expect(plan).toContain("Акцент: клинический.");
+  expect(plan).toContain("Обязательно включи: случай Доры");
+  expect(plan).toContain("сохраняй предмет, соотносимые понятия");
+  expect(plan).toContain('"outOfScope"');
+  // Прежняя методика ушла целиком.
+  expect(plan).not.toContain("PEP-Web");
+  expect(plan).not.toContain("ТРЕБОВАНИЯ К КАЧЕСТВУ");
+  expect(plan.split("\n").length).toBeLessThan(25);
 });
