@@ -111,6 +111,28 @@ zcat "$DB_DIR/all-$STAMP.sql.gz" | grep "CREATE TABLE public.documents" > /dev/n
 # от посторонних, и postgres в него не заглядывает.
 pg_restore --list "$DB_DIR/kotu-$STAMP.dump" > /dev/null
 
+# Вторая копия вне сервера - кроме Mac владелицы (ops/pull-backup.sh), на
+# другой сервер по SSH. Включается файлом /etc/kotu/offsite.env:
+#   OFFSITE_TARGET=пользователь@адрес   OFFSITE_KEY=/root/.ssh/ключ
+# На том сервере пользователь заперт rrsync -wo -no-del в одной папке: может
+# только дописывать, удалять и читать не может - так и порча здесь не
+# сотрёт копию там. Поэтому всё новое - с --ignore-existing (уже лежащее не
+# перезаписывается), а зеркала рабочих каталогов - обновлением без удаления.
+# Не удалось - скрипт падает (сообщение владелице через OnFailure), но
+# локальная копия выше уже сделана и проверена.
+OFFSITE_CONF=/etc/kotu/offsite.env
+if [ -f "$OFFSITE_CONF" ]; then
+  OFFSITE_TARGET=$(sed -n 's/^OFFSITE_TARGET=//p' "$OFFSITE_CONF" | tail -n 1)
+  OFFSITE_KEY=$(sed -n 's/^OFFSITE_KEY=//p' "$OFFSITE_CONF" | tail -n 1)
+  OFFSITE_SSH="ssh -i $OFFSITE_KEY -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=30"
+  rsync -aH --ignore-existing --exclude='*.tmp' -e "$OFFSITE_SSH" /opt/backups/ "$OFFSITE_TARGET:"
+  for d in library uploads decks; do
+    [ -d "$DATA_DIR/$d" ] || continue
+    rsync -aH --exclude='*.tmp' -e "$OFFSITE_SSH" "$DATA_DIR/$d/" "$OFFSITE_TARGET:data/$d/"
+  done
+  echo "вторая копия: $OFFSITE_TARGET"
+fi
+
 DATA_SIZE=$(du -sh "$DATA_DIR" 2>/dev/null | cut -f1)
 echo "ok: база $((SIZE/1024)) КБ, файлы $DATA_SIZE"
 # Место на диске ещё раз проверит trap на выходе (warn_low_space выше).
