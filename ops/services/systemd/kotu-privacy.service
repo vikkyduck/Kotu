@@ -1,0 +1,16 @@
+[Unit]
+Description=Kotu — локальное распознавание персональных данных (NER)
+After=network.target
+
+[Service]
+User=kotu
+Group=kotu
+WorkingDirectory=/opt/privacy
+ExecStart=/opt/privacy/venv/bin/uvicorn server:app --host 127.0.0.1 --port 9020
+Restart=always
+RestartSec=5
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target
+
