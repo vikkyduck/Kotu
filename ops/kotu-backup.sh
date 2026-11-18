@@ -100,7 +100,9 @@ rsync -aH --ignore-existing \
 SIZE=$(stat -c%s "$DB_DIR/all-$STAMP.sql.gz")
 gzip -t "$DB_DIR/all-$STAMP.sql.gz"
 [ "$SIZE" -gt 10000 ] || { echo "БЭКАП ПОДОЗРИТЕЛЬНО МАЛ: $SIZE байт" >&2; exit 1; }
-zcat "$DB_DIR/all-$STAMP.sql.gz" | grep -q "CREATE TABLE public.documents" || {
+# Без -q: grep -q выходит на первом совпадении, zcat получает SIGPIPE, и при
+# pipefail вся проверка считается проваленной, хотя таблица в дампе есть.
+zcat "$DB_DIR/all-$STAMP.sql.gz" | grep "CREATE TABLE public.documents" > /dev/null || {
   echo "В ДАМПЕ НЕТ ТАБЛИЦ KOTU — проверьте pg_dumpall" >&2; exit 1; }
 
 # Восстановимость проверяем не глазами, а pg_restore: он читает оглавление
