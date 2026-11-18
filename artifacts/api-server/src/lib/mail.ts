@@ -1,48 +1,87 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import { logger } from "./logger";
+import { sendViaPostbox } from "./postbox";
 
 /**
- * Отправка писем через Яндекс (домен vi-utkina.ru: SPF и DKIM настроены,
- * поэтому письма не уходят в спам). Единственное письмо, которое шлёт
- * платформа, — ссылка для сброса забытого пароля.
+ * Отправка писем. Единственное письмо, которое шлёт платформа, — ссылка для
+ * сброса забытого пароля.
+ *
+ * Основной путь — Yandex Cloud Postbox по HTTPS (lib/postbox.ts): сервер стоит
+ * в DigitalOcean, где исходящие почтовые порты закрыты, и SMTP оттуда не
+ * работает. Домен отправителя (vi-utkina.ru) подтверждён в Postbox записями
+ * DKIM. Ключ вводится вслепую скриптом ./set-mail-postbox.sh.
+ *
+ * SMTP Яндекс 360 остаётся запасным путём для сервера, где почтовые порты
+ * открыты: он включается, только если ключа Postbox нет.
  */
-const HOST = process.env["SMTP_HOST"] ?? "smtp.yandex.ru";
-const PORT = Number(process.env["SMTP_PORT"] ?? 465);
-const USER = process.env["SMTP_USER"] ?? "";
-const PASS = process.env["SMTP_PASS"] ?? "";
-const FROM = process.env["MAIL_FROM"] ?? USER;
+const SENDER_NAME = "Psy Библиотека";
+
+function settings() {
+  const env = process.env;
+  const smtpUser = env["SMTP_USER"] ?? "";
+  return {
+    postboxKeyId: env["POSTBOX_KEY_ID"] ?? "",
+    postboxSecret: env["POSTBOX_SECRET_KEY"] ?? "",
+    smtpHost: env["SMTP_HOST"] ?? "smtp.yandex.ru",
+    smtpPort: Number(env["SMTP_PORT"] ?? 465),
+    smtpUser,
+    smtpPass: env["SMTP_PASS"] ?? "",
+    from: env["MAIL_FROM"] ?? smtpUser,
+  };
+}
+
+function postboxConfigured(s = settings()): boolean {
+  return s.postboxKeyId !== "" && s.postboxSecret !== "";
+}
+
+function smtpConfigured(s = settings()): boolean {
+  return s.smtpUser !== "" && s.smtpPass !== "";
+}
+
+export function mailConfigured(): boolean {
+  const s = settings();
+  return s.from !== "" && (postboxConfigured(s) || smtpConfigured(s));
+}
 
 let transport: Transporter | null = null;
 
-export function mailConfigured(): boolean {
-  return USER !== "" && PASS !== "";
-}
-
-function getTransport(): Transporter {
+function getTransport(s: ReturnType<typeof settings>): Transporter {
   if (!transport) {
     transport = nodemailer.createTransport({
-      host: HOST,
-      port: PORT,
-      secure: PORT === 465,
-      auth: { user: USER, pass: PASS },
+      host: s.smtpHost,
+      port: s.smtpPort,
+      secure: s.smtpPort === 465,
+      auth: { user: s.smtpUser, pass: s.smtpPass },
     });
   }
   return transport;
 }
 
 export async function sendMail(to: string, subject: string, text: string, html: string): Promise<void> {
-  if (!mailConfigured()) {
-    throw new Error("Почта не настроена: нет SMTP_USER или SMTP_PASS");
+  const s = settings();
+  if (s.from === "") {
+    throw new Error("Почта не настроена: нет MAIL_FROM");
   }
-  const info = await getTransport().sendMail({
-    from: `"Psy Библиотека" <${FROM}>`,
+  if (postboxConfigured(s)) {
+    const messageId = await sendViaPostbox(
+      { keyId: s.postboxKeyId, secret: s.postboxSecret },
+      { fromName: SENDER_NAME, fromAddress: s.from, to, subject, text, html },
+    );
+    // В лог — только адрес и идентификатор письма, без содержимого.
+    logger.info({ to, messageId, via: "postbox" }, "Письмо отправлено");
+    return;
+  }
+  if (!smtpConfigured(s)) {
+    throw new Error("Почта не настроена: нет ключа Postbox (POSTBOX_KEY_ID, POSTBOX_SECRET_KEY) и нет SMTP_USER/SMTP_PASS");
+  }
+  const info = await getTransport(s).sendMail({
+    from: `"${SENDER_NAME}" <${s.from}>`,
     to,
     subject,
     text,
     html,
   });
-  // В лог — только адрес и идентификатор письма, без содержимого.
-  logger.info({ to, messageId: info.messageId }, "Письмо отправлено");
+  logger.info({ to, messageId: info.messageId, via: "smtp" }, "Письмо отправлено");
 }
 
 /** Письмо со ссылкой на сброс. Просто, коротко и без лишних обещаний. */
