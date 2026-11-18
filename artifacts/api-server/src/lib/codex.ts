@@ -49,6 +49,20 @@ export interface AskOptions {
   images?: ImageAttachment[];
   /** Веб-поиск Codex: модель обязана сходить в поиск хотя бы раз. */
   webSearch?: boolean;
+  /**
+   * Глубина рассуждения. Не задана - Codex берёт свою (проверено 19.11.2026:
+   * medium, как у бота в Telegram). Мост платформы пропускает low, medium, high.
+   */
+  effort?: Effort;
+}
+
+export type Effort = "low" | "medium" | "high";
+const EFFORTS: readonly Effort[] = ["low", "medium", "high"];
+
+/** Глубина из .env (например EFFORT_LECTURE=high); пусто или неизвестное слово - fallback. */
+export function pickEffort(envName: string, fallback: Effort): Effort {
+  const raw = (process.env[envName] ?? "").trim().toLowerCase();
+  return (EFFORTS as readonly string[]).includes(raw) ? (raw as Effort) : fallback;
 }
 
 /**
@@ -430,7 +444,7 @@ async function buildInput(opts: AskOptions): Promise<unknown[]> {
   return [{ role: "user", content }];
 }
 
-function payloadFor(opts: AskOptions, input: unknown[]): Record<string, unknown> {
+export function payloadFor(opts: AskOptions, input: unknown[]): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     model: opts.model,
     instructions: opts.system,
@@ -438,6 +452,7 @@ function payloadFor(opts: AskOptions, input: unknown[]): Record<string, unknown>
     stream: true,
     store: false,
   };
+  if (opts.effort) payload["reasoning"] = { effort: opts.effort };
   if (opts.webSearch) {
     payload["tools"] = [{ type: "web_search" }];
     payload["tool_choice"] = "required";

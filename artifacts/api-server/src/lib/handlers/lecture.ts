@@ -1,5 +1,5 @@
 import { eq, asc } from "drizzle-orm";
-import { askJson, askText, ModelWaitError, pickModel } from "../codex";
+import { askJson, askText, ModelWaitError, pickEffort, pickModel } from "../codex";
 import { JSON_RULE, parseModelJson } from "../model-json";
 import {
   db,
@@ -39,6 +39,9 @@ import { logger } from "../logger";
 
 // Та же модель, что пишет лекции у бота ПСИ в Telegram (решение владелицы 19.11.2026).
 const MODEL = pickModel("MODEL_LECTURE", "gpt-6.1-sol");
+// Глубина рассуждения: high - самая глубокая, какую пропускает мост Codex. Без неё
+// Codex думает на medium (проверено 19.11.2026), и лекция выходит проще, чем могла бы.
+const EFFORT = pickEffort("EFFORT_LECTURE", "high");
 
 /** Сколько фрагментов библиотеки даём модели на одну главу. */
 const CHUNKS_PER_SECTION = 10;
@@ -156,6 +159,7 @@ async function runPlan(job: Job): Promise<void> {
 
   const { text: raw } = await askText({
     model: MODEL,
+    effort: EFFORT,
     system: `${planPrompt(brief, lecture.title, blocks)}\n\n${JSON_RULE}`,
     user: material || "Материала под рукой нет — опирайся на профессиональный корпус психоанализа.",
   });
@@ -300,6 +304,7 @@ async function runWrite(job: Job): Promise<void> {
 
     const answer = await askText({
       model: MODEL,
+      effort: EFFORT,
       system,
       user:
         `Блок: ${section.heading}\nТезис: ${section.abstract}` +
@@ -388,6 +393,7 @@ async function runWrite(job: Job): Promise<void> {
 
   const bibliography = await askJson<Record<string, unknown>>({
     model: MODEL,
+    effort: EFFORT,
     system: bibliographyPrompt(brief, lecture.title),
     user: written
       .map((w) => `## ${w.heading}\n${w.text}`)

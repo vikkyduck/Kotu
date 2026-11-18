@@ -215,6 +215,23 @@ export function Slides() {
         ? 'storyboard'
         : null;
 
+    // Выгрузка — над слайдами и под ними: нажать можно сразу или пролистав колоду.
+    const exportButtons = (
+      <>
+        <button
+          className="btn primary"
+          style={{ flex: 1 }}
+          disabled={working || exporting !== null}
+          onClick={() => void download('pptx')}
+        >
+          <Icon name="download" /> {exporting === 'pptx' ? 'Готовлю…' : 'Скачать PPTX'}
+        </button>
+        <button className="btn" disabled={working || exporting !== null} onClick={() => void download('pdf')}>
+          <Icon name="download" /> {exporting === 'pdf' ? 'Готовлю…' : 'PDF'}
+        </button>
+      </>
+    );
+
     return (
       <section className="screen active" id="s-slides">
         <button className="btn ghost back-link" onClick={() => go('s-home')}>
@@ -368,6 +385,9 @@ export function Slides() {
               <p className="doc-meta" style={{ marginBottom: 10 }}>Стиль: {packName}</p>
             )}
 
+            {/* Те же кнопки, что под слайдами: скачать можно сразу, не листая колоду. */}
+            <div className="btnrow top-actions">{exportButtons}</div>
+
             <div className="sgrid">
               {deck.slides.map((s, i) => {
                 const doubted = lastImage.get(s.id)?.status === 'rejected';
@@ -413,19 +433,7 @@ export function Slides() {
               })}
             </div>
 
-            <div className="btnrow">
-              <button
-                className="btn primary"
-                style={{ flex: 1 }}
-                disabled={working || exporting !== null}
-                onClick={() => void download('pptx')}
-              >
-                <Icon name="download" /> {exporting === 'pptx' ? 'Готовлю…' : 'Скачать PPTX'}
-              </button>
-              <button className="btn" disabled={working || exporting !== null} onClick={() => void download('pdf')}>
-                <Icon name="download" /> {exporting === 'pdf' ? 'Готовлю…' : 'PDF'}
-              </button>
-            </div>
+            <div className="btnrow">{exportButtons}</div>
           </>
         )}
 

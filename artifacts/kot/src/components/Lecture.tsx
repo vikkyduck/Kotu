@@ -387,6 +387,34 @@ export function Lecture() {
   // ── Открытая лекция ─────────────────────────────────────────────────────
   if (lecture) {
     const working = lectureWorking(lecture.status);
+    // Что сделать с готовой лекцией — над текстом и под ним: нажать можно
+    // сразу или дочитав до конца.
+    const readyActions = (
+      <>
+        <div className="btnrow" style={{ flexWrap: 'wrap' }}>
+          <button
+            className="btn primary"
+            onClick={() => newDeck({ sourceKind: 'lecture', sourceId: lecture.id })}
+          >
+            <Icon name="deck" /> Собрать презентацию
+          </button>
+        </div>
+        <div className="btnrow" style={{ flexWrap: 'wrap', marginTop: 10 }}>
+          <button
+            className="btn"
+            onClick={() => void download(`/api/lectures/${lecture.id}/export?format=docx`, 'лекция.docx')}
+          >
+            <Icon name="download" /> Скачать Word
+          </button>
+          <button
+            className="btn"
+            onClick={() => void download(`/api/lectures/${lecture.id}/export`, 'лекция.md')}
+          >
+            <Icon name="download" /> Скачать Markdown
+          </button>
+        </div>
+      </>
+    );
 
     return (
       <section className="screen active" id="s-lecture">
@@ -405,6 +433,9 @@ export function Lecture() {
             </button>
           </div>
         )}
+
+        {/* Те же кнопки, что под лекцией: презентацию и файл можно взять сразу, не листая */}
+        {lecture.status === 'ready' && <div className="lec-next lec-top panel">{readyActions}</div>}
 
         {lecture.status === 'error' && (
           <div className="errblock">
@@ -657,32 +688,11 @@ export function Lecture() {
           </div>
         )}
 
-        {/* Лекция готова: что с ней можно сделать дальше */}
+        {/* Лекция готова: что с ней можно сделать дальше (те же кнопки - и над текстом) */}
         {lecture.status === 'ready' && (
           <div className="lec-next panel">
             <div className="fieldlbl" style={{ marginTop: 0 }}>Лекция готова — что дальше?</div>
-            <div className="btnrow" style={{ flexWrap: 'wrap' }}>
-              <button
-                className="btn primary"
-                onClick={() => newDeck({ sourceKind: 'lecture', sourceId: lecture.id })}
-              >
-                <Icon name="deck" /> Собрать презентацию
-              </button>
-            </div>
-            <div className="btnrow" style={{ flexWrap: 'wrap', marginTop: 10 }}>
-              <button
-                className="btn"
-                onClick={() => void download(`/api/lectures/${lecture.id}/export?format=docx`, 'лекция.docx')}
-              >
-                <Icon name="download" /> Скачать Word
-              </button>
-              <button
-                className="btn"
-                onClick={() => void download(`/api/lectures/${lecture.id}/export`, 'лекция.md')}
-              >
-                <Icon name="download" /> Скачать Markdown
-              </button>
-            </div>
+            {readyActions}
           </div>
         )}
       </section>

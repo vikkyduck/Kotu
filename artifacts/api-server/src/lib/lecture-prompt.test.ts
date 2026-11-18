@@ -77,3 +77,9 @@ test("аудитория и акцент необязательны: пусто 
   expect(plan).not.toContain("Акцент:");
   expect(plan).toContain("6 смысловых блоков.");
 });
+
+test("уровень изложения - профессиональный, если аудитория не указана иначе", () => {
+  const plan = planPrompt({ topic: "Сны", audience: "", durationMin: 90, documentIds: [] }, "Сны", 6);
+  expect(plan).toContain("Уровень - профессиональный");
+  expect(plan).toContain("Без общих мест,\nупрощений");
+});

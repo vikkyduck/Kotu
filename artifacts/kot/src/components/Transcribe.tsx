@@ -479,6 +479,34 @@ function ResultView({
     toast('Текст сохранён в файл');
   };
 
+  // Кнопки — над текстом и под ним: нажать можно сразу или дочитав расшифровку.
+  const actions = (
+    <>
+      <button className="btn primary" style={{ flex: 1 }} onClick={downloadText}>
+        <Icon name="download" /> Сохранить текст
+      </button>
+      {docId !== null && (
+        <>
+          <button className="btn" onClick={() => newLecture({ documentIds: [docId] })}>
+            <Icon name="pen" /> Написать лекцию
+          </button>
+          <button className="btn" onClick={() => newDeck({ sourceKind: 'document', sourceId: docId })}>
+            <Icon name="deck" /> Собрать презентацию
+          </button>
+        </>
+      )}
+      <button className="btn" onClick={() => go('s-home')}>Готово</button>
+      <button
+        className="btn danger"
+        onClick={onDelete}
+        disabled={deleting}
+        title="Удалить расшифровку"
+      >
+        <Icon name="trash" /> {deleting ? 'Удаляю…' : 'Удалить'}
+      </button>
+    </>
+  );
+
   return (
     <div id="tcResult">
       <div className="done-head">
@@ -486,6 +514,7 @@ function ResultView({
         <div><h3>{data.title}</h3><p>Уже сохранена. Можно спокойно читать и править.</p></div>
         <button className="chg" onClick={rename}>переименовать</button>
       </div>
+      <div className="btnrow top-actions">{actions}</div>
       {unsaved ? (
         <p className="tnote bad">
           <Icon name="info" />
@@ -516,30 +545,7 @@ function ResultView({
         ))}
       </div>
 
-      <div className="btnrow" style={{ flexWrap: 'wrap' }}>
-        <button className="btn primary" style={{ flex: 1 }} onClick={downloadText}>
-          <Icon name="download" /> Сохранить текст
-        </button>
-        {docId !== null && (
-          <>
-            <button className="btn" onClick={() => newLecture({ documentIds: [docId] })}>
-              <Icon name="pen" /> Написать лекцию
-            </button>
-            <button className="btn" onClick={() => newDeck({ sourceKind: 'document', sourceId: docId })}>
-              <Icon name="deck" /> Собрать презентацию
-            </button>
-          </>
-        )}
-        <button className="btn" onClick={() => go('s-home')}>Готово</button>
-        <button
-          className="btn danger"
-          onClick={onDelete}
-          disabled={deleting}
-          title="Удалить расшифровку"
-        >
-          <Icon name="trash" /> {deleting ? 'Удаляю…' : 'Удалить'}
-        </button>
-      </div>
+      <div className="btnrow" style={{ flexWrap: 'wrap' }}>{actions}</div>
     </div>
   );
 }
