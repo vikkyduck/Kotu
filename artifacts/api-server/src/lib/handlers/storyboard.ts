@@ -15,7 +15,7 @@ import {
   type DiagramSpec,
 } from "@workspace/db";
 import { SLIDE_LAYOUTS, SLIDE_SPEC, layoutHasImage } from "@workspace/db/slides";
-import { askJson } from "../claude";
+import { askJson, pickModel } from "../codex";
 import { fieldsLine, sanitizeSlideContent, settleContent } from "../slide-content";
 import { joinChunks } from "../documents";
 import { registerHandler } from "../jobs";
@@ -188,9 +188,9 @@ async function run(job: Job): Promise<void> {
   // и модель думает в счёт того же лимита. Потолок с запасом; ask() идёт
   // потоком, так что длинная генерация не упирается в таймауты.
   const result = await askJson<{ slides?: StoryboardSlide[] }>({
+    model: pickModel("MODEL_DECK", "gpt-5.6-sol"),
     system,
     user: `Название: ${source.title}\n\nТекст лекции:\n\n${source.text.slice(0, MAX_SOURCE_CHARS)}`,
-    maxTokens: 64000,
   });
 
   const parsed = (result.slides ?? []).filter((s) => s && typeof s === "object");
@@ -266,6 +266,11 @@ export const shownError = (message: string, own: readonly string[]): string =>
   own.includes(message) ? message : MODEL_SILENT;
 
 /** Задача колоды сдалась — колода в ошибке; так же падает и отрисовка образов. */
+/** Ждем подписку Codex: на карточке - причина и время продолжения. */
+export async function onWait(job: Job, message: string): Promise<void> {
+  await db.update(decksTable).set({ statusMessage: message }).where(eq(decksTable.id, job.entityId));
+}
+
 export async function onGiveUp(job: Job, message: string): Promise<void> {
   await db
     .update(decksTable)
@@ -275,5 +280,5 @@ export async function onGiveUp(job: Job, message: string): Promise<void> {
 }
 
 export function registerStoryboardHandler(): void {
-  registerHandler("deck.storyboard", { run, onGiveUp });
+  registerHandler("deck.storyboard", { run, onGiveUp, onWait });
 }

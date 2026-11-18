@@ -19,7 +19,26 @@ cd "$(dirname "$0")"
 command -v pnpm >/dev/null || export PATH="$HOME/.local/bin:$HOME/Library/pnpm:$PATH"
 command -v pnpm >/dev/null || { echo "❌ pnpm не найден (ищу в PATH, ~/.local/bin, ~/Library/pnpm)"; exit 1; }
 
-SERVER="${SERVER_USER:-root}@${SERVER_HOST:-5.129.198.180}"
+. "$(dirname "$0")/ops/server-address.sh"
+SERVER=$(kotu_server) || exit 1
+
+# Правило владелицы: на прод уходит только то, что влито в main. Поэтому
+# выкладка идет из чистого рабочего каталога, с ветки main, которая
+# совпадает с origin/main. Ветку с правками сначала вливают через PR.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "❌ В рабочем каталоге есть незакоммиченные правки - выкладываю только чистый main"
+  exit 1
+fi
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$BRANCH" != "main" ]; then
+  echo "❌ Сейчас ветка $BRANCH - выкладываю только main. Влейте PR и переключитесь: git checkout main && git pull"
+  exit 1
+fi
+git fetch -q origin main
+if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+  echo "❌ Локальный main не совпадает с GitHub - выполните git pull и запустите снова"
+  exit 1
+fi
 
 echo "==> [1/6] Проверка типов, тесты, сборка фронта"
 pnpm run typecheck

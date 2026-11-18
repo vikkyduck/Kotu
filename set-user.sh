@@ -9,7 +9,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-SERVER="${SERVER_USER:-root}@${SERVER_HOST:-5.129.198.180}"
+. "$(dirname "$0")/ops/server-address.sh"
+SERVER=$(kotu_server) || exit 1
 
 read -rp "Почта (это будет логин): " EMAIL
 read -rp "Имя: " NAME

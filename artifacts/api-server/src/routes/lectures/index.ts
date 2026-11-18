@@ -21,7 +21,7 @@ import { ownFolderId } from "../../lib/folders";
 import { lectureToLibrary, dropLectureCopies } from "../../lib/work-doc";
 import { buildLectureDocx, buildLectureMarkdown } from "../../lib/lecture-export";
 import { titleFromTopic } from "../../lib/lecture-prompt";
-import { isResearchAvailable } from "../../lib/perplexity";
+import { isResearchAvailable } from "../../lib/research";
 import { deleteJobsArchivingInput, requireArchive } from "../../lib/archive";
 import { LECTURE_PLANNING, PLAN_BUSY_MESSAGE, planEditBlocked } from "../../lib/busy-edit";
 
