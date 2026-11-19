@@ -192,7 +192,7 @@ describe("веб-поиск", () => {
       { n: 2, url: "https://j.org/a", title: "Журнал" },
     ]);
     expect(bridgeCalls[0].body).toMatchObject({
-      tools: [{ type: "web_search" }],
+      tools: [{ type: "web_search", search_context_size: "high" }],
       tool_choice: "required",
       include: ["web_search_call.action.sources"],
     });
