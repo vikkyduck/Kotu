@@ -15,7 +15,7 @@ import { askJson, ModelWaitError, modelFor, type ImageAttachment } from "../code
 import { renderIllustration } from "../images";
 import { registerHandler, enqueue } from "../jobs";
 import { DECKS_DIR } from "../paths";
-import { deckToLibrary } from "../work-doc";
+import { deckToLibrary, syncQuietly } from "../work-doc";
 import { writeDataFile } from "../archive";
 import { deckStylePack } from "../deck-style";
 import { logger } from "../logger";
@@ -314,9 +314,7 @@ async function run(job: Job): Promise<void> {
       .set({ status: "ready", statusMessage: "", error: null })
       .where(eq(decksTable.id, id));
     // Готовая колода — тоже материал: её текст ложится в библиотеку сам.
-    await deckToLibrary(id).catch((err) =>
-      logger.error({ err, id }, "Не смог отправить презентацию в библиотеку"),
-    );
+    await syncQuietly(deckToLibrary(id), "deck", id);
     logger.info({ id, drawn, of: slides.length }, "Образы готовы");
   } else {
     await db

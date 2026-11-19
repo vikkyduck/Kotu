@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db, documentsTable, docChunksTable, type Job } from "@workspace/db";
 import { extractText, chunkText } from "../documents";
 import { embedAll } from "../embeddings";
-import { registerHandler } from "../jobs";
+import { failOn, markFailed, registerHandler } from "../jobs";
 import { logger } from "../logger";
 import { MIN_LIBRARY_TEXT } from "../work-doc";
 
@@ -31,10 +31,7 @@ async function setStatus(id: number, message: string): Promise<void> {
 }
 
 async function markError(id: number, message: string): Promise<void> {
-  await db
-    .update(documentsTable)
-    .set({ status: "error", statusMessage: "", error: message })
-    .where(eq(documentsTable.id, id));
+  await markFailed(documentsTable, id, message);
 }
 
 async function run(job: Job): Promise<void> {
@@ -101,11 +98,7 @@ async function run(job: Job): Promise<void> {
   logger.info({ id, chunks: chunks.length, pages }, "Документ разобран");
 }
 
-async function onGiveUp(job: Job, message: string): Promise<void> {
-  await markError(job.entityId, message === SEARCH_DOWN ? message : UNREADABLE).catch((err) =>
-    logger.error({ err, id: job.entityId }, "Не смог записать ошибку документа"),
-  );
-}
+const onGiveUp = failOn(documentsTable, "документ", (m) => (m === SEARCH_DOWN ? m : UNREADABLE));
 
 export function registerIngestHandler(): void {
   registerHandler("doc.ingest", { run, onGiveUp });

@@ -7,16 +7,16 @@ import {
   lectureSourcesTable,
   documentsTable,
   LECTURE_FOCI,
-  type Lecture,
   type LectureBrief,
   type LectureFocus,
 } from "@workspace/db";
 import { parseId } from "../../lib/parse-id";
+import { ownedOr404, ownedRow } from "../../lib/owned";
 import { hideLabels } from "../../lib/name-labels";
-import { QUEUED_MESSAGE, enqueue, hasActiveJob } from "../../lib/jobs";
+import { NOTHING_TO_RETRY, QUEUED_MESSAGE, enqueue, hasActiveJob, transitionAndEnqueue } from "../../lib/jobs";
 import { attachmentHeader } from "../../lib/filename";
-import { ownFolderId } from "../../lib/folders";
-import { lectureToLibrary, dropLectureCopies } from "../../lib/work-doc";
+import { parseRenameMove } from "../../lib/folders";
+import { lectureToLibrary, dropLectureCopies, syncQuietly } from "../../lib/work-doc";
 import { buildLectureDocx, buildLectureMarkdown } from "../../lib/lecture-export";
 import { planSections, titleFromTopic } from "../../lib/lecture-prompt";
 import { titleFrom } from "../../lib/title";
@@ -26,26 +26,11 @@ import { LECTURE_PLANNING, PLAN_BUSY_MESSAGE, planEditBlocked } from "../../lib/
 
 const router: IRouter = Router();
 
-const NOT_FOUND = { message: "Лекция не найдена" };
-
-/**
- * Лекция строго своего владельца — проверка в каждой ручке, как loadDeck.
- * Кривой id — как чужая лекция: null, и ручка отвечает 404.
- */
-async function loadLecture(rawId: string, ownerId: number): Promise<Lecture | null> {
-  const id = parseId(rawId);
-  if (id === null) return null;
-  const [lecture] = await db
-    .select()
-    .from(lecturesTable)
-    .where(and(eq(lecturesTable.id, id), eq(lecturesTable.ownerId, ownerId)))
-    .limit(1);
-  return lecture ?? null;
-}
+const NOT_FOUND = "Лекция не найдена";
 
 /** Лекция вместе с главами и источниками — фронту нужен цельный объект. */
 async function loadFull(rawId: string, ownerId: number) {
-  const lecture = await loadLecture(rawId, ownerId);
+  const lecture = await ownedRow(lecturesTable, rawId, ownerId);
   if (!lecture) return null;
 
   const sections = await db
@@ -86,7 +71,7 @@ router.get("/lectures", async (req, res): Promise<void> => {
 router.get("/lectures/:id", async (req, res): Promise<void> => {
   const full = await loadFull(req.params.id, req.user!.id);
   if (!full) {
-    res.status(404).json(NOT_FOUND);
+    res.status(404).json({ message: NOT_FOUND });
     return;
   }
   res.json(full);
@@ -98,31 +83,15 @@ router.get("/lectures/:id", async (req, res): Promise<void> => {
  * меняется вместе с ней, одной транзакцией: иначе они разъедутся.
  */
 router.patch("/lectures/:id", async (req, res): Promise<void> => {
-  const lecture = await loadLecture(req.params.id, req.user!.id);
-  if (!lecture) {
-    res.status(404).json(NOT_FOUND);
+  const lecture = await ownedOr404(lecturesTable, req, res, NOT_FOUND);
+  if (!lecture) return;
+
+  const parsed = await parseRenameMove(req.body ?? {}, req.user!.id, "Дайте лекции название");
+  if ("status" in parsed) {
+    res.status(parsed.status).json({ message: parsed.message });
     return;
   }
-
-  const body = req.body ?? {};
-  const set: { title?: string; folderId?: number | null } = {};
-  if ("title" in body) {
-    // Длинное название обрезаем, а не отклоняем — как у книги и записи.
-    const title = titleFrom(body.title);
-    if (title === "") {
-      res.status(400).json({ message: "Дайте лекции название" });
-      return;
-    }
-    set.title = title;
-  }
-  if ("folderId" in body) {
-    const folderId = await ownFolderId(body.folderId, req.user!.id);
-    if (folderId === undefined) {
-      res.status(404).json({ message: "Папка не найдена" });
-      return;
-    }
-    set.folderId = folderId;
-  }
+  const { set } = parsed;
   if (Object.keys(set).length > 0) {
     // Копия текста переезжает и переименовывается вместе с лекцией:
     // материал живёт в одном месте.
@@ -198,11 +167,8 @@ router.post("/lectures", async (req, res): Promise<void> => {
 
 /** Правка плана до утверждения: автор может переписать, переставить, удалить. */
 router.patch("/lectures/:id/plan", async (req, res): Promise<void> => {
-  const lecture = await loadLecture(req.params.id, req.user!.id);
-  if (!lecture) {
-    res.status(404).json(NOT_FOUND);
-    return;
-  }
+  const lecture = await ownedOr404(lecturesTable, req, res, NOT_FOUND);
+  if (!lecture) return;
   if (lecture.planApproved) {
     res.status(409).json({ message: "План уже утверждён — правьте сами главы" });
     return;
@@ -244,11 +210,8 @@ router.patch("/lectures/:id/plan", async (req, res): Promise<void> => {
 
 /** Точка, где автор остаётся автором: после утверждения начинается письмо. */
 router.post("/lectures/:id/plan/approve", async (req, res): Promise<void> => {
-  const lecture = await loadLecture(req.params.id, req.user!.id);
-  if (!lecture) {
-    res.status(404).json(NOT_FOUND);
-    return;
-  }
+  const lecture = await ownedOr404(lecturesTable, req, res, NOT_FOUND);
+  if (!lecture) return;
   const id = lecture.id;
   if ((lecture.plan ?? []).length === 0) {
     res.status(409).json({ message: "План пуст" });
@@ -258,31 +221,23 @@ router.post("/lectures/:id/plan/approve", async (req, res): Promise<void> => {
   // Смена статуса, главы и задача — одной транзакцией, с условием на
   // plan_ready в самом UPDATE: две вкладки или повтор запроса иначе
   // вставили бы главы дважды и поставили два платных письма.
-  const queued = await db.transaction(async (tx) => {
-    const [updated] = await tx
-      .update(lecturesTable)
-      .set({ planApproved: true, status: "writing", statusMessage: QUEUED_MESSAGE, error: null })
-      .where(and(eq(lecturesTable.id, id), eq(lecturesTable.status, "plan_ready")))
-      .returning({ plan: lecturesTable.plan });
-    if (!updated) return false;
-
+  const queued = await transitionAndEnqueue({
+    table: lecturesTable,
+    id,
+    from: ["plan_ready"],
+    set: { planApproved: true, status: "writing", statusMessage: QUEUED_MESSAGE },
+    kind: "lecture.write",
     // Главы создаём один раз: при повторном утверждении не плодим дубли.
-    const existing = await tx
-      .select({ id: lectureSectionsTable.id })
-      .from(lectureSectionsTable)
-      .where(eq(lectureSectionsTable.lectureId, id));
-    if (existing.length === 0) {
+    before: async (tx, updated) => {
+      const existing = await tx
+        .select({ id: lectureSectionsTable.id })
+        .from(lectureSectionsTable)
+        .where(eq(lectureSectionsTable.lectureId, id));
+      if (existing.length > 0) return;
       await tx.insert(lectureSectionsTable).values(
-        (updated.plan ?? []).map((s, i) => ({
-          lectureId: id,
-          ord: i,
-          heading: s.heading,
-          abstract: s.abstract,
-        })),
+        (updated.plan ?? []).map((s, i) => ({ lectureId: id, ord: i, heading: s.heading, abstract: s.abstract })),
       );
-    }
-    await enqueue("lecture.write", id, {}, tx);
-    return true;
+    },
   });
   if (!queued) {
     res.status(409).json({ message: "Главы уже пишутся" });
@@ -297,13 +252,10 @@ router.post("/lectures/:id/plan/approve", async (req, res): Promise<void> => {
  * Бриф хранится в лекции, поэтому задаче ничего передавать не нужно.
  */
 router.post("/lectures/:id/retry", async (req, res): Promise<void> => {
-  const lecture = await loadLecture(req.params.id, req.user!.id);
-  if (!lecture) {
-    res.status(404).json(NOT_FOUND);
-    return;
-  }
+  const lecture = await ownedOr404(lecturesTable, req, res, NOT_FOUND);
+  if (!lecture) return;
   if (lecture.status !== "error") {
-    res.status(409).json({ message: "Повторять нечего — ошибки нет" });
+    res.status(409).json({ message: NOTHING_TO_RETRY });
     return;
   }
 
@@ -314,25 +266,15 @@ router.post("/lectures/:id/retry", async (req, res): Promise<void> => {
     return;
   }
 
-  // Смена статуса и задача — в одной транзакции: лекция «в работе» без задачи
-  // висела бы вечно. Условие status = 'error' в UPDATE закрывает двойной клик.
-  const kind = lecture.planApproved ? "lecture.write" : "lecture.plan";
-  const queued = await db.transaction(async (tx) => {
-    const [updated] = await tx
-      .update(lecturesTable)
-      .set({
-        status: lecture.planApproved ? "writing" : "planning",
-        statusMessage: QUEUED_MESSAGE,
-        error: null,
-      })
-      .where(and(eq(lecturesTable.id, lecture.id), eq(lecturesTable.status, "error")))
-      .returning({ id: lecturesTable.id });
-    if (!updated) return false;
-    await enqueue(kind, lecture.id, {}, tx);
-    return true;
+  const queued = await transitionAndEnqueue({
+    table: lecturesTable,
+    id: lecture.id,
+    from: ["error"],
+    set: { status: lecture.planApproved ? "writing" : "planning", statusMessage: QUEUED_MESSAGE },
+    kind: lecture.planApproved ? "lecture.write" : "lecture.plan",
   });
   if (!queued) {
-    res.status(409).json({ message: "Повторять нечего — ошибки нет" });
+    res.status(409).json({ message: NOTHING_TO_RETRY });
     return;
   }
   res.status(202).json({ ok: true });
@@ -348,11 +290,8 @@ router.patch("/lectures/:id/sections/:sectionId", async (req, res): Promise<void
     return;
   }
 
-  const lecture = await loadLecture(req.params.id, req.user!.id);
-  if (!lecture) {
-    res.status(404).json(NOT_FOUND);
-    return;
-  }
+  const lecture = await ownedOr404(lecturesTable, req, res, NOT_FOUND);
+  if (!lecture) return;
   const sectionId = parseId(req.params.sectionId);
   const saved =
     sectionId === null
@@ -375,20 +314,15 @@ router.patch("/lectures/:id/sections/:sectionId", async (req, res): Promise<void
   // Правка главы должна доехать до поиска: иначе следующая лекция будет
   // опираться на текст, которого автор уже не признаёт.
   if (lecture.status === "ready") {
-    await lectureToLibrary(lecture.id).catch((err) =>
-      req.log.error({ err, id: lecture.id }, "Не смог обновить копию лекции в библиотеке"),
-    );
+    await syncQuietly(lectureToLibrary(lecture.id), "lecture", lecture.id, req.log);
   }
 
   res.json({ ok: true });
 });
 
 router.delete("/lectures/:id", async (req, res): Promise<void> => {
-  const lecture = await loadLecture(req.params.id, req.user!.id);
-  if (!lecture) {
-    res.status(404).json(NOT_FOUND);
-    return;
-  }
+  const lecture = await ownedOr404(lecturesTable, req, res, NOT_FOUND);
+  if (!lecture) return;
   // Лекция, главы и источники уходят в архив триггерами (каскад по FK тоже),
   // файл копии — archiveAndRemove. Без архива не удаляем ничего.
   await requireArchive();
@@ -409,7 +343,7 @@ router.delete("/lectures/:id", async (req, res): Promise<void> => {
 router.get("/lectures/:id/export", async (req, res): Promise<void> => {
   const full = await loadFull(req.params.id, req.user!.id);
   if (!full) {
-    res.status(404).json(NOT_FOUND);
+    res.status(404).json({ message: NOT_FOUND });
     return;
   }
 

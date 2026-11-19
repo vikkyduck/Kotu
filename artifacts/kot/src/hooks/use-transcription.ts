@@ -1,5 +1,6 @@
 import type { MadeFrom } from '@/lib/related';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef } from 'react';
+import { useOpenItem } from '@/hooks/use-open-item';
 import type { TranscriptSegment, TranscriptionStatus } from '@workspace/db/schema';
 import { OFFLINE, failText, json, send } from '@/lib/http';
 
@@ -31,9 +32,6 @@ export interface Transcription {
   made: MadeFrom;
 }
 
-/** Как часто спрашивать сервер, пока идёт распознавание. */
-const POLL_MS = 1500;
-
 export function useTranscription(id: number | null): {
   data: Transcription | null;
   loading: boolean;
@@ -48,9 +46,15 @@ export function useTranscription(id: number | null): {
    */
   retry: () => Promise<{ status: number; message: string } | null>;
 } {
-  const [data, setData] = useState<Transcription | null>(null);
-  const [loading, setLoading] = useState(id !== null);
-  const [failed, setFailed] = useState<'missing' | 'error' | null>(null);
+  // Загрузка, «не найдена» и опрос, пока идёт распознавание, — общие (hooks/use-open-item).
+  const open = useOpenItem<Transcription>(
+    id,
+    (n) => `/api/transcriptions/${n}`,
+    (t) => t.status === 'processing',
+    'Не удалось открыть запись',
+  );
+  const { item: data, setItem: setData, loading, reload } = open;
+  const failed: 'missing' | 'error' | null = open.missing ? 'missing' : open.error ? 'error' : null;
 
   // Какая запись открыта сейчас. Ответ по прежней, пришедший уже после
   // перехода на другую, не должен встать на её место: правка ушла бы PATCH-ем
@@ -63,44 +67,6 @@ export function useTranscription(id: number | null): {
   // правку: промежуточный стёр бы с экрана уже отправленную следующую.
   const saving = useRef<Promise<unknown>>(Promise.resolve());
   const lastSave = useRef(0);
-
-  const reload = useCallback(async () => {
-    if (id === null) return;
-    try {
-      const res = await fetch(`/api/transcriptions/${id}`);
-      const row = res.ok ? ((await res.json()) as Transcription) : null;
-      if (id !== current.current) return;
-      if (row) {
-        setData(row);
-        setFailed(null);
-      } else {
-        setFailed(res.status === 404 ? 'missing' : 'error');
-      }
-    } catch {
-      if (id === current.current) setFailed('error');
-    } finally {
-      if (id === current.current) setLoading(false);
-    }
-  }, [id]);
-
-  useEffect(() => {
-    // Открыли другую запись — старую не показываем ни мгновения.
-    setData(null);
-    setFailed(null);
-    if (id === null) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    void reload();
-  }, [id, reload]);
-
-  const working = data?.status === 'processing';
-  useEffect(() => {
-    if (id === null || !working) return;
-    const t = setInterval(() => void reload(), POLL_MS);
-    return () => clearInterval(t);
-  }, [id, working, reload]);
 
   const save = useCallback(
     async (patch: { segments?: TranscriptSegment[]; title?: string }) => {

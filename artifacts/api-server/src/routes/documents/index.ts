@@ -8,21 +8,21 @@ import {
   foldersTable,
   lecturesTable,
   decksTable,
-  type Document,
 } from "@workspace/db";
 import { LIBRARY_DIR } from "../../lib/paths";
 import { embedAll } from "../../lib/embeddings";
-import { ownFolderId } from "../../lib/folders";
+import { ownFolderId, parseRenameMove, FOLDER_NOT_FOUND } from "../../lib/folders";
 import { decodeUploadName } from "../../lib/filename";
 import { cleanText } from "../../lib/clean-text";
 import { titleFrom } from "../../lib/title";
 import { documentFileHeaders } from "./file-headers";
 import { parseId } from "../../lib/parse-id";
+import { ownedOr404, ownedRow } from "../../lib/owned";
 import { resolveInsideDir } from "../../lib/uploads";
 import { archiveAndRemove, archiveUpload, requireArchive } from "../../lib/archive";
 import { logger } from "../../lib/logger";
 import { hideLabels } from "../../lib/name-labels";
-import { QUEUED_MESSAGE, enqueue, hasActiveJob, lastJob } from "../../lib/jobs";
+import { NOTHING_TO_RETRY, QUEUED_MESSAGE, enqueue, hasActiveJob, lastJob, transitionAndEnqueue } from "../../lib/jobs";
 import { NO_CHUNKS, NO_TEXT, type IngestPayload } from "../../lib/handlers/ingest";
 
 // Книги бывают толстыми, но не гигабайтными.
@@ -76,22 +76,9 @@ router.get("/documents", async (req, res): Promise<void> => {
   res.json(rows);
 });
 
-/** Документ автора по номеру из адреса; чужой, удалённый и кривой номер — null (404). */
-async function ownDoc(rawId: unknown, ownerId: number): Promise<Document | null> {
-  const id = parseId(rawId);
-  if (id === null) return null;
-  const [doc] = await db
-    .select()
-    .from(documentsTable)
-    .where(and(eq(documentsTable.id, id), eq(documentsTable.ownerId, ownerId)))
-    .limit(1);
-  return doc ?? null;
-}
-
-
 /** Сам загруженный файл — открыть во вкладке или скачать под исходным именем. */
 router.get("/documents/:id/file", async (req, res): Promise<void> => {
-  const doc = await ownDoc(req.params.id, req.user!.id);
+  const doc = await ownedRow(documentsTable, req.params.id, req.user!.id);
   const file = doc ? resolveInsideDir(LIBRARY_DIR, doc.sourcePath) : null;
   const onDisk = file ? await stat(file).then((st) => st.isFile(), () => false) : false;
   if (!doc || !file || !onDisk) {
@@ -109,13 +96,10 @@ router.get("/documents/:id/file", async (req, res): Promise<void> => {
  * повтора оставалось только удалить книгу и загрузить снова.
  */
 router.post("/documents/:id/retry", async (req, res): Promise<void> => {
-  const doc = await ownDoc(req.params.id, req.user!.id);
-  if (!doc) {
-    res.status(404).json({ message: NOT_FOUND });
-    return;
-  }
+  const doc = await ownedOr404(documentsTable, req, res, NOT_FOUND);
+  if (!doc) return;
   if (doc.status !== "error") {
-    res.status(409).json({ message: "Повторять нечего — ошибки нет" });
+    res.status(409).json({ message: NOTHING_TO_RETRY });
     return;
   }
   // Скан без текста или текст, который не режется на фрагменты, — свойство
@@ -146,20 +130,16 @@ router.post("/documents/:id/retry", async (req, res): Promise<void> => {
     filename: typeof prev.filename === "string" ? prev.filename : doc.title,
   };
 
-  // Статус и задача — в одной транзакции: документ «в разборе» без задачи
-  // висел бы вечно. Условие status = 'error' в UPDATE закрывает двойной клик.
-  const queued = await db.transaction(async (tx) => {
-    const [updated] = await tx
-      .update(documentsTable)
-      .set({ status: "parsing", statusMessage: QUEUED_MESSAGE, error: null })
-      .where(and(eq(documentsTable.id, doc.id), eq(documentsTable.status, "error")))
-      .returning();
-    if (!updated) return null;
-    await enqueue("doc.ingest", doc.id, payload as unknown as Record<string, unknown>, tx);
-    return updated;
+  const queued = await transitionAndEnqueue({
+    table: documentsTable,
+    id: doc.id,
+    from: ["error"],
+    set: { status: "parsing", statusMessage: QUEUED_MESSAGE },
+    kind: "doc.ingest",
+    payload,
   });
   if (!queued) {
-    res.status(409).json({ message: "Повторять нечего — ошибки нет" });
+    res.status(409).json({ message: NOTHING_TO_RETRY });
     return;
   }
   // Фронту нужен только факт постановки; полная строка отдала бы и путь на диске.
@@ -167,11 +147,8 @@ router.post("/documents/:id/retry", async (req, res): Promise<void> => {
 });
 
 router.delete("/documents/:id", async (req, res): Promise<void> => {
-  const doc = await ownDoc(req.params.id, req.user!.id);
-  if (!doc) {
-    res.status(404).json({ message: NOT_FOUND });
-    return;
-  }
+  const doc = await ownedOr404(documentsTable, req, res, NOT_FOUND);
+  if (!doc) return;
 
   // Библиотечная копия расшифровки живёт, пока жива запись: удалишь отсюда —
   // стартовая сверка вернёт её. Удалять надо саму запись на её экране.
@@ -196,40 +173,23 @@ router.delete("/documents/:id", async (req, res): Promise<void> => {
 
 /** Переложить документ в папку (или вынуть: folderId null) и переименовать. */
 router.patch("/documents/:id", async (req, res): Promise<void> => {
-  const doc = await ownDoc(req.params.id, req.user!.id);
-  if (!doc) {
-    res.status(404).json({ message: NOT_FOUND });
-    return;
-  }
+  const doc = await ownedOr404(documentsTable, req, res, NOT_FOUND);
+  if (!doc) return;
 
   const body = req.body ?? {};
-  const patch: Partial<typeof documentsTable.$inferInsert> = {};
-
-  if ("folderId" in body) {
-    const folderId = await ownFolderId(body.folderId, req.user!.id);
-    if (folderId === undefined) {
-      res.status(404).json({ message: "Папка не найдена" });
-      return;
-    }
-    patch.folderId = folderId;
+  // Копия записи называется, как сама запись, и переименовывается вместе с ней
+  // (routes/transcriptions): правка здесь перезатёрлась бы следующей синхронизацией.
+  if ("title" in body && doc.kind === "transcript") {
+    res.status(400).json({ message: "Расшифровку переименовывают как запись, а не как копию" });
+    return;
   }
-  if ("title" in body) {
-    // У библиотечной копии расшифровки имя нейтральное и своё: правка здесь
-    // перезатёрлась бы следующей синхронизацией, а имя из зоны А сюда нельзя.
-    if (doc.kind === "transcript") {
-      res.status(400).json({ message: "Расшифровку переименовывают как запись, а не как копию" });
-      return;
-    }
-    const title = cleanTitle(body.title);
-    if (title === null) {
-      res.status(400).json({ message: "Напишите название" });
-      return;
-    }
-    patch.title = title;
+  const parsed = await parseRenameMove(body, req.user!.id, "Напишите название");
+  if ("status" in parsed) {
+    res.status(parsed.status).json({ message: parsed.message });
+    return;
   }
-
-  if (Object.keys(patch).length > 0) {
-    await db.update(documentsTable).set(patch).where(eq(documentsTable.id, doc.id));
+  if (Object.keys(parsed.set).length > 0) {
+    await db.update(documentsTable).set(parsed.set).where(eq(documentsTable.id, doc.id));
   }
   res.json({ ok: true });
 });
@@ -281,7 +241,7 @@ router.patch("/folders/:id", async (req, res): Promise<void> => {
         .returning()
     : [];
   if (!row) {
-    res.status(404).json({ message: "Папка не найдена" });
+    res.status(404).json({ message: FOLDER_NOT_FOUND });
     return;
   }
   res.json(row);
@@ -314,7 +274,7 @@ router.delete("/folders/:id", async (req, res): Promise<void> => {
       })
     : null;
   if (!row) {
-    res.status(404).json({ message: "Папка не найдена" });
+    res.status(404).json({ message: FOLDER_NOT_FOUND });
     return;
   }
   res.sendStatus(204);
@@ -381,7 +341,7 @@ router.post(
           statusMessage: QUEUED_MESSAGE,
         })
         .returning(PUBLIC_DOC);
-      await enqueue("doc.ingest", row.id, payload as unknown as Record<string, unknown>, tx);
+      await enqueue("doc.ingest", row.id, payload, tx);
       return row;
     });
 

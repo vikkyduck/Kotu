@@ -19,7 +19,7 @@ import { askJson, modelFor } from "../codex";
 import { titleFrom } from "../title";
 import { fieldsLine, sanitizeSlideContent, settleContent } from "../slide-content";
 import { joinChunks } from "../documents";
-import { registerHandler } from "../jobs";
+import { failOn, registerHandler, showWaitOn } from "../jobs";
 import { logger } from "../logger";
 
 /**
@@ -272,17 +272,8 @@ export const shownError = (message: string, own: readonly string[]): string =>
 
 /** Задача колоды сдалась — колода в ошибке; так же падает и отрисовка образов. */
 /** Ждем подписку Codex: на карточке - причина и время продолжения. */
-export async function onWait(job: Job, message: string): Promise<void> {
-  await db.update(decksTable).set({ statusMessage: message }).where(eq(decksTable.id, job.entityId));
-}
-
-export async function onGiveUp(job: Job, message: string): Promise<void> {
-  await db
-    .update(decksTable)
-    .set({ status: "error", statusMessage: "", error: shownError(message, SHOWN) })
-    .where(eq(decksTable.id, job.entityId))
-    .catch((err) => logger.error({ err, id: job.entityId }, "Не смог записать ошибку презентации"));
-}
+export const onWait = showWaitOn(decksTable);
+export const onGiveUp = failOn(decksTable, "презентация", (m) => shownError(m, SHOWN));
 
 export function registerStoryboardHandler(): void {
   registerHandler("deck.storyboard", { run, onGiveUp, onWait });

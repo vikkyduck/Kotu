@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '@/hooks/use-app';
 import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
+import { useOpenItem } from '@/hooks/use-open-item';
 import { Icon } from '@/lib/icons';
-import { OFFLINE, failText, send, json, downloadFile } from '@/lib/http';
+import { send, json, downloadFile } from '@/lib/http';
 import { KIND_LABEL, docKind, lectureWorking, type ItemKind } from '@/lib/library-items';
 import { RelatedLine, useRelatedLinks } from '@/components/Related';
 import type { MaterialRef, WorkRef } from '@/lib/related';
@@ -82,11 +83,13 @@ export function Lecture() {
   const [docs, setDocs] = useState<Doc[] | null>(null);
   const [docsFailed, setDocsFailed] = useState(false);
   const openId = activeLectureId;
-  const openRef = useRef(openId);
-  openRef.current = openId;
-  const [lecture, setLecture] = useState<LectureFull | null>(null);
-  /** Открытую лекцию не удалось загрузить — текст причины для экрана. */
-  const [failed, setFailed] = useState<string | null>(null);
+  // Открытая лекция: загрузка, «не найдена», опрос, пока она пишется (hooks/use-open-item).
+  const {
+    item: lecture,
+    missing,
+    error: failed,
+    reload,
+  } = useOpenItem<LectureFull>(openId, (id) => `/api/lectures/${id}`, (l) => lectureWorking(l.status), 'Не удалось открыть лекцию');
 
   // Бриф — тоже черновик: он ценнее всего, что есть на этом экране.
   const [topic, setTopic, clearTopic] = useDraft('lecture-topic', screen === 's-lecture');
@@ -154,33 +157,14 @@ export function Lecture() {
     if (planOf.current === id) setPlanEdit(null);
   }, []);
 
-  const loadOne = useCallback(async (id: number) => {
-    let res: Response;
-    try {
-      res = await fetch(`/api/lectures/${id}`);
-    } catch {
-      if (id === openRef.current) setFailed(OFFLINE);
-      return;
-    }
-    // Ответ мог прийти, когда она уже ушла с этой лекции: чужой экран не трогаем.
-    if (id !== openRef.current) return;
-    if (res.status === 404) {
-      // Лекцию удалили (другая вкладка, старая ссылка, «назад») — не
-      // показывать же под её адресом форму новой.
-      toast('Лекция не найдена');
-      dropEdits(id);
-      leaveMissing();
-      return;
-    }
-    if (!res.ok) {
-      setFailed(await failText(res, 'Не удалось открыть лекцию'));
-      return;
-    }
-    const data = (await res.json()) as LectureFull;
-    if (id !== openRef.current) return;
-    setLecture(data);
-    setFailed(null);
-  }, [toast, leaveMissing, dropEdits]);
+  // Лекцию удалили (другая вкладка, старая ссылка, «назад») — не показывать
+  // же под её адресом форму новой: правки её уходят, экран — в библиотеку.
+  useEffect(() => {
+    if (!missing || openId === null) return;
+    toast('Лекция не найдена');
+    dropEdits(openId);
+    leaveMissing();
+  }, [missing, openId, toast, dropEdits, leaveMissing]);
 
   useEffect(() => {
     if (screen !== 's-lecture') return;
@@ -195,23 +179,12 @@ export function Lecture() {
     setPicked(lectureSeed?.documentIds ?? []);
   }, [screen, openId, lectureSeed]);
 
+  // Индекс правки плана относится к своей лекции — в другой он чужой.
   useEffect(() => {
-    setLecture(null);
-    setFailed(null);
     if (openId === null) return;
-    // Индекс правки плана относится к своей лекции — в другой он чужой.
     if (openId !== planOf.current) setPlanEdit(null);
     planOf.current = openId;
-    void loadOne(openId);
-  }, [openId, loadOne]);
-
-  // Пока идёт работа — подтягиваем состояние, чтобы прогресс двигался сам.
-  useEffect(() => {
-    if (openId === null || !lecture) return;
-    if (!lectureWorking(lecture.status)) return;
-    const t = setInterval(() => void loadOne(openId), 4000);
-    return () => clearInterval(t);
-  }, [openId, lecture, loadOne]);
+  }, [openId]);
 
   const create = async () => {
     if (topic.trim() === '') {
@@ -265,7 +238,7 @@ export function Lecture() {
       return false;
     }
     if (done) toast(done);
-    await loadOne(lecture.id);
+    await reload();
     return true;
   };
 
@@ -369,7 +342,7 @@ export function Lecture() {
             <h3 className="errttl">Не удалось открыть</h3>
             <p className="errwhy">{failed}</p>
             <div className="btnrow">
-              <button className="btn primary" style={{ flex: 1 }} onClick={() => void loadOne(openId)}>
+              <button className="btn primary" style={{ flex: 1 }} onClick={() => void reload()}>
                 Ещё раз
               </button>
             </div>

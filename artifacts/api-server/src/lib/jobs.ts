@@ -1,4 +1,5 @@
 import { sql, eq, and, desc, inArray } from "drizzle-orm";
+import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { db, jobsTable, type Job, type JobKind } from "@workspace/db";
 import { logger } from "./logger";
 import { ModelWaitError } from "./codex";
@@ -48,11 +49,91 @@ export const QUEUED_MESSAGE = "В очереди…";
 export async function enqueue(
   kind: JobKind,
   entityId: number,
-  payload: Record<string, unknown> = {},
+  payload: object = {},
   tx: Pick<typeof db, "insert"> = db,
 ): Promise<Job> {
-  const [job] = await tx.insert(jobsTable).values({ kind, entityId, payload }).returning();
+  const [job] = await tx
+    .insert(jobsTable)
+    .values({ kind, entityId, payload: payload as Record<string, unknown> })
+    .returning();
   return job;
+}
+
+/** Ответ повтора, когда ошибки уже нет (повторили в другой вкладке, двойной клик). */
+export const NOTHING_TO_RETRY = "Повторять нечего — ошибки нет";
+
+/** Работа со строкой статуса: лекции, презентации, документы, записи. */
+type WorkTable = PgTable & { id: PgColumn; status: PgColumn; statusMessage: PgColumn; error: PgColumn };
+
+/** onWait задачи: причина ожидания и время продолжения - строкой статуса на карточке работы. */
+export function showWaitOn(table: WorkTable): NonNullable<JobHandler["onWait"]> {
+  return async (job, message) => {
+    await db
+      .update(table as PgTable)
+      .set({ statusMessage: message } as Record<string, unknown>)
+      .where(eq(table.id, job.entityId));
+  };
+}
+
+/** Работа - в ошибку с фразой для человека. Возвращает, сколько строк нашлось: 0 - работы уже нет. */
+export async function markFailed(table: WorkTable, id: number, error: string): Promise<number> {
+  const rows = await db
+    .update(table as PgTable)
+    .set({ status: "error", statusMessage: "", error } as Record<string, unknown>)
+    .where(eq(table.id, id))
+    .returning({ id: table.id });
+  return rows.length;
+}
+
+/** onGiveUp простой работы: в ошибку с понятной фразой; сбой записи - в журнал, не наружу. */
+export function failOn(
+  table: WorkTable,
+  what: string,
+  shown: (message: string) => string = (m) => m,
+): JobHandler["onGiveUp"] {
+  return async (job, message) => {
+    await markFailed(table, job.entityId, shown(message)).catch((err) =>
+      logger.error({ err, id: job.entityId }, `Не смог записать ошибку: ${what}`),
+    );
+  };
+}
+
+/** Транзакция Drizzle - то, что получает колбэк db.transaction. */
+export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/** Таблица работ со статусом: лекции, презентации, документы, записи. */
+type StatusTable = PgTable & { id: PgColumn; status: PgColumn; error: PgColumn };
+
+/**
+ * Смена статуса работы и её задача - одной транзакцией, с условием на прежний
+ * статус в самом UPDATE. Работа «в работе» без задачи невозможна, а второй
+ * клик или вторая вкладка уже не найдут прежний статус и второй задачи не
+ * поставят. Возвращает обновлённую строку или null - статус уже другой.
+ * before - то, что должно случиться в той же транзакции до задачи (главы
+ * лекции, сброс образов колоды).
+ */
+export async function transitionAndEnqueue<T extends StatusTable>(opts: {
+  table: T;
+  id: number;
+  from: readonly string[];
+  set: Partial<T["$inferInsert"]>;
+  kind: JobKind;
+  payload?: object;
+  before?: (tx: Tx, row: T["$inferSelect"]) => Promise<unknown>;
+}): Promise<T["$inferSelect"] | null> {
+  const { table, id, from, set, kind, payload = {}, before } = opts;
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(table as PgTable)
+      .set({ error: null, ...set } as Record<string, unknown>)
+      .where(and(eq(table.id, id), inArray(table.status, [...from])))
+      .returning();
+    if (!row) return null;
+    const updated = row as T["$inferSelect"];
+    if (before) await before(tx, updated);
+    await enqueue(kind, id, payload, tx);
+    return updated;
+  });
 }
 
 /**

@@ -35,8 +35,8 @@ function briefSources(brief: LectureBrief): { lib: boolean; res: boolean } {
   if (brief.mode === "research") return { lib: false, res: true };
   return { lib: true, res: false };
 }
-import { registerHandler } from "../jobs";
-import { lectureToLibrary } from "../work-doc";
+import { failOn, registerHandler, showWaitOn } from "../jobs";
+import { lectureToLibrary, syncQuietly } from "../work-doc";
 import { logger } from "../logger";
 
 // Та же модель, что пишет лекции у бота ПСИ в Telegram (решение владелицы 19.11.2026).
@@ -407,25 +407,14 @@ async function runWrite(job: Job): Promise<void> {
   // Написанная лекция — такой же материал, как книга: кладём её в библиотеку,
   // чтобы следующая работа могла на неё опереться. Не удалась копия — лекция
   // всё равно готова; стартовая сверка попробует ещё раз.
-  await lectureToLibrary(id).catch((err) =>
-    logger.error({ err, id }, "Не смог отправить лекцию в библиотеку"),
-  );
+  await syncQuietly(lectureToLibrary(id), "lecture", id);
 
   logger.info({ id, sections: total }, "Лекция написана");
 }
 
 /** Ждем подписку Codex: на карточке - причина и время продолжения. */
-async function onWait(job: Job, message: string): Promise<void> {
-  await db.update(lecturesTable).set({ statusMessage: message }).where(eq(lecturesTable.id, job.entityId));
-}
-
-async function onGiveUp(job: Job, message: string): Promise<void> {
-  await db
-    .update(lecturesTable)
-    .set({ status: "error", statusMessage: "", error: shownError(message) })
-    .where(eq(lecturesTable.id, job.entityId))
-    .catch((err) => logger.error({ err, id: job.entityId }, "Не смог записать ошибку лекции"));
-}
+const onWait = showWaitOn(lecturesTable);
+const onGiveUp = failOn(lecturesTable, "лекция", shownError);
 
 export function registerLectureHandlers(): void {
   registerHandler("lecture.plan", { run: runPlan, onGiveUp, onWait });
