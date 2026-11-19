@@ -9,7 +9,6 @@ import {
   index,
 } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
-import { docChunksTable } from "./documents";
 
 export type LectureStatus =
   | "planning"

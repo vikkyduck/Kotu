@@ -15,7 +15,8 @@ import {
   type DiagramSpec,
 } from "@workspace/db";
 import { SLIDE_LAYOUTS, SLIDE_SPEC, layoutHasImage } from "@workspace/db/slides";
-import { askJson, pickModel } from "../codex";
+import { askJson, modelFor } from "../codex";
+import { titleFrom } from "../title";
 import { fieldsLine, sanitizeSlideContent, settleContent } from "../slide-content";
 import { joinChunks } from "../documents";
 import { registerHandler } from "../jobs";
@@ -188,7 +189,7 @@ async function run(job: Job): Promise<void> {
   // и модель думает в счёт того же лимита. Потолок с запасом; ask() идёт
   // потоком, так что длинная генерация не упирается в таймауты.
   const result = await askJson<{ slides?: StoryboardSlide[] }>({
-    model: pickModel("MODEL_DECK", "gpt-5.6-sol"),
+    model: modelFor("MODEL_DECK"),
     system,
     user: `Название: ${source.title}\n\nТекст лекции:\n\n${source.text.slice(0, MAX_SOURCE_CHARS)}`,
   });
@@ -248,7 +249,7 @@ async function run(job: Job): Promise<void> {
     statusMessage: "",
   };
   // Не длиннее, чем принимает переименование, — иначе то же имя не сохранить.
-  if (deck.sourceKind === "raw" && coverTitle) patch.title = coverTitle.slice(0, 200);
+  if (deck.sourceKind === "raw" && coverTitle) patch.title = titleFrom(coverTitle);
 
   await db.update(decksTable).set(patch).where(eq(decksTable.id, id));
 

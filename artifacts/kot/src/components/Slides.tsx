@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '@/hooks/use-app';
 import { Icon } from '@/lib/icons';
+import { RelatedLine, useRelatedLinks } from './Related';
 import { SlideViewer } from './SlideViewer';
 import { DeckForm } from './slides/DeckForm';
 import { DiagramThumb } from './slides/DiagramThumb';
@@ -31,6 +32,7 @@ export function Slides() {
   // Какую колоду открыть, решает библиотека: инструмент — это действие,
   // а список сделанного лежит там же, где книги и лекции.
   const { screen, go, leaveMissing, toast, activeDeckId, openDeck } = useApp();
+  const rel = useRelatedLinks();
   const openId = activeDeckId;
   const [deck, setDeck] = useState<DeckFull | null>(null);
   /** Открытую колоду не удалось загрузить — текст причины для экрана. */
@@ -239,6 +241,12 @@ export function Slides() {
         </button>
 
         <h2 className="h2">{deck.title}</h2>
+        {deck.source && (
+          <RelatedLine
+            label={deck.source.type === 'lecture' ? 'Из лекции' : 'Из материала'}
+            links={[deck.source.type === 'lecture' ? rel.lecture(deck.source) : rel.material(deck.source)]}
+          />
+        )}
 
         {/* Удалить можно на любом этапе — ждать окончания работы незачем.
             Кнопка живёт рядом с заголовком; у ошибки — в её блоке, как у

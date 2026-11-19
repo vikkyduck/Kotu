@@ -1,5 +1,5 @@
 import { eq, asc } from "drizzle-orm";
-import { askJson, askText, ModelWaitError, pickEffort, pickModel } from "../codex";
+import { askJson, askText, ModelWaitError, pickEffort, modelFor } from "../codex";
 import { JSON_RULE, parseModelJson } from "../model-json";
 import {
   db,
@@ -20,6 +20,8 @@ import {
   sectionPrompt,
   bibliographyPrompt,
   renumberCitations,
+  planSections,
+  stringList,
 } from "../lecture-prompt";
 
 /**
@@ -38,7 +40,7 @@ import { lectureToLibrary } from "../work-doc";
 import { logger } from "../logger";
 
 // Та же модель, что пишет лекции у бота ПСИ в Telegram (решение владелицы 19.11.2026).
-const MODEL = pickModel("MODEL_LECTURE", "gpt-6.1-sol");
+const MODEL = modelFor("MODEL_LECTURE");
 // Глубина рассуждения: high - самая глубокая, какую пропускает мост Codex. Без неё
 // Codex думает на medium (проверено 19.11.2026), и лекция выходит проще, чем могла бы.
 const EFFORT = pickEffort("EFFORT_LECTURE", "high");
@@ -76,13 +78,6 @@ function renderExcerpts(excerpts: Excerpt[]): string {
   return excerpts
     .map((e) => `[${e.n}] ${e.title}${e.heading ? ` — ${e.heading}` : ""}\n${e.text}`)
     .join("\n\n---\n\n");
-}
-
-/** Список строк из ответа модели: пустое и не-строки отбрасываем. */
-function strings(v: unknown): string[] {
-  return Array.isArray(v)
-    ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim())
-    : [];
 }
 
 /**
@@ -172,20 +167,8 @@ async function runPlan(job: Job): Promise<void> {
       outOfScope?: unknown;
       decisions?: unknown;
     }>(raw, "Codex");
-    if (Array.isArray(parsed.sections)) {
-      sections = parsed.sections
-        .map((s) => {
-          const o = s as Record<string, unknown>;
-          return {
-            heading: typeof o.heading === "string" ? o.heading : "",
-            abstract: typeof o.abstract === "string" ? o.abstract : "",
-            concepts: strings(o.concepts),
-            hook: typeof o.hook === "string" ? o.hook : "",
-          };
-        })
-        .filter((s) => s.heading.trim() !== "");
-    }
-    notes = { outOfScope: strings(parsed.outOfScope), decisions: strings(parsed.decisions) };
+    sections = planSections(parsed.sections);
+    notes = { outOfScope: stringList(parsed.outOfScope), decisions: stringList(parsed.decisions) };
   } catch {
     throw new Error(PLAN_UNREADABLE);
   }
@@ -401,7 +384,7 @@ async function runWrite(job: Job): Promise<void> {
       .slice(0, 120_000),
   })
     .then((parsed) => {
-      const out: Bibliography = { primary: strings(parsed.primary), modern: strings(parsed.modern) };
+      const out: Bibliography = { primary: stringList(parsed.primary), modern: stringList(parsed.modern) };
       return out.primary.length + out.modern.length > 0 ? out : null;
     })
     // Список — украшение, а не суть: лекция готова и без него.

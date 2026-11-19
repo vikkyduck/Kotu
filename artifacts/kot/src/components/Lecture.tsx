@@ -3,7 +3,9 @@ import { useApp } from '@/hooks/use-app';
 import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
 import { Icon } from '@/lib/icons';
 import { OFFLINE, failText, send, json, downloadFile } from '@/lib/http';
-import { KIND_LABEL, docKind, lectureWorking, titleOf, type ItemKind } from '@/lib/library-items';
+import { KIND_LABEL, docKind, lectureWorking, type ItemKind } from '@/lib/library-items';
+import { RelatedLine, useRelatedLinks } from '@/components/Related';
+import type { MaterialRef, WorkRef } from '@/lib/related';
 import type {
   Bibliography,
   DocumentStatus,
@@ -54,6 +56,10 @@ interface LectureFull {
   error: string | null;
   sections: Section[];
   sources: Source[];
+  /** На чём лекция стоит: документы из брифа. */
+  materials: MaterialRef[];
+  /** Презентации, уже собранные из этой лекции. */
+  decks: WorkRef[];
 }
 
 // Часы вписываются числом: от получаса до четырёх (до 16 глав по 1800 слов —
@@ -71,11 +77,10 @@ export function Lecture() {
   // Какую лекцию открыть, решает библиотека: инструмент — это действие,
   // а не ещё один список сделанного.
   const { screen, go, leaveMissing, setLeaveGuard, toast, activeLectureId, openLecture, lectureSeed, newDeck } = useApp();
+  const rel = useRelatedLinks();
   /** null — список ещё не пришёл: «пусто» до ответа было бы неправдой. */
   const [docs, setDocs] = useState<Doc[] | null>(null);
   const [docsFailed, setDocsFailed] = useState(false);
-  /** Имена записей: у расшифровки в библиотеке обезличенная копия — в выборе нужно имя записи. */
-  const [records, setRecords] = useState<{ id: number; title: string }[]>([]);
   const openId = activeLectureId;
   const openRef = useRef(openId);
   openRef.current = openId;
@@ -92,7 +97,6 @@ export function Lecture() {
   /** Источники независимы: можно оба, один или ни одного. */
   const [useLibrary, setUseLibrary] = useState(false);
   const [useResearch, setUseResearch] = useState(false);
-  /** Акцентов может быть несколько — или ни одного. */
   const [busy, setBusy] = useState(false);
   /**
    * Правка главы: id главы, черновик и текст, с которого начали. Уход с
@@ -132,13 +136,6 @@ export function Lecture() {
   }, [screen, setLeaveGuard]);
 
   const loadDocs = useCallback(async () => {
-    // Тихий запрос: без имён записей остаются заголовки копий.
-    void fetch('/api/transcriptions')
-      .then((r) => (r.ok ? (r.json() as Promise<{ id: number; title: string }[]>) : null))
-      .then((rows) => {
-        if (rows) setRecords(rows);
-      })
-      .catch(() => {});
     try {
       const res = await fetch('/api/documents');
       if (!res.ok) throw new Error();
@@ -387,16 +384,23 @@ export function Lecture() {
   // ── Открытая лекция ─────────────────────────────────────────────────────
   if (lecture) {
     const working = lectureWorking(lecture.status);
+    const hasDeck = lecture.decks.length > 0;
     // Что сделать с готовой лекцией — над текстом и под ним: нажать можно
     // сразу или дочитав до конца.
     const readyActions = (
       <>
+        {/* Презентация уже есть — сначала она: вторая колода из той же лекции
+            обычно не нужна, а собирается долго. */}
+        <RelatedLine
+          label={lecture.decks.length > 1 ? 'Уже собраны презентации' : 'Уже собрана презентация'}
+          links={lecture.decks.map((d) => rel.deck(d))}
+        />
         <div className="btnrow" style={{ flexWrap: 'wrap' }}>
           <button
-            className="btn primary"
+            className={hasDeck ? 'btn' : 'btn primary'}
             onClick={() => newDeck({ sourceKind: 'lecture', sourceId: lecture.id })}
           >
-            <Icon name="deck" /> Собрать презентацию
+            <Icon name="deck" /> {hasDeck ? 'Собрать ещё одну презентацию' : 'Собрать презентацию'}
           </button>
         </div>
         <div className="btnrow" style={{ flexWrap: 'wrap', marginTop: 10 }}>
@@ -423,6 +427,7 @@ export function Lecture() {
         </button>
 
         <h2 className="h2">{lecture.title}</h2>
+        <RelatedLine label="Материалы" links={lecture.materials.map((m) => rel.material(m))} />
 
         {/* Удалить можно на любом этапе — как презентацию; у ошибки кнопка
             удаления — в её блоке. */}
@@ -798,7 +803,7 @@ export function Lecture() {
                       setPicked((p) => (p.includes(d.id) ? p.filter((x) => x !== d.id) : [...p, d.id]))
                     }
                   >
-                    {titleOf(d, records)}
+                    {d.title}
                     {OWN_WORK.includes(docKind(d.kind)) ? ` · ${KIND_LABEL[docKind(d.kind)]}` : ''}
                   </button>
                 ))}

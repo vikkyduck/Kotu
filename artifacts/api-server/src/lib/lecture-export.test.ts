@@ -1,5 +1,5 @@
 import { test, describe, expect } from "vitest";
-import type { Lecture, LectureSection, LectureSource } from "@workspace/db";
+import type { LectureSection, LectureSource } from "@workspace/db";
 import { buildLectureDocx, buildLectureMarkdown, type LectureFull } from "./lecture-export";
 
 /**

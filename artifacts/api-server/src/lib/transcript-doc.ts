@@ -9,31 +9,17 @@ import {
   upsertWorkDoc,
 } from "./work-doc";
 import { logger } from "./logger";
+import { titleFrom } from "./title";
 
 /**
- * Название библиотечной копии — нейтральное, БЕЗ названия записи. Записи автор
- * называет сам («Анна, сеанс 12») — такое имя из зоны А нельзя пускать в зону Б:
- * documents.title уходит в поисковые цитаты лекций и в промпты зарубежных
- * моделей. Настоящее название живёт только на экране расшифровки.
+ * Название копии в библиотеке - название самой записи (по нему её и ищут);
+ * пустое - «Расшифровка от …». Одно правило и для разбора, и для
+ * переименования записи (routes/transcriptions). Скрытия имён больше нет
+ * (решение владелицы 18.11.2026), записей со скрытием на сервере не осталось.
  */
-function neutralTitle(t: Transcription): string {
-  const d = new Date(t.createdAt);
-  return `Расшифровка от ${d.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" })}`;
-}
-
-/**
- * Текст и название библиотечной копии: текст как есть и настоящее название
- * записи, по нему копию и ищут в библиотеке. Старые записи со скрытием имён
- * (до 18.11.2026) получают нейтральное название и текст, уже сохранённый с
- * именами в скобках. Отдельно от записи в базу — ради тестов.
- */
-export async function prepareLibraryCopy(
-  t: Transcription,
-  plain: string,
-): Promise<{ text: string; title: string }> {
-  // Ограничения — как у PATCH /documents: название в библиотеке до 200 знаков.
-  const title = t.hideNames ? neutralTitle(t) : t.title.trim().slice(0, 200) || neutralTitle(t);
-  return { text: plain, title };
+export function libraryTitle(t: Pick<Transcription, "title" | "createdAt">): string {
+  const date = new Date(t.createdAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
+  return titleFrom(t.title) || `Расшифровка от ${date}`;
 }
 
 /**
@@ -58,11 +44,7 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<number | n
     return null;
   }
 
-  // Имена скрывали при расшифровке — скрываем и в библиотечной копии: по ней
-  // собираются лекции, а это отправка в модель.
-  const { text, title } = await prepareLibraryCopy(t, plain);
-
-  // Расшифровку могли удалить, пока считалась маскировка, — не воскрешаем.
+  // Расшифровку могли удалить, пока шёл разбор, — не воскрешаем.
   const [alive] = await db
     .select({ id: transcriptionsTable.id })
     .from(transcriptionsTable)
@@ -72,12 +54,12 @@ export async function syncTranscriptionDoc(t: Transcription): Promise<number | n
 
   const docId = await upsertWorkDoc({
     ownerId: t.ownerId,
-    title,
+    title: libraryTitle(t),
     kind: "transcript",
     link: { column: documentsTable.transcriptionId, id: t.id },
     values: { transcriptionId: t.id },
     fileName: `transcript-${t.id}.txt`,
-    text,
+    text: plain,
   });
   if (docId !== null) logger.info({ transcriptionId: t.id, docId }, "Расшифровка отправлена в библиотеку");
   return docId;

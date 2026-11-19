@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { toFile } from "openai";
 import { whisper } from "./whisper";
-import { askText, ModelWaitError, pickModel } from "./codex";
+import { askText, ModelWaitError, modelFor } from "./codex";
 import { parseModelJson } from "./model-json";
 import type { TranscriptSegment } from "@workspace/db";
 
@@ -21,9 +21,8 @@ const SEGMENT_SECONDS = 600;
 // Модели задаются в конфигурации, а не в коде: поменять модель можно правкой
 // одной строки в .env и перезапуском, без пересборки приложения.
 const TRANSCRIBE_MODEL = process.env["MODEL_TRANSCRIBE"] ?? "gpt-4o-transcribe";
-// gpt-5.4 подписка Codex не принимает (мост отвечает 400, kind=unavailable,
-// проверено 18.11.2026), поэтому по умолчанию та же модель, что у лекций.
-const STRUCTURE_MODEL = pickModel("MODEL_STRUCTURE", "gpt-5.6-sol");
+// Умолчание - в реестре codex.ts (gpt-5.4 подписка Codex не принимает, 18.11.2026).
+const STRUCTURE_MODEL = modelFor("MODEL_STRUCTURE");
 
 /**
  * Transcribe a single audio chunk that is already safely under the size/duration

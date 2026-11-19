@@ -1,3 +1,4 @@
+import type { MadeFrom } from '@/lib/related';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TranscriptSegment, TranscriptionStatus } from '@workspace/db/schema';
 import { OFFLINE, failText, json, send } from '@/lib/http';
@@ -18,7 +19,6 @@ export interface Transcription {
   id: number;
   title: string;
   filename: string;
-  hideNames: boolean;
   markSpeakers: boolean;
   segments: TranscriptSegment[];
   status: TranscriptionStatus;
@@ -27,6 +27,8 @@ export interface Transcription {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Что уже сделано из записи через её копию в библиотеке. */
+  made: MadeFrom;
 }
 
 /** Как часто спрашивать сервер, пока идёт распознавание. */

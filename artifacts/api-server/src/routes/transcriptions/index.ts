@@ -11,11 +11,13 @@ import {
   type TranscriptSegment,
 } from "@workspace/db";
 import { UPLOAD_DIR } from "../../lib/paths";
-import { syncTranscriptionDoc, deleteTranscriptionDoc } from "../../lib/transcript-doc";
+import { syncTranscriptionDoc, deleteTranscriptionDoc, libraryTitle } from "../../lib/transcript-doc";
 import { decodeUploadName } from "../../lib/filename";
 import { cleanText } from "../../lib/clean-text";
+import { madeFrom } from "../../lib/relations";
+import { titleFrom } from "../../lib/title";
 import { parseId } from "../../lib/parse-id";
-import { QUEUED_MESSAGE, enqueue, lastJob } from "../../lib/jobs";
+import { QUEUED_MESSAGE, enqueue, hasActiveJob, lastJob } from "../../lib/jobs";
 import { resolveInsideDir } from "../../lib/uploads";
 import {
   archiveAndRemove,
@@ -73,6 +75,21 @@ async function loadTranscription(rawId: string, ownerId: number): Promise<Transc
   return row ?? null;
 }
 
+/**
+ * Запись для экрана - со связями: что уже сделано из неё через её копию в
+ * библиотеке (лекции, презентации). Чтение, правка и повтор отдают одно и то же,
+ * иначе после сохранения ссылки пропадали бы с экрана.
+ */
+async function withMade(row: Transcription) {
+  const [copy] = await db
+    .select({ id: documentsTable.id })
+    .from(documentsTable)
+    .where(and(eq(documentsTable.transcriptionId, row.id), eq(documentsTable.ownerId, row.ownerId)))
+    .limit(1);
+  const made = copy ? await madeFrom(row.ownerId, { documentId: copy.id }) : { lectures: [], decks: [] };
+  return { ...row, made };
+}
+
 /** Реплики из тела правки: только {who, text} строками — мусор в jsonb не пускаем. */
 function parseSegments(raw: unknown): TranscriptSegment[] | null {
   if (!Array.isArray(raw)) return null;
@@ -111,7 +128,7 @@ router.get("/transcriptions/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  res.json(row);
+  res.json(await withMade(row));
 });
 
 router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
@@ -124,7 +141,7 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
   const body = req.body ?? {};
   const updates: Partial<typeof transcriptionsTable.$inferInsert> = {};
   if ("title" in body) {
-    const title = typeof body.title === "string" ? body.title.trim().slice(0, 200) : "";
+    const title = titleFrom(body.title);
     if (title === "") {
       res.status(400).json({ message: "Дайте записи название" });
       return;
@@ -177,17 +194,15 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
 
   // Правка текста должна доехать и до библиотечной копии — там переиндексация.
   // Смена одного названия текст не меняет: переразбирать копию (векторы,
-  // «В очереди…» на карточке) незачем. У старых записей со скрытием имён
-  // название копии нейтральное и от названия записи не зависит; у остальных —
-  // то же, что даёт prepareLibraryCopy (title уже обрезан до 200 знаков).
+  // «В очереди…» на карточке) незачем — меняем только её название.
   if (row.status === "done" && updates.segments !== undefined) {
     void syncTranscriptionDoc(row).catch((err) =>
       req.log.error({ err, id: row.id }, "Не смог обновить расшифровку в библиотеке"),
     );
-  } else if (row.status === "done" && !row.hideNames) {
+  } else if (row.status === "done") {
     await db
       .update(documentsTable)
-      .set({ title: row.title })
+      .set({ title: libraryTitle(row) })
       .where(
         and(eq(documentsTable.transcriptionId, row.id), eq(documentsTable.ownerId, row.ownerId)),
       )
@@ -196,7 +211,7 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
       );
   }
 
-  res.json(row);
+  res.json(await withMade(row));
 });
 
 router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
@@ -283,7 +298,7 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
   // Запись в ошибке, а задача ещё в очереди или в работе (рассинхрон после
   // сбоя между концом задачи и onGiveUp) — вторая задача на тот же файл
   // означала бы двойную расшифровку. Ждём, пока текущая закончит.
-  if (prevJob && (prevJob.status === "queued" || prevJob.status === "running")) {
+  if (await hasActiveJob(["transcribe"], id)) {
     res.status(409).json({ message: "Запись уже в работе" });
     return;
   }
@@ -331,7 +346,7 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
   }
 
   req.log.info({ id }, "Queued transcription retry");
-  res.status(202).json(queued);
+  res.status(202).json(await withMade(queued));
 });
 
 router.post(
@@ -365,17 +380,15 @@ router.post(
       return;
     }
 
-    // Скрытия имён больше нет (решение владелицы 18.11.2026): поле формы не читаем.
-    const hideNames = false;
     const markSpeakers = req.body?.markSpeakers === "true";
     // Имя файла становится названием записи: чистим, как любой ввод (app.ts
     // до multipart-полей не дотягивается).
     const filename = cleanText(decodeUploadName(req.file.originalname)).trim() || "запись";
     const inputPath = req.file.path;
     // Название — до 200 знаков, как при переименовании (PATCH выше).
-    const title = filename.replace(/\.[^.]+$/, "").trim().slice(0, 200) || "Запись";
+    const title = titleFrom(filename.replace(/\.[^.]+$/, "")) || "Запись";
 
-    req.log.info({ filename, hideNames, markSpeakers }, "Queued transcription");
+    req.log.info({ filename, markSpeakers }, "Queued transcription");
 
     // Работа уходит в очередь в базе: ответ не ждёт расшифровку, а сама задача
     // переживает перезапуск сервера и при сбое повторяется. Запись и задача —
@@ -390,7 +403,6 @@ router.post(
           ownerId: req.user!.id,
           title,
           filename,
-          hideNames,
           markSpeakers,
           segments: [] as TranscriptSegment[],
           status: "processing",

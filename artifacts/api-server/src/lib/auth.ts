@@ -29,13 +29,19 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return timingSafeEqual(expected, derived);
 }
 
-function hashToken(token: string): string {
+/** В базе лежит только sha256 ключа (сессии и ссылки сброса): утечка базы ключей не выдаёт. */
+export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+/** Новый случайный ключ - для cookie сессии и ссылки сброса пароля. */
+export function newToken(): string {
+  return randomBytes(32).toString("hex");
 }
 
 /** Возвращает сырой токен для cookie; в базе лежит только его sha256. */
 export async function createSession(userId: number): Promise<{ token: string; expiresAt: Date }> {
-  const token = randomBytes(32).toString("hex");
+  const token = newToken();
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
   await db.insert(sessionsTable).values({ tokenHash: hashToken(token), userId, expiresAt });
   return { token, expiresAt };

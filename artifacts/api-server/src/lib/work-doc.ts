@@ -1,5 +1,5 @@
 import path from "node:path";
-import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import {
   db,
   documentsTable,

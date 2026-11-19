@@ -5,7 +5,6 @@ import {
   countLabel,
   isBusy,
   plural,
-  titleOf,
   type Doc,
   type DeckRow,
   type LectureRow,
@@ -268,9 +267,10 @@ describe('что можно сделать с материалом', () => {
   });
 
   test('расшифровку переименовывают как запись — под её настоящим именем', () => {
+    // Копия носит имя записи: сервер переименовывает её вместе с записью.
     const [item] = buildItems(
       data({
-        docs: [doc({ kind: 'transcript', transcriptionId: 3, title: 'Расшифровка от 1 июля' })],
+        docs: [doc({ kind: 'transcript', transcriptionId: 3, title: 'Семинар, вторник' })],
         transcriptions: [transcription({ id: 3, status: 'done', title: 'Семинар, вторник' })],
       }),
       act,
@@ -331,22 +331,5 @@ describe('счёт материалов', () => {
     expect(plural(0, 'фрагмент', 'фрагмента', 'фрагментов')).toBe('0 фрагментов');
     expect(plural(112, 'фрагмент', 'фрагмента', 'фрагментов')).toBe('112 фрагментов');
     expect(plural(1002, 'фрагмент', 'фрагмента', 'фрагментов')).toBe('1002 фрагмента');
-  });
-});
-
-describe('имя материала на экране', () => {
-  const records = [transcription({ id: 3, title: 'Анна, сеанс 12' })];
-
-  test('копия расшифровки — под именем записи, а не нейтральным', () => {
-    expect(titleOf({ title: 'Расшифровка от 23 сентября 2026', transcriptionId: 3 }, records)).toBe(
-      'Анна, сеанс 12',
-    );
-  });
-
-  test('записи нет в списке или это не расшифровка — имя как есть', () => {
-    expect(titleOf({ title: 'Расшифровка от 23 сентября 2026', transcriptionId: 4 }, records)).toBe(
-      'Расшифровка от 23 сентября 2026',
-    );
-    expect(titleOf({ title: 'Мак-Вильямс', transcriptionId: null }, records)).toBe('Мак-Вильямс');
   });
 });

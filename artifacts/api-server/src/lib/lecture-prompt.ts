@@ -1,4 +1,4 @@
-import type { LectureBrief, LectureFocus } from "@workspace/db";
+import type { LectureBrief, LectureFocus, PlannedSection } from "@workspace/db";
 
 /**
  * Указания для модели при письме лекции. По решению владелицы (19.11.2026)
@@ -141,4 +141,31 @@ export function titleFromTopic(topic: string): string {
   if (first.length <= 70) return first;
   const cut = first.slice(0, 71).replace(/\s+\S*$/, "").replace(/[\s,;:—–-]+$/, "");
   return `${cut !== "" && cut.length <= 70 ? cut : first.slice(0, 70)}…`;
+}
+
+/** Список строк из ответа модели или тела запроса: без пустых и не-строк, обрезанные. */
+export function stringList(v: unknown): string[] {
+  return Array.isArray(v)
+    ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim())
+    : [];
+}
+
+/**
+ * Блоки плана - из ответа модели (этап 1) и из правки автора (PUT плана): одно
+ * правило для обоих, иначе план, сохранённый автором, и план модели читались
+ * бы по-разному. Блок без названия выбрасывается.
+ */
+export function planSections(raw: unknown): PlannedSection[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((s) => {
+      const o = (s ?? {}) as Record<string, unknown>;
+      return {
+        heading: typeof o.heading === "string" ? o.heading.trim() : "",
+        abstract: typeof o.abstract === "string" ? o.abstract.trim() : "",
+        concepts: stringList(o.concepts),
+        hook: typeof o.hook === "string" ? o.hook.trim() : "",
+      };
+    })
+    .filter((s) => s.heading !== "");
 }

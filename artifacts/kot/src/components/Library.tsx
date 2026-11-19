@@ -10,7 +10,6 @@ import {
   buildItems,
   buildWorking,
   countLabel,
-  titleOf,
   type Folder,
   type Item,
   type ItemActions,
@@ -447,7 +446,7 @@ export function Library() {
       {filePicker(null)}
       {searchOpen && (
         <SearchResults
-          hits={hits?.map((h) => ({ ...h, title: titleOf(h, data.transcriptions) })) ?? null}
+          hits={hits}
           searching={searching}
           error={searchError}
           act={act}

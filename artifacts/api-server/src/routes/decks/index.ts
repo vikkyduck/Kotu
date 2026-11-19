@@ -27,8 +27,10 @@ import { sanitizeSlideContent, settleSlides } from "../../lib/slide-content";
 import { deckStylePack } from "../../lib/deck-style";
 import { MAX_SOURCE_CHARS, SOURCE_GONE } from "../../lib/handlers/storyboard";
 import { parseId } from "../../lib/parse-id";
-import { QUEUED_MESSAGE, enqueue, lastJob } from "../../lib/jobs";
+import { QUEUED_MESSAGE, enqueue, hasActiveJob, lastJob } from "../../lib/jobs";
 import { attachmentHeader } from "../../lib/filename";
+import { deckSource } from "../../lib/relations";
+import { titleFrom } from "../../lib/title";
 import {
   archiveInputSql,
   archiveTreeAndRemove,
@@ -166,13 +168,16 @@ router.get("/decks/:id", async (req, res): Promise<void> => {
   // «примерно похоже». Отдаём только цвета: промпты стиля — не дело браузера.
   const pack = await deckStylePack(deck.stylePackId);
 
-  res.json({ ...deck, slides, images, palette: pack?.palette ?? null });
+  // Из чего собрана - ссылкой на экране: вернуться к лекции или документу.
+  const source = await deckSource(req.user!.id, deck);
+
+  res.json({ ...deck, slides, images, palette: pack?.palette ?? null, source });
 });
 
 router.post("/decks", async (req, res): Promise<void> => {
   const body = req.body ?? {};
   const kind = body.sourceKind;
-  let title = typeof body.title === "string" ? body.title.trim().slice(0, 200) : "";
+  let title = titleFrom(body.title);
   let sourceId: number | null = null;
   let rawText: string | null = null;
 
@@ -276,9 +281,10 @@ router.patch("/decks/:id", async (req, res): Promise<void> => {
   if (!deck) return;
 
   const body = req.body ?? {};
-  const title = typeof body.title === "string" ? body.title.trim() : "";
-  if ("title" in body && (title === "" || title.length > 200)) {
-    res.status(400).json({ message: "Название — от 1 до 200 знаков" });
+  // Длинное название обрезаем, а не отклоняем — как у лекции, книги и записи.
+  const title = titleFrom(body.title);
+  if ("title" in body && title === "") {
+    res.status(400).json({ message: "Дайте презентации название" });
     return;
   }
   const set: { folderId?: number | null; title?: string } = {};
@@ -634,6 +640,12 @@ router.post("/decks/:id/retry", async (req, res): Promise<void> => {
   if (!deck) return;
   if (deck.status !== "error") {
     res.status(409).json({ message: "Повторять нечего — ошибки нет" });
+    return;
+  }
+  // Как у лекции, записи и документа: живая задача - второй не ставим
+  // (образы рисуются за деньги подписки, двойной запуск рисовал бы дважды).
+  if (await hasActiveJob(["deck.storyboard", "deck.illustrate", "deck.reslide"], deck.id)) {
+    res.status(409).json({ message: BUSY });
     return;
   }
 

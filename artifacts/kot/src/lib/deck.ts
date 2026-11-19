@@ -1,3 +1,4 @@
+import type { DeckSource } from '@/lib/related';
 import {
   SLIDE_LAYOUTS,
   LAYOUT_RU,
@@ -54,6 +55,8 @@ export interface DeckFull {
   palette: Record<string, string> | null;
   slides: DeckSlide[];
   images: DeckImage[];
+  /** Из чего собрана: лекция или документ; вставленный текст - null. */
+  source: DeckSource | null;
 }
 
 /** Конвейер раскладывает или рисует — править и выгружать пока нельзя. */

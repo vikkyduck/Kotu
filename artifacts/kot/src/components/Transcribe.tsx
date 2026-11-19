@@ -12,6 +12,7 @@ import { LIBRARY_CHANGED } from '@/hooks/use-library-data';
 import { saveBlob, send } from '@/lib/http';
 import { Icon } from '@/lib/icons';
 import { Celebrate } from '@/lib/celebrate';
+import { RelatedLine, useRelatedLinks } from './Related';
 
 const ACCEPT =
   'audio/*,video/*,.m4a,.m4b,.mp3,.wav,.mp4,.mov,.ogg,.opus,.webm,.mkv,.flac,.aac,.amr,.3gp,.wma,.aiff,.caf';
@@ -45,8 +46,6 @@ export function Transcribe() {
 
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  // Скрытие имён по умолчанию выключено: на платформе лекции и воркшопы, а не
-  // сеансы (решение владелицы 23.09.2026) — включает сама, когда нужно.
   const [opts, setOpts] = useState({ spk: 'on' });
 
   // While the upload request itself is in flight (before we have a row to poll).
@@ -415,6 +414,7 @@ function ResultView({
   deleting: boolean;
 }) {
   const { go, toast, openSheet, newLecture, newDeck } = useApp();
+  const rel = useRelatedLinks();
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
 
   useEffect(() => {
@@ -468,13 +468,7 @@ function ResultView({
   };
 
   const downloadText = () => {
-    const reveal = (t: string) =>
-      parseTokens(t)
-        .map((k) => (k.type === 'name' && data.hideNames ? 'имя скрыто' : k.value))
-        .join('');
-    const body = segments
-      .map((s) => (s.who ? `${s.who}: ${reveal(s.text)}` : reveal(s.text)))
-      .join('\n\n');
+    const body = segments.map((s) => (s.who ? `${s.who}: ${s.text}` : s.text)).join('\n\n');
     saveBlob(new Blob([body], { type: 'text/plain;charset=utf-8' }), `${data.title || 'расшифровка'}.txt`);
     toast('Текст сохранён в файл');
   };
@@ -514,6 +508,15 @@ function ResultView({
         <div><h3>{data.title}</h3><p>Уже сохранена. Можно спокойно читать и править.</p></div>
         <button className="chg" onClick={rename}>переименовать</button>
       </div>
+      {/* Уже сделанное из записи — ссылками: вторую лекцию по той же записи
+          обычно не пишут, а ищут первую. */}
+      <RelatedLine
+        label="Из этой записи уже сделано"
+        links={[
+          ...data.made.lectures.map((l) => rel.lecture(l, 'лекция ')),
+          ...data.made.decks.map((d) => rel.deck(d, 'презентация ')),
+        ]}
+      />
       <div className="btnrow top-actions">{actions}</div>
       {unsaved ? (
         <p className="tnote bad">
@@ -528,9 +531,6 @@ function ResultView({
       ) : (
         <p className="tnote"><Icon name="info" /> Если слово распознано неверно — просто исправьте его прямо в тексте, как в обычном документе. Всё сохраняется само.</p>
       )}
-      {data.hideNames && (
-        <p className="tnote"><Icon name="eye" /> Имена скрыты. Нажмите «имя скрыто», чтобы увидеть — это видно только вам.</p>
-      )}
 
       <div className="panel" id="transcript">
         {segments.map((l, idx) => (
@@ -539,7 +539,6 @@ function ResultView({
             seg={l}
             index={idx}
             showWho={!!data.markSpeakers}
-            hideNames={!!data.hideNames}
             onSave={saveSegment}
           />
         ))}
@@ -597,24 +596,6 @@ function useLibraryCopy(transcriptionId: number, updatedAt: string): number | nu
   return docId;
 }
 
-type Token = { type: 'text'; value: string } | { type: 'name'; value: string };
-
-// Split transcript text into plain runs and [[name]] markers (which carry the
-// real, hideable personal data).
-function parseTokens(text: string): Token[] {
-  const tokens: Token[] = [];
-  const re = /\[\[([\s\S]+?)\]\]/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) tokens.push({ type: 'text', value: text.slice(last, m.index) });
-    tokens.push({ type: 'name', value: m[1] });
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) tokens.push({ type: 'text', value: text.slice(last) });
-  return tokens;
-}
-
 /**
  * Цвет пометки говорящего: чётные Speaker — вторым цветом, чтобы соседние
  * реплики разных людей различались. Старые записи с «Вы / Собеседник»
@@ -630,50 +611,24 @@ function TranscriptLine({
   seg,
   index,
   showWho,
-  hideNames,
   onSave,
 }: {
   seg: TranscriptSegment;
   index: number;
   showWho: boolean;
-  hideNames: boolean;
   onSave: (index: number, text: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
-  // Build the editable content imperatively so contentEditable stays uncontrolled
-  // and the masked name chips render as atomic, non-editable elements.
+  // Текст кладём сами, а не через React: contentEditable остаётся неуправляемым,
+  // и набор не прыгает курсором при каждой перерисовке.
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.replaceChildren();
-    for (const tok of parseTokens(seg.text)) {
-      if (tok.type === 'text') {
-        el.appendChild(document.createTextNode(tok.value));
-      } else if (hideNames) {
-        const span = document.createElement('span');
-        span.className = 'hidden-name';
-        span.setAttribute('contenteditable', 'false');
-        span.dataset.name = tok.value;
-        span.title = 'нажмите, чтобы увидеть — виден только вам';
-        span.textContent = 'имя скрыто';
-        span.addEventListener('click', () => {
-          const shown = span.classList.toggle('shown');
-          span.textContent = shown
-            ? `${span.dataset.name} · виден только вам`
-            : 'имя скрыто';
-        });
-        el.appendChild(span);
-      } else {
-        el.appendChild(document.createTextNode(tok.value));
-      }
-    }
-  }, [seg.text, hideNames]);
+    ref.current?.replaceChildren(document.createTextNode(seg.text));
+  }, [seg.text]);
 
   const serialize = (node: Node): string => {
     if (node.nodeType === Node.TEXT_NODE) return node.nodeValue ?? '';
     if (node instanceof HTMLElement) {
-      if (node.classList.contains('hidden-name')) return `[[${node.dataset.name ?? ''}]]`;
       if (node.tagName === 'BR') return '\n';
       let inner = '';
       node.childNodes.forEach((c) => {

@@ -1,8 +1,7 @@
 import { Router, type IRouter } from "express";
-import { eq, and, asc, desc, ne, inArray } from "drizzle-orm";
+import { eq, and, asc, desc, ne } from "drizzle-orm";
 import {
   db,
-  jobsTable,
   lecturesTable,
   lectureSectionsTable,
   lectureSourcesTable,
@@ -11,17 +10,17 @@ import {
   type Lecture,
   type LectureBrief,
   type LectureFocus,
-  type PlannedSection,
 } from "@workspace/db";
 import { parseId } from "../../lib/parse-id";
 import { hideLabels } from "../../lib/name-labels";
-import { QUEUED_MESSAGE, enqueue } from "../../lib/jobs";
+import { QUEUED_MESSAGE, enqueue, hasActiveJob } from "../../lib/jobs";
 import { attachmentHeader } from "../../lib/filename";
 import { ownFolderId } from "../../lib/folders";
 import { lectureToLibrary, dropLectureCopies } from "../../lib/work-doc";
 import { buildLectureDocx, buildLectureMarkdown } from "../../lib/lecture-export";
-import { titleFromTopic } from "../../lib/lecture-prompt";
-import { isResearchAvailable } from "../../lib/research";
+import { planSections, titleFromTopic } from "../../lib/lecture-prompt";
+import { titleFrom } from "../../lib/title";
+import { madeFrom, materialsByIds } from "../../lib/relations";
 import { deleteJobsArchivingInput, requireArchive } from "../../lib/archive";
 import { LECTURE_PLANNING, PLAN_BUSY_MESSAGE, planEditBlocked } from "../../lib/busy-edit";
 
@@ -62,10 +61,16 @@ async function loadFull(rawId: string, ownerId: number) {
     .where(eq(lectureSourcesTable.lectureId, lecture.id))
     .orderBy(asc(lectureSourcesTable.id));
 
+  // Связи для экрана: на чём лекция стоит и какие презентации из неё уже собраны.
+  const materials = await materialsByIds(ownerId, lecture.brief.documentIds ?? []);
+  const { decks } = await madeFrom(ownerId, { lectureId: lecture.id });
+
   return {
     ...lecture,
     sections,
     sources: sources.map((s) => ({ ...s, quote: hideLabels(s.quote) })),
+    materials,
+    decks,
   };
 }
 
@@ -103,7 +108,7 @@ router.patch("/lectures/:id", async (req, res): Promise<void> => {
   const set: { title?: string; folderId?: number | null } = {};
   if ("title" in body) {
     // Длинное название обрезаем, а не отклоняем — как у книги и записи.
-    const title = typeof body.title === "string" ? body.title.trim().slice(0, 200) : "";
+    const title = titleFrom(body.title);
     if (title === "") {
       res.status(400).json({ message: "Дайте лекции название" });
       return;
@@ -152,11 +157,6 @@ router.post("/lectures", async (req, res): Promise<void> => {
     });
     return;
   }
-  // Без ключа веб-поиска лекция молча вышла бы без веб-источников.
-  if (useResearch && !isResearchAvailable()) {
-    res.status(409).json({ message: "Исследование ИИ не подключено — выключите его" });
-    return;
-  }
   const brief: LectureBrief = {
     topic,
     // Аудитория необязательна: пусто - модель сама выбирает уровень изложения.
@@ -176,10 +176,7 @@ router.post("/lectures", async (req, res): Promise<void> => {
       : [],
   };
 
-  const title =
-    typeof body.title === "string" && body.title.trim() !== ""
-      ? body.title.trim()
-      : titleFromTopic(topic);
+  const title = titleFrom(body.title) || titleFromTopic(topic);
 
   // Лекция и задача — одной транзакцией: «в работе» без задачи висела бы вечно.
   const lecture = await db.transaction(async (tx) => {
@@ -224,16 +221,7 @@ router.patch("/lectures/:id/plan", async (req, res): Promise<void> => {
 
   // Опорные концепции и «крючок» переживают правку плана: автор убирает и
   // переставляет блоки, а замысел каждого блока остаётся при нём.
-  const plan: PlannedSection[] = incoming
-    .map((s: Record<string, unknown>) => ({
-      heading: typeof s.heading === "string" ? s.heading.trim() : "",
-      abstract: typeof s.abstract === "string" ? s.abstract : "",
-      concepts: Array.isArray(s.concepts)
-        ? s.concepts.filter((c: unknown): c is string => typeof c === "string")
-        : [],
-      hook: typeof s.hook === "string" ? s.hook : "",
-    }))
-    .filter((s: PlannedSection) => s.heading !== "");
+  const plan = planSections(incoming);
 
   if (plan.length === 0) {
     res.status(400).json({ message: "В плане не осталось ни одной главы" });
@@ -321,18 +309,7 @@ router.post("/lectures/:id/retry", async (req, res): Promise<void> => {
 
   // Лекция в ошибке, а задача ещё в очереди или в работе (сбой между концом
   // задачи и onGiveUp) — вторая задача писала бы те же главы параллельно.
-  const [running] = await db
-    .select({ id: jobsTable.id })
-    .from(jobsTable)
-    .where(
-      and(
-        inArray(jobsTable.kind, ["lecture.plan", "lecture.write"]),
-        eq(jobsTable.entityId, lecture.id),
-        inArray(jobsTable.status, ["queued", "running"]),
-      ),
-    )
-    .limit(1);
-  if (running) {
+  if (await hasActiveJob(["lecture.plan", "lecture.write"], lecture.id)) {
     res.status(409).json({ message: "Лекция уже в работе" });
     return;
   }
