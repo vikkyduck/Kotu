@@ -20,3 +20,9 @@ test("payloadFor: reasoning только когда глубина задана"
   expect(payloadFor({ ...base, effort: "high" }, [])["reasoning"]).toEqual({ effort: "high" });
   expect(payloadFor(base, [])).not.toHaveProperty("reasoning");
 });
+
+test("payloadFor: подробность ответа уходит в text.verbosity, только когда задана", () => {
+  const base = { model: "gpt-6.1-sol", system: "s", user: "u" };
+  expect(payloadFor({ ...base, verbosity: "high" }, [])["text"]).toEqual({ verbosity: "high" });
+  expect(payloadFor(base, [])).not.toHaveProperty("text");
+});

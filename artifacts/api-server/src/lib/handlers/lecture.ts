@@ -45,8 +45,12 @@ const MODEL = modelFor("MODEL_LECTURE");
 // Codex думает на medium (проверено 19.11.2026), и лекция выходит проще, чем могла бы.
 const EFFORT = pickEffort("EFFORT_LECTURE", "high");
 
-/** Сколько фрагментов библиотеки даём модели на одну главу. */
-const CHUNKS_PER_SECTION = 10;
+/**
+ * Сколько фрагментов библиотеки даём модели: на главу и на план. Больше опоры -
+ * точнее текст; окно модели (272 тыс. токенов) вмещает это с большим запасом.
+ */
+const CHUNKS_PER_SECTION = 20;
+const CHUNKS_FOR_PLAN = 30;
 
 interface Excerpt {
   n: number;
@@ -130,13 +134,13 @@ async function runPlan(job: Job): Promise<void> {
   const parts: string[] = [];
   if (src.lib && brief.documentIds.length > 0) {
     await setStatus(id, "Смотрю, что есть в библиотеке…");
-    const excerpts = await findExcerpts(lecture.ownerId, brief.topic, brief.documentIds, 14);
+    const excerpts = await findExcerpts(lecture.ownerId, brief.topic, brief.documentIds, CHUNKS_FOR_PLAN);
     if (excerpts.length > 0) parts.push(`Выдержки из библиотеки автора:\n\n${renderExcerpts(excerpts)}`);
   }
   if (src.res) {
     await setStatus(id, "Исследую тему в веб-источниках…");
     const found = await research(
-      `Тема лекции по психоанализу: ${brief.topic}. Собери материал для плана лекции.`,
+      `Тема лекции: ${brief.topic}. Собери материал для плана лекции.`,
     ).catch((err) => {
       if (err instanceof ModelWaitError) throw err;
       logger.warn({ err }, "Веб-поиск не ответил — планирую без него");
@@ -156,7 +160,7 @@ async function runPlan(job: Job): Promise<void> {
     model: MODEL,
     effort: EFFORT,
     system: `${planPrompt(brief, lecture.title, blocks)}\n\n${JSON_RULE}`,
-    user: material || "Материала под рукой нет — опирайся на профессиональный корпус психоанализа.",
+    user: material || "Материала под рукой нет — опирайся на свои знания по теме и помечай, что нужно проверить.",
   });
   let sections: PlannedSection[] = [];
   let notes: LecturePlanNotes = { outOfScope: [], decisions: [] };
@@ -245,7 +249,7 @@ async function runWrite(job: Job): Promise<void> {
     if (src.res) {
       await setStatus(id, `Исследую блок ${section.ord + 1} из ${total}: ${section.heading}`);
       const found = await research(
-        `Блок лекции по психоанализу: «${section.heading}». Тезис: ${section.abstract}. ` +
+        `Блок лекции: «${section.heading}». Тезис: ${section.abstract}. ` +
           `Тема всей лекции: ${brief.topic}. Собери материал для этого блока.`,
       ).catch((err) => {
         if (err instanceof ModelWaitError) throw err;
@@ -288,6 +292,7 @@ async function runWrite(job: Job): Promise<void> {
     const answer = await askText({
       model: MODEL,
       effort: EFFORT,
+      verbosity: "high",
       system,
       user:
         `Блок: ${section.heading}\nТезис: ${section.abstract}` +
@@ -380,8 +385,8 @@ async function runWrite(job: Job): Promise<void> {
     system: bibliographyPrompt(brief, lecture.title),
     user: written
       .map((w) => `## ${w.heading}\n${w.text}`)
-      .join("\n\n")
-      .slice(0, 120_000),
+      // Целиком: список литературы должен видеть и последние главы.
+      .join("\n\n"),
   })
     .then((parsed) => {
       const out: Bibliography = { primary: stringList(parsed.primary), modern: stringList(parsed.modern) };

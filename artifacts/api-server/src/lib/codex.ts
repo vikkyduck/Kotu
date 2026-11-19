@@ -54,7 +54,14 @@ export interface AskOptions {
    * medium, как у бота в Telegram). Мост платформы пропускает low, medium, high.
    */
   effort?: Effort;
+  /**
+   * Подробность ответа (text.verbosity). high - развёрнутый текст: для глав
+   * лекции и выжимок исследования. Не задана - Codex берёт свою (medium).
+   */
+  verbosity?: Verbosity;
 }
+
+export type Verbosity = "low" | "medium" | "high";
 
 export type Effort = "low" | "medium" | "high";
 const EFFORTS: readonly Effort[] = ["low", "medium", "high"];
@@ -471,6 +478,7 @@ export function payloadFor(opts: AskOptions, input: unknown[]): Record<string, u
     store: false,
   };
   if (opts.effort) payload["reasoning"] = { effort: opts.effort };
+  if (opts.verbosity) payload["text"] = { verbosity: opts.verbosity };
   if (opts.webSearch) {
     payload["tools"] = [{ type: "web_search" }];
     payload["tool_choice"] = "required";
