@@ -51,13 +51,21 @@ export interface AskOptions {
   webSearch?: boolean;
   /**
    * Глубина рассуждения. Не задана - Codex берёт свою (проверено 19.11.2026:
-   * medium, как у бота в Telegram). Мост платформы пропускает low, medium, high.
+   * medium, как у бота в Telegram). Мост платформы пропускает всю лестницу low..max.
    */
   effort?: Effort;
+  /**
+   * Подробность ответа (text.verbosity). high - развёрнутый текст: для глав
+   * лекции и выжимок исследования. Не задана - Codex берёт свою (medium).
+   */
+  verbosity?: Verbosity;
 }
 
-export type Effort = "low" | "medium" | "high";
-const EFFORTS: readonly Effort[] = ["low", "medium", "high"];
+export type Verbosity = "low" | "medium" | "high";
+
+/** Вся лестница gpt-6.1-sol и gpt-6-astra на Codex (проверено 19.11.2026). */
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+const EFFORTS: readonly Effort[] = ["low", "medium", "high", "xhigh", "max"];
 
 /** Глубина из .env (например EFFORT_LECTURE=high); пусто или неизвестное слово - fallback. */
 export function pickEffort(envName: string, fallback: Effort): Effort {
@@ -129,7 +137,8 @@ function cfg() {
     imageModel: pickModel("MODEL_IMAGE", "gpt-image-2"),
     timeZone: process.env["NOTIFY_TZ"] ?? "Europe/Moscow",
     /** Сколько ждать новых байтов ответа, прежде чем признать обрыв. */
-    idleMs: Number(process.env["MODEL_IDLE_MS"] ?? 300_000),
+    // На xhigh/max модель думает молча по многу минут: ждём, как и мост, до 15 минут тишины.
+    idleMs: Number(process.env["MODEL_IDLE_MS"] ?? 900_000),
     /** Пауза перед повтором при временном ограничении частоты. */
     busyDelaysMs: (process.env["MODEL_BUSY_DELAYS_MS"] ?? "20000,60000")
       .split(",")
@@ -471,8 +480,10 @@ export function payloadFor(opts: AskOptions, input: unknown[]): Record<string, u
     store: false,
   };
   if (opts.effort) payload["reasoning"] = { effort: opts.effort };
+  if (opts.verbosity) payload["text"] = { verbosity: opts.verbosity };
   if (opts.webSearch) {
-    payload["tools"] = [{ type: "web_search" }];
+    // Глубокий поиск: больше страниц и контекста на каждый запрос (мост пропускает с 19.11.2026).
+    payload["tools"] = [{ type: "web_search", search_context_size: "high" }];
     payload["tool_choice"] = "required";
     payload["include"] = ["web_search_call.action.sources"];
   }
