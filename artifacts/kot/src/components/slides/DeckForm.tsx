@@ -4,7 +4,7 @@ import { useDraft, useUnsavedWarning } from '@/hooks/use-draft';
 import { Icon } from '@/lib/icons';
 import { send, json } from '@/lib/http';
 import { pressable } from '@/lib/deck';
-import { KIND_ICON, KIND_LABEL, docKind, titleOf } from '@/lib/library-items';
+import { KIND_ICON, KIND_LABEL, docKind } from '@/lib/library-items';
 import type { DocumentStatus, LectureStatus } from '@workspace/db/schema';
 
 /**
@@ -48,9 +48,6 @@ export function DeckForm({ onCreated }: Props) {
   const [lectures, setLectures] = useState<LectureItem[] | null>(null);
   const [docs, setDocs] = useState<DocItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  // Имена записей: копия расшифровки со скрытыми именами называется
-  // нейтрально («Расшифровка от …»), а автору нужно настоящее имя, как в библиотеке.
-  const [records, setRecords] = useState<{ id: number; title: string }[]>([]);
   const [packs, setPacks] = useState<StylePackItem[]>([]);
 
   const [pickedLecture, setPickedLecture] = useState<number | null>(null);
@@ -66,16 +63,13 @@ export function DeckForm({ onCreated }: Props) {
 
   const load = useCallback(async () => {
     setLoadError(null);
-    const quiet = (url: string) =>
-      fetch(url)
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null);
-    const [l, d, t, p] = await Promise.all([
+    const [l, d, p] = await Promise.all([
       send('/api/lectures', undefined, LIST_FAIL),
       send('/api/documents', undefined, LIST_FAIL),
-      // Без имён записей и стилей форма работает: имя копии и стиль по умолчанию.
-      quiet('/api/transcriptions'),
-      quiet('/api/style-packs'),
+      // Без стилей форма работает: стиль по умолчанию.
+      fetch('/api/style-packs')
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
     ]);
     // Не пришло — прежний список остаётся, а вместо «пока нет» видна причина.
     if (l.ok) {
@@ -90,7 +84,6 @@ export function DeckForm({ onCreated }: Props) {
         ),
       );
     } else setLoadError(d.message);
-    if (t) setRecords(t);
     if (p) setPacks(p);
   }, []);
 
@@ -212,7 +205,7 @@ export function DeckForm({ onCreated }: Props) {
                   <Icon name={KIND_ICON[docKind(d.kind)]} />
                 </span>
                 <span className="rt">
-                  <b>{titleOf(d, records)}</b>
+                  <b>{d.title}</b>
                   <span>{KIND_LABEL[docKind(d.kind)]}</span>
                 </span>
                 {pickedDoc === d.id && (

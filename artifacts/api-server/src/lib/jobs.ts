@@ -1,4 +1,4 @@
-import { sql, eq, and, desc } from "drizzle-orm";
+import { sql, eq, and, desc, inArray } from "drizzle-orm";
 import { db, jobsTable, type Job, type JobKind } from "@workspace/db";
 import { logger } from "./logger";
 import { ModelWaitError } from "./codex";
@@ -67,6 +67,26 @@ export async function lastJob(kind: JobKind, entityId: number): Promise<Job | nu
     .orderBy(desc(jobsTable.id))
     .limit(1);
   return job ?? null;
+}
+
+/**
+ * Задача по этой вещи ещё в очереди или в работе. Вещь бывает «в ошибке» при
+ * живой задаче (сбой между концом задачи и onGiveUp) - тогда повтор ставил бы
+ * вторую задачу на ту же работу. Одна проверка на все повторы.
+ */
+export async function hasActiveJob(kinds: readonly JobKind[], entityId: number): Promise<boolean> {
+  const [job] = await db
+    .select({ id: jobsTable.id })
+    .from(jobsTable)
+    .where(
+      and(
+        inArray(jobsTable.kind, [...kinds]),
+        eq(jobsTable.entityId, entityId),
+        inArray(jobsTable.status, ["queued", "running"]),
+      ),
+    )
+    .limit(1);
+  return job !== undefined;
 }
 
 /**

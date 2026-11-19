@@ -10,7 +10,7 @@ import { test, describe, expect, vi, afterEach, beforeEach } from "vitest";
 const create = vi.hoisted(() => vi.fn());
 vi.mock("./codex", () => ({
   askText: create,
-  pickModel: (_name: string, fallback: string) => fallback,
+  modelFor: () => "gpt-5.6-sol",
   ModelWaitError: class ModelWaitError extends Error {},
 }));
 vi.mock("./whisper", () => ({ whisper: { audio: { transcriptions: { create: vi.fn() } } } }));

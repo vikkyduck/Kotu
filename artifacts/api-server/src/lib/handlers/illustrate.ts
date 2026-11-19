@@ -11,7 +11,7 @@ import {
   type ImageSide,
 } from "@workspace/db";
 import { layoutHasImage, layoutSided } from "@workspace/db/slides";
-import { askJson, ModelWaitError, pickModel, type ImageAttachment } from "../codex";
+import { askJson, ModelWaitError, modelFor, type ImageAttachment } from "../codex";
 import { renderIllustration } from "../images";
 import { registerHandler, enqueue } from "../jobs";
 import { DECKS_DIR } from "../paths";
@@ -74,7 +74,7 @@ async function direct(
   if (rejectedVerdict) user.push(`Прошлая попытка отклонена приёмкой: ${rejectedVerdict}`);
 
   const reply = await askJson<DirectorReply>({
-    model: pickModel("MODEL_SCENE", "gpt-5.6-sol"),
+    model: modelFor("MODEL_SCENE"),
     system,
     user: user.join("\n"),
   });
@@ -118,7 +118,7 @@ async function reviewImage(
   ].join("\n");
 
   const reply = await askJson<ReviewReply>({
-    model: pickModel("MODEL_REVIEW", "gpt-5.6-sol"),
+    model: modelFor("MODEL_REVIEW"),
     system,
     user: `Мысль слайда: ${slide.imageBrief}`,
     images: [{ path: filePath, mediaType: mime }],

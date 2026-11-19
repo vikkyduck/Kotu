@@ -36,7 +36,7 @@ vi.mock("@workspace/db", () => {
 vi.mock("@workspace/db/slides", () => ({ layoutHasImage: () => true, layoutSided: () => true }));
 vi.mock("../codex", () => ({
   askJson: vi.fn(),
-  pickModel: (_name: string, fallback: string) => fallback,
+  modelFor: () => "gpt-5.6-sol",
   ModelWaitError: class ModelWaitError extends Error {
     constructor(message: string, readonly until: Date, readonly kind: string) {
       super(message);

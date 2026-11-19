@@ -1,4 +1,4 @@
-import { askText, pickModel, type WebSource } from "./codex";
+import { askText, modelFor, type WebSource } from "./codex";
 
 /**
  * Веб-исследование для лекций в режиме "исследование ИИ".
@@ -24,15 +24,10 @@ const SYSTEM = [
   "Каждое утверждение подкрепляй ссылкой на найденный источник по ходу текста.",
 ].join("\n");
 
-/** Веб-поиск идет через подписку Codex, отдельный ключ не нужен. */
-export function isResearchAvailable(): boolean {
-  return true;
-}
-
 /** Одно исследование: вопрос -> выжимка с пронумерованными источниками. */
 export async function research(query: string): Promise<ResearchResult> {
   const answer = await askText({
-    model: pickModel("MODEL_RESEARCH", pickModel("MODEL_LECTURE", "gpt-6.1-sol")),
+    model: modelFor("MODEL_RESEARCH"),
     system: SYSTEM,
     user: query,
     webSearch: true,

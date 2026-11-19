@@ -385,9 +385,6 @@ input.field:-webkit-autofill{-webkit-box-shadow:0 0 0 100px var(--bg) inset;-web
 .tline .txt{font-size:15px;line-height:1.68;outline:none;padding:3px 7px;margin:-3px -7px;white-space:pre-wrap;
   transition:background var(--fast) ease,box-shadow var(--fast) ease}
 .tline .txt:focus{background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent-strong)}
-.hidden-name{background:var(--accent-soft);color:var(--ink);border:1px solid var(--line);
-  padding:1px 7px;font-size:13px;cursor:pointer;white-space:nowrap;user-select:none}
-.hidden-name.shown{background:var(--paper);color:var(--ink-etch);border-color:var(--paper-deep);white-space:normal}
 
 /* ── Презентация: превью слайдов как архивные пластины ───────────────── */
 .sgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:13px}
@@ -910,6 +907,8 @@ input.field.lib-search{margin:0 0 var(--sp-2)}
 .lec-next{margin-top:22px}
 /* Копия кнопок над текстом (лекция, презентация, расшифровка): без подписи - без верхнего отступа */
 .lec-top{margin:14px 0 18px}
+/* Связи работ: «Материалы: «…»», «Из лекции: «…»» (components/Related.tsx) */
+.related{font-size:15px;color:var(--ink-2);margin:4px 0 12px;line-height:1.6}
 .lec-top > .btnrow:first-child,.btnrow.top-actions{margin-top:0}
 .btnrow.top-actions{margin-bottom:16px;flex-wrap:wrap}
 .lec-section{scroll-margin-top:70px}

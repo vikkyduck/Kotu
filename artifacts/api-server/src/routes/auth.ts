@@ -1,5 +1,4 @@
 import { Router, type IRouter, type Response } from "express";
-import { randomBytes, createHash } from "node:crypto";
 import { eq, and, isNull, gt } from "drizzle-orm";
 import { db, usersTable, sessionsTable, passwordResetsTable } from "@workspace/db";
 import { sendMail, resetEmail, mailConfigured } from "../lib/mail";
@@ -15,6 +14,8 @@ import {
   clearAttempts,
   allowForgotRequest,
   MAX_EMAIL_LENGTH,
+  hashToken,
+  newToken,
 } from "../lib/auth";
 import { requireAuth } from "../middlewares/require-auth";
 
@@ -43,7 +44,7 @@ function setSessionCookie(res: Response, token: string, expiresAt: Date) {
 /** Живая, неиспользованная и не протухшая ссылка сброса — или null. */
 async function findValidReset(token: string) {
   if (!token) return null;
-  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const tokenHash = hashToken(token);
   const [row] = await db
     .select()
     .from(passwordResetsTable)
@@ -135,9 +136,9 @@ router.post("/auth/forgot", async (req, res) => {
       return;
     }
 
-    const token = randomBytes(32).toString("hex");
+    const token = newToken();
     await db.insert(passwordResetsTable).values({
-      tokenHash: createHash("sha256").update(token).digest("hex"),
+      tokenHash: hashToken(token),
       userId: user.id,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
     });

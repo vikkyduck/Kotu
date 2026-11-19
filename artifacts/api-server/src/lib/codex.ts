@@ -153,6 +153,28 @@ export function pickModel(envName: string, fallback: string): string {
   return raw;
 }
 
+/**
+ * Модели задач: переменная .env и значение по умолчанию. Одно место и для
+ * задач (транскрипция, лекции, презентации), и для самопроверки: умолчание
+ * поменяли здесь - поменялось везде.
+ */
+const MODEL_DEFAULTS = {
+  MODEL_STRUCTURE: "gpt-5.6-sol",
+  MODEL_LECTURE: "gpt-6.1-sol",
+  MODEL_DECK: "gpt-5.6-sol",
+  MODEL_SCENE: "gpt-5.6-sol",
+  MODEL_REVIEW: "gpt-5.6-sol",
+} as const;
+
+export type ModelTask = keyof typeof MODEL_DEFAULTS | "MODEL_RESEARCH";
+export const MODEL_TASKS: readonly ModelTask[] = [...(Object.keys(MODEL_DEFAULTS) as ModelTask[]), "MODEL_RESEARCH"];
+
+/** Модель задачи: из .env или по умолчанию; веб-исследование - как лекция, если своей нет. */
+export function modelFor(task: ModelTask): string {
+  if (task === "MODEL_RESEARCH") return pickModel("MODEL_RESEARCH", modelFor("MODEL_LECTURE"));
+  return pickModel(task, MODEL_DEFAULTS[task]);
+}
+
 // ─── Состояние маршрута ──────────────────────────────────────────────────────
 
 interface FallbackState {
@@ -171,10 +193,6 @@ export function resetRouteState(): void {
   state.active = false;
   state.until = 0;
   state.waitingNoticeUntil = 0;
-}
-
-export function currentRoute(): Route {
-  return state.active && Date.now() < state.until ? "api" : "codex";
 }
 
 function clock(date: Date): string {

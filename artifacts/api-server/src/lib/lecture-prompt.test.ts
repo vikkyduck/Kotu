@@ -1,5 +1,5 @@
 import { test, expect } from "vitest";
-import { planPrompt, renumberCitations, sectionPrompt, titleFromTopic } from "./lecture-prompt";
+import { planPrompt, planSections, renumberCitations, sectionPrompt, titleFromTopic } from "./lecture-prompt";
 
 test("renumberCitations: номера в тексте совпадают со списком источников под главой", () => {
   // Процитированы выдержка 3 и веб-источник 7 — под главой они станут 1 и 2.
@@ -82,4 +82,15 @@ test("уровень изложения - профессиональный, ес
   const plan = planPrompt({ topic: "Сны", audience: "", durationMin: 90, documentIds: [] }, "Сны", 6);
   expect(plan).toContain("Уровень - профессиональный");
   expect(plan).toContain("Без общих мест,\nупрощений");
+});
+
+test("planSections: одно правило для плана модели и правки автора", () => {
+  expect(
+    planSections([
+      { heading: "  Перенос ", abstract: " тезис ", concepts: ["Фрейд", "", 3, " Клейн "], hook: " вопрос " },
+      { heading: "   ", abstract: "без названия" },
+      "мусор",
+    ]),
+  ).toEqual([{ heading: "Перенос", abstract: "тезис", concepts: ["Фрейд", "Клейн"], hook: "вопрос" }]);
+  expect(planSections(null)).toEqual([]);
 });

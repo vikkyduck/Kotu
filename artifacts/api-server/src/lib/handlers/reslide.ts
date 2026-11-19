@@ -7,7 +7,7 @@ import {
   type DeckStatus,
   type SlideContent,
 } from "@workspace/db";
-import { askJson, pickModel } from "../codex";
+import { askJson, modelFor } from "../codex";
 import { fieldsLine, sanitizeSlideContent, settleContent } from "../slide-content";
 import { registerHandler } from "../jobs";
 import { deckToLibrary } from "../work-doc";
@@ -104,7 +104,7 @@ async function run(job: Job): Promise<void> {
     `Что просит автор:\n${payload.instruction}`,
   ].join("\n\n");
 
-  const reply = await askJson<ReslideReply>({ model: pickModel("MODEL_DECK", "gpt-5.6-sol"), system, user });
+  const reply = await askJson<ReslideReply>({ model: modelFor("MODEL_DECK"), system, user });
 
   const content = settleContent(slide.layout, sanitizeSlideContent(reply.content));
   // Пустой ответ — это потеря слайда, а не правка: лучше честная ошибка.

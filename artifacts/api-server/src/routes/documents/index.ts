@@ -15,13 +15,14 @@ import { embedAll } from "../../lib/embeddings";
 import { ownFolderId } from "../../lib/folders";
 import { decodeUploadName } from "../../lib/filename";
 import { cleanText } from "../../lib/clean-text";
+import { titleFrom } from "../../lib/title";
 import { documentFileHeaders } from "./file-headers";
 import { parseId } from "../../lib/parse-id";
 import { resolveInsideDir } from "../../lib/uploads";
 import { archiveAndRemove, archiveUpload, requireArchive } from "../../lib/archive";
 import { logger } from "../../lib/logger";
 import { hideLabels } from "../../lib/name-labels";
-import { QUEUED_MESSAGE, enqueue, lastJob } from "../../lib/jobs";
+import { QUEUED_MESSAGE, enqueue, hasActiveJob, lastJob } from "../../lib/jobs";
 import { NO_CHUNKS, NO_TEXT, type IngestPayload } from "../../lib/handlers/ingest";
 
 // Книги бывают толстыми, но не гигабайтными.
@@ -62,7 +63,7 @@ const { sourcePath: _sourcePath, ...PUBLIC_DOC } = getTableColumns(documentsTabl
 // cleanText - для полей файловой формы: тело multipart разбирается внутри
 // маршрута, общий фильтр из app.ts до него не дотягивается.
 function cleanTitle(raw: unknown): string | null {
-  const title = typeof raw === "string" ? cleanText(raw).trim().slice(0, 200) : "";
+  const title = titleFrom(typeof raw === "string" ? cleanText(raw) : raw);
   return title === "" ? null : title;
 }
 
@@ -126,7 +127,7 @@ router.post("/documents/:id/retry", async (req, res): Promise<void> => {
   const prevJob = await lastJob("doc.ingest", doc.id);
   // Документ в ошибке, а задача ещё в очереди или в работе — вторая задача
   // на тот же файл разбирала бы его дважды. Ждём, пока текущая закончит.
-  if (prevJob && (prevJob.status === "queued" || prevJob.status === "running")) {
+  if (await hasActiveJob(["doc.ingest"], doc.id)) {
     res.status(409).json({ message: "Документ уже в работе" });
     return;
   }

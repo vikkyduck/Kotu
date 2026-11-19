@@ -10,12 +10,12 @@ const codex = vi.hoisted(() => {
   return {
     askText: vi.fn(async (_opts: { model: string }) => ({ text: "ок", sources: [] as unknown[], route: "codex" })),
     ModelWaitError,
-    pickModel: (name: string, fallback: string) => process.env[name] || fallback,
   };
 });
 const mail = vi.hoisted(() => ({ checkMail: vi.fn(async (): Promise<string | null> => null) }));
 const notify = vi.hoisted(() => ({ notifyOwner: vi.fn(async (_text: string) => true) }));
-vi.mock("./codex", () => codex);
+// Реестр моделей настоящий (modelFor читает .env), подменены только запросы.
+vi.mock("./codex", async (importOriginal) => ({ ...(await importOriginal<object>()), ...codex }));
 vi.mock("./mail", () => mail);
 vi.mock("./notify", () => notify);
 vi.mock("./logger", () => ({ logger: { info: vi.fn(), error: vi.fn() } }));

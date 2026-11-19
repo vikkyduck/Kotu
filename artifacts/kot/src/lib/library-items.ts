@@ -142,20 +142,6 @@ export function countLabel(n: number): string {
   return plural(n, 'материал', 'материала', 'материалов');
 }
 
-/**
- * Как называть материал на экране. У копии расшифровки своё имя нейтральное
- * («Расшифровка от …» — оно уходит в модели), а автору показываем настоящее —
- * имя самой записи. Одно правило для библиотеки, поиска и форм лекции и
- * презентации: иначе одна вещь в разных местах называется по-разному.
- */
-export function titleOf(
-  doc: { title: string; transcriptionId: number | null },
-  transcriptions: readonly { id: number; title: string }[],
-): string {
-  if (doc.transcriptionId === null) return doc.title;
-  return transcriptions.find((t) => t.id === doc.transcriptionId)?.title ?? doc.title;
-}
-
 /** Лекция пишется или составляется план — править и выгружать пока нельзя. */
 export const lectureWorking = (status: LectureStatus): boolean =>
   status === 'planning' || status === 'writing';
@@ -201,8 +187,8 @@ export function buildItems(data: LibraryData, act: ItemActions): Item[] {
     .map<Item>((d) => {
       const kind = docKind(d.kind);
       const api = `/api/documents/${d.id}`;
-      // Показываем и переименовываем настоящее имя, а не нейтральное копии.
-      const title = titleOf(d, transcriptions);
+      // Копия записи носит имя самой записи (сервер переименовывает её вместе с записью).
+      const title = d.title;
       const meta =
         d.status === 'ready'
           ? // У расшифровки счёт фрагментов ничего не говорит автору — только

@@ -1,4 +1,4 @@
-import { askText, ModelWaitError, pickModel } from "./codex";
+import { askText, ModelWaitError, MODEL_TASKS, modelFor } from "./codex";
 import { checkMail } from "./mail";
 import { notifyOwner } from "./notify";
 import { logger } from "./logger";
@@ -23,20 +23,9 @@ const RECHECK_DELAY_MS = 3 * 60_000;
 const PERIOD_MS = 12 * 60 * 60_000;
 const HTTP_TIMEOUT_MS = 20_000;
 
-/**
- * Модели, которые зовут задачи, с теми же значениями по умолчанию, что в коде
- * задач (transcription.ts, handlers/*, research.ts). Меняете там - меняйте здесь.
- */
+/** Модели, которые зовут задачи, - из общего реестра codex.ts (modelFor). */
 export function configuredModels(): { env: string; model: string }[] {
-  const lecture = pickModel("MODEL_LECTURE", "gpt-6.1-sol");
-  return [
-    { env: "MODEL_STRUCTURE", model: pickModel("MODEL_STRUCTURE", "gpt-5.6-sol") },
-    { env: "MODEL_LECTURE", model: lecture },
-    { env: "MODEL_RESEARCH", model: pickModel("MODEL_RESEARCH", lecture) },
-    { env: "MODEL_DECK", model: pickModel("MODEL_DECK", "gpt-5.6-sol") },
-    { env: "MODEL_SCENE", model: pickModel("MODEL_SCENE", "gpt-5.6-sol") },
-    { env: "MODEL_REVIEW", model: pickModel("MODEL_REVIEW", "gpt-5.6-sol") },
-  ];
+  return MODEL_TASKS.map((env) => ({ env, model: modelFor(env) }));
 }
 
 async function checkModels(): Promise<string[]> {
