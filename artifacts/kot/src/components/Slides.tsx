@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/hooks/use-app';
+import { useOpenItem } from '@/hooks/use-open-item';
 import { Icon } from '@/lib/icons';
 import { RelatedLine, useRelatedLinks } from './Related';
 import { SlideViewer } from './SlideViewer';
 import { DeckForm } from './slides/DeckForm';
 import { DiagramThumb } from './slides/DiagramThumb';
-import { OFFLINE, failText, send, json, downloadFile } from '@/lib/http';
+import { send, json, downloadFile } from '@/lib/http';
 import {
   layoutName,
   layoutHasImage,
@@ -34,9 +35,13 @@ export function Slides() {
   const { screen, go, leaveMissing, toast, activeDeckId, openDeck } = useApp();
   const rel = useRelatedLinks();
   const openId = activeDeckId;
-  const [deck, setDeck] = useState<DeckFull | null>(null);
-  /** Открытую колоду не удалось загрузить — текст причины для экрана. */
-  const [failed, setFailed] = useState<string | null>(null);
+  // Открытая колода: загрузка, «не найдена», опрос, пока конвейер работает (hooks/use-open-item).
+  const {
+    item: deck,
+    missing,
+    error: failed,
+    reload,
+  } = useOpenItem<DeckFull>(openId, (id) => `/api/decks/${id}`, (d) => deckWorking(d.status), 'Не удалось открыть презентацию');
   /** Какой слайд открыт крупно — индекс в колоде; null = просмотр закрыт. */
   const [openSlide, setOpenSlide] = useState<number | null>(null);
 
@@ -47,10 +52,6 @@ export function Slides() {
   // Имя стилевого пакета показывается на готовой колоде — за этим и список.
   const [packs, setPacks] = useState<{ id: number; name: string }[]>([]);
 
-  // Какая колода открыта сейчас. Ответ опроса, начатого до ухода с колоды,
-  // не должен вернуть её на экран: компонент живёт всегда, setDeck сработал бы.
-  const openRef = useRef(openId);
-  openRef.current = openId;
 
   const loadPacks = useCallback(async () => {
     try {
@@ -59,30 +60,12 @@ export function Slides() {
     } catch { /* тихо: без списка стилей сервер сам возьмёт первый доступный */ }
   }, []);
 
-  const loadOne = useCallback(async (id: number) => {
-    let res: Response;
-    try {
-      res = await fetch(`/api/decks/${id}`);
-    } catch {
-      if (id === openRef.current) setFailed(OFFLINE);
-      return;
-    }
-    if (id !== openRef.current) return;
-    if (res.status === 404) {
-      // Колоду удалили в другой вкладке — не опрашивать же её вечно.
-      toast('Презентация не найдена');
-      leaveMissing();
-      return;
-    }
-    if (!res.ok) {
-      setFailed(await failText(res, 'Не удалось открыть презентацию'));
-      return;
-    }
-    const data = (await res.json()) as DeckFull;
-    if (id !== openRef.current) return;
-    setDeck(data);
-    setFailed(null);
-  }, [toast, leaveMissing]);
+  // Колоду удалили в другой вкладке — не опрашивать же её вечно.
+  useEffect(() => {
+    if (!missing) return;
+    toast('Презентация не найдена');
+    leaveMissing();
+  }, [missing, toast, leaveMissing]);
 
   // Форма новой презентации — то, что видно, когда ничего не открыто.
   const creating = openId === null;
@@ -92,21 +75,10 @@ export function Slides() {
     if (screen === 's-slides' && !creating) void loadPacks();
   }, [screen, creating, loadPacks]);
 
+  // Окно слайда относится к своей колоде.
   useEffect(() => {
-    // Прежняя колода не висит на экране, пока грузится другая.
-    setDeck(null);
-    setFailed(null);
-    if (openId === null) return;
     setOpenSlide(null);
-    void loadOne(openId);
-  }, [openId, loadOne]);
-
-  // Пока конвейер раскладывает или рисует — подтягиваем колоду, чтобы прогресс двигался сам.
-  useEffect(() => {
-    if (openId === null || !deck || !deckWorking(deck.status)) return;
-    const t = setInterval(() => void loadOne(openId), 3000);
-    return () => clearInterval(t);
-  }, [openId, deck, loadOne]);
+  }, [openId]);
 
   /**
    * Запрос-действие над колодой: отказ сервера или обрыв сети — тост с
@@ -121,7 +93,7 @@ export function Slides() {
       return false;
     }
     if (done) toast(done);
-    await loadOne(deck.id);
+    await reload();
     return true;
   };
 
@@ -477,7 +449,7 @@ export function Slides() {
             <h3 className="errttl">Не удалось открыть</h3>
             <p className="errwhy">{failed}</p>
             <div className="btnrow">
-              <button className="btn primary" style={{ flex: 1 }} onClick={() => void loadOne(openId)}>
+              <button className="btn primary" style={{ flex: 1 }} onClick={() => void reload()}>
                 Попробовать ещё раз
               </button>
             </div>

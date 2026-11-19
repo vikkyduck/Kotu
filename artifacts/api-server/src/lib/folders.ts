@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db, foldersTable } from "@workspace/db";
 import { parseId } from "./parse-id";
+import { titleFrom } from "./title";
 
 /**
  * Проверка папки перед перекладыванием. Папки держат не только книги, но и
@@ -27,4 +28,36 @@ export async function ownFolderId(
     .where(and(eq(foldersTable.id, id), eq(foldersTable.ownerId, ownerId)))
     .limit(1);
   return folder?.id;
+}
+
+export const FOLDER_NOT_FOUND = "Папка не найдена";
+
+/** Что меняет «переименовать и/или переложить в папку». */
+export interface RenameMove {
+  title?: string;
+  folderId?: number | null;
+}
+
+/**
+ * Разбор тела «переименовать и/или переложить» - одно правило для лекции,
+ * презентации и документа: название обрезается до 200 знаков, пустое -
+ * 400 с фразой emptyTitle, чужая или несуществующая папка - 404.
+ */
+export async function parseRenameMove(
+  body: Record<string, unknown>,
+  ownerId: number,
+  emptyTitle: string,
+): Promise<{ set: RenameMove } | { status: 400 | 404; message: string }> {
+  const set: RenameMove = {};
+  if ("title" in body) {
+    const title = titleFrom(body.title);
+    if (title === "") return { status: 400, message: emptyTitle };
+    set.title = title;
+  }
+  if ("folderId" in body) {
+    const folderId = await ownFolderId(body.folderId, ownerId);
+    if (folderId === undefined) return { status: 404, message: FOLDER_NOT_FOUND };
+    set.folderId = folderId;
+  }
+  return { set };
 }

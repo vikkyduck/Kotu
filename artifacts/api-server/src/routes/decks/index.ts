@@ -18,8 +18,8 @@ import {
 } from "@workspace/db";
 import { inArray } from "drizzle-orm";
 import { SLIDE_LAYOUTS, layoutHasImage } from "@workspace/db/slides";
-import { ownFolderId } from "../../lib/folders";
-import { deckToLibrary, dropDeckCopies } from "../../lib/work-doc";
+import { parseRenameMove } from "../../lib/folders";
+import { deckToLibrary, dropDeckCopies, syncQuietly } from "../../lib/work-doc";
 import { DECKS_DIR } from "../../lib/paths";
 import { buildDeckPptx } from "../../lib/pptx";
 import { buildDeckPdf } from "../../lib/pdf";
@@ -27,7 +27,8 @@ import { sanitizeSlideContent, settleSlides } from "../../lib/slide-content";
 import { deckStylePack } from "../../lib/deck-style";
 import { MAX_SOURCE_CHARS, SOURCE_GONE } from "../../lib/handlers/storyboard";
 import { parseId } from "../../lib/parse-id";
-import { QUEUED_MESSAGE, enqueue, hasActiveJob, lastJob } from "../../lib/jobs";
+import { ownedOr404 } from "../../lib/owned";
+import { NOTHING_TO_RETRY, QUEUED_MESSAGE, enqueue, hasActiveJob, lastJob, transitionAndEnqueue, type Tx } from "../../lib/jobs";
 import { attachmentHeader } from "../../lib/filename";
 import { deckSource } from "../../lib/relations";
 import { titleFrom } from "../../lib/title";
@@ -45,20 +46,8 @@ const router: IRouter = Router();
  * Чужая, удалённая или кривой id — одинаковые 404; ответ уже отправлен,
  * ручке остаётся выйти.
  */
-async function deckOr404(req: Request, res: Response): Promise<Deck | null> {
-  const id = parseId(req.params["id"]);
-  const [deck] = id
-    ? await db
-        .select()
-        .from(decksTable)
-        .where(and(eq(decksTable.id, id), eq(decksTable.ownerId, req.user!.id)))
-        .limit(1)
-    : [];
-  if (!deck) {
-    res.status(404).json({ message: "Презентация не найдена" });
-    return null;
-  }
-  return deck;
+function deckOr404(req: Request, res: Response): Promise<Deck | null> {
+  return ownedOr404(decksTable, req, res, "Презентация не найдена");
 }
 
 /** Слайд этой колоды по :sid из адреса; нет такого — 404, как с колодой. */
@@ -91,14 +80,8 @@ async function deckSlides(deckId: number): Promise<DeckSlide[]> {
 /** В ошибке колода стоит — не «работает»: сказать, что делать. */
 const RETRY_FIRST = "Сначала нажмите «Попробовать ещё раз»";
 
-/** Копия в библиотеке отстала от правки — ответ всё равно ok, но след в журнале. */
-function logLibraryLag(req: Request, id: number) {
-  return (err: unknown) => req.log.error({ err, id }, "Не смог обновить копию презентации в библиотеке");
-}
-
 const BUSY = "Подождите, я ещё работаю";
 
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
  * Платная задача колоды (раскадровка, отрисовка, переделка слайда) и смена
@@ -115,17 +98,8 @@ async function queueDeckJob(
   payload: Record<string, unknown>,
   before?: (tx: Tx) => Promise<unknown>,
 ): Promise<boolean> {
-  return db.transaction(async (tx) => {
-    const [row] = await tx
-      .update(decksTable)
-      .set({ error: null, ...set })
-      .where(and(eq(decksTable.id, deckId), inArray(decksTable.status, from)))
-      .returning({ id: decksTable.id });
-    if (!row) return false;
-    if (before) await before(tx);
-    await enqueue(kind, deckId, payload, tx);
-    return true;
-  });
+  const row = await transitionAndEnqueue({ table: decksTable, id: deckId, from, set, kind, payload, before });
+  return row !== null;
 }
 
 /**
@@ -280,23 +254,12 @@ router.patch("/decks/:id", async (req, res): Promise<void> => {
   const deck = await deckOr404(req, res);
   if (!deck) return;
 
-  const body = req.body ?? {};
-  // Длинное название обрезаем, а не отклоняем — как у лекции, книги и записи.
-  const title = titleFrom(body.title);
-  if ("title" in body && title === "") {
-    res.status(400).json({ message: "Дайте презентации название" });
+  const parsed = await parseRenameMove(req.body ?? {}, req.user!.id, "Дайте презентации название");
+  if ("status" in parsed) {
+    res.status(parsed.status).json({ message: parsed.message });
     return;
   }
-  const set: { folderId?: number | null; title?: string } = {};
-  if ("folderId" in body) {
-    const folderId = await ownFolderId(body.folderId, req.user!.id);
-    if (folderId === undefined) {
-      res.status(404).json({ message: "Папка не найдена" });
-      return;
-    }
-    set.folderId = folderId;
-  }
-  if (title !== "") set.title = title;
+  const { set } = parsed;
   if (Object.keys(set).length > 0) {
     // Текстовая копия в поиске переезжает и переименовывается вместе с
     // колодой — одной транзакцией: материал не расползается по двум папкам.
@@ -391,7 +354,7 @@ router.patch("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
     // Текст изменился — библиотечная копия не должна отставать. Переиндексация
     // локальная и дешёвая, поэтому делаем сразу, а не «когда-нибудь потом».
     if (patch.content || patch.notes !== undefined) {
-      await deckToLibrary(deck.id).catch(logLibraryLag(req, deck.id));
+      await syncQuietly(deckToLibrary(deck.id), "deck", deck.id, req.log);
     }
   }
 
@@ -442,7 +405,7 @@ router.post("/decks/:id/approve", async (req, res): Promise<void> => {
       res.status(409).json({ message: BUSY });
       return;
     }
-    await deckToLibrary(deck.id).catch(logLibraryLag(req, deck.id));
+    await syncQuietly(deckToLibrary(deck.id), "deck", deck.id, req.log);
     res.status(202).json({ ok: true });
     return;
   }
@@ -639,7 +602,7 @@ router.post("/decks/:id/retry", async (req, res): Promise<void> => {
   const deck = await deckOr404(req, res);
   if (!deck) return;
   if (deck.status !== "error") {
-    res.status(409).json({ message: "Повторять нечего — ошибки нет" });
+    res.status(409).json({ message: NOTHING_TO_RETRY });
     return;
   }
   // Как у лекции, записи и документа: живая задача - второй не ставим
@@ -739,7 +702,7 @@ router.delete("/decks/:id/slides/:sid", async (req, res): Promise<void> => {
     res.status(409).json({ message: "Это единственный слайд — удалите презентацию целиком" });
     return;
   }
-  if (outcome === "ready") await deckToLibrary(deck.id).catch(logLibraryLag(req, deck.id));
+  if (outcome === "ready") await syncQuietly(deckToLibrary(deck.id), "deck", deck.id, req.log);
   res.json({ ok: true });
 });
 

@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import { syncQuietly } from "../../lib/work-doc";
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { eq, and, desc, ne } from "drizzle-orm";
@@ -17,7 +18,8 @@ import { cleanText } from "../../lib/clean-text";
 import { madeFrom } from "../../lib/relations";
 import { titleFrom } from "../../lib/title";
 import { parseId } from "../../lib/parse-id";
-import { QUEUED_MESSAGE, enqueue, hasActiveJob, lastJob } from "../../lib/jobs";
+import { ownedOr404 } from "../../lib/owned";
+import { NOTHING_TO_RETRY, QUEUED_MESSAGE, enqueue, hasActiveJob, lastJob, transitionAndEnqueue } from "../../lib/jobs";
 import { resolveInsideDir } from "../../lib/uploads";
 import {
   archiveAndRemove,
@@ -62,18 +64,6 @@ const upload = multer({
 });
 
 const NOT_FOUND = "Расшифровка не найдена";
-
-/** Запись строго своего владельца. Кривой id — как чужая запись: null, и ручка отвечает 404. */
-async function loadTranscription(rawId: string, ownerId: number): Promise<Transcription | null> {
-  const id = parseId(rawId);
-  if (id === null) return null;
-  const [row] = await db
-    .select()
-    .from(transcriptionsTable)
-    .where(and(eq(transcriptionsTable.id, id), eq(transcriptionsTable.ownerId, ownerId)))
-    .limit(1);
-  return row ?? null;
-}
 
 /**
  * Запись для экрана - со связями: что уже сделано из неё через её копию в
@@ -122,11 +112,8 @@ router.get("/transcriptions", async (req, res): Promise<void> => {
 });
 
 router.get("/transcriptions/:id", async (req, res): Promise<void> => {
-  const row = await loadTranscription(req.params.id, req.user!.id);
-  if (!row) {
-    res.status(404).json({ message: NOT_FOUND });
-    return;
-  }
+  const row = await ownedOr404(transcriptionsTable, req, res, NOT_FOUND);
+  if (!row) return;
 
   res.json(await withMade(row));
 });
@@ -196,19 +183,17 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
   // Смена одного названия текст не меняет: переразбирать копию (векторы,
   // «В очереди…» на карточке) незачем — меняем только её название.
   if (row.status === "done" && updates.segments !== undefined) {
-    void syncTranscriptionDoc(row).catch((err) =>
-      req.log.error({ err, id: row.id }, "Не смог обновить расшифровку в библиотеке"),
-    );
+    void syncQuietly(syncTranscriptionDoc(row), "transcription", row.id, req.log);
   } else if (row.status === "done") {
-    await db
-      .update(documentsTable)
-      .set({ title: libraryTitle(row) })
-      .where(
-        and(eq(documentsTable.transcriptionId, row.id), eq(documentsTable.ownerId, row.ownerId)),
-      )
-      .catch((err) =>
-        req.log.error({ err, id: row.id }, "Не смог обновить расшифровку в библиотеке"),
-      );
+    await syncQuietly(
+      db
+        .update(documentsTable)
+        .set({ title: libraryTitle(row) })
+        .where(and(eq(documentsTable.transcriptionId, row.id), eq(documentsTable.ownerId, row.ownerId))),
+      "transcription",
+      row.id,
+      req.log,
+    );
   }
 
   res.json(await withMade(row));
@@ -217,11 +202,8 @@ router.patch("/transcriptions/:id", async (req, res): Promise<void> => {
 router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
   // Чужую запись не трогаем даже косвенно: задачи и аудио ниже ищутся по id
   // записи без владельца, поэтому владельца проверяем заранее.
-  const owned = await loadTranscription(req.params.id, req.user!.id);
-  if (!owned) {
-    res.status(404).json({ message: NOT_FOUND });
-    return;
-  }
+  const owned = await ownedOr404(transcriptionsTable, req, res, NOT_FOUND);
+  if (!owned) return;
   const id = owned.id;
 
   // Удаление убирает запись из рабочего пространства, но не стирает: строки
@@ -281,14 +263,11 @@ router.delete("/transcriptions/:id", async (req, res): Promise<void> => {
  * «ошибка» часто не про файл, и заставлять заново грузить час записи незачем.
  */
 router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
-  const row = await loadTranscription(req.params.id, req.user!.id);
-  if (!row) {
-    res.status(404).json({ message: NOT_FOUND });
-    return;
-  }
+  const row = await ownedOr404(transcriptionsTable, req, res, NOT_FOUND);
+  if (!row) return;
   const id = row.id;
   if (row.status !== "error") {
-    res.status(409).json({ message: "Повторять нечего — ошибки нет" });
+    res.status(409).json({ message: NOTHING_TO_RETRY });
     return;
   }
 
@@ -320,28 +299,18 @@ router.post("/transcriptions/:id/retry", async (req, res): Promise<void> => {
     markSpeakers: typeof prev.markSpeakers === "boolean" ? prev.markSpeakers : row.markSpeakers,
   };
 
-  // Смена статуса и новая задача — в одной транзакции: запись «в работе» без
-  // задачи висела бы вечно. Условие status = 'error' в UPDATE закрывает
-  // двойной клик — второй запрос не найдёт ошибки и не поставит вторую задачу.
-  const queued = await db.transaction(async (tx) => {
-    const [updated] = await tx
-      .update(transcriptionsTable)
-      .set({ status: "processing", progress: 0, statusMessage: QUEUED_MESSAGE, error: null })
-      .where(
-        and(
-          eq(transcriptionsTable.id, id),
-          eq(transcriptionsTable.ownerId, req.user!.id),
-          eq(transcriptionsTable.status, "error"),
-        ),
-      )
-      .returning();
-    if (!updated) return null;
-    await enqueue("transcribe", id, payload as unknown as Record<string, unknown>, tx);
-    return updated;
+  // Владелец проверен выше (ownedOr404); двойной клик закрывает условие на статус.
+  const queued = await transitionAndEnqueue({
+    table: transcriptionsTable,
+    id,
+    from: ["error"],
+    set: { status: "processing", progress: 0, statusMessage: QUEUED_MESSAGE },
+    kind: "transcribe",
+    payload,
   });
 
   if (!queued) {
-    res.status(409).json({ message: "Повторять нечего — ошибки нет" });
+    res.status(409).json({ message: NOTHING_TO_RETRY });
     return;
   }
 
@@ -410,7 +379,7 @@ router.post(
           statusMessage: QUEUED_MESSAGE,
         })
         .returning();
-      await enqueue("transcribe", created.id, payload as unknown as Record<string, unknown>, tx);
+      await enqueue("transcribe", created.id, payload, tx);
       return created;
     });
 

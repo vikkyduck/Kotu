@@ -10,7 +10,7 @@ import {
 import { askJson, modelFor } from "../codex";
 import { fieldsLine, sanitizeSlideContent, settleContent } from "../slide-content";
 import { registerHandler } from "../jobs";
-import { deckToLibrary } from "../work-doc";
+import { deckToLibrary, syncQuietly } from "../work-doc";
 import { logger } from "../logger";
 import { shownError, onWait } from "./storyboard";
 
@@ -124,9 +124,7 @@ async function run(job: Job): Promise<void> {
     .where(eq(decksTable.id, deckId));
 
   // Текст изменился — копия в поиске не должна отставать.
-  await deckToLibrary(deckId).catch((err) =>
-    logger.error({ err, deckId }, "Не смог обновить копию презентации в библиотеке"),
-  );
+  await syncQuietly(deckToLibrary(deckId), "deck", deckId);
 
   logger.info({ deckId, slideId: slide.id }, "Слайд переделан по указанию автора");
 }

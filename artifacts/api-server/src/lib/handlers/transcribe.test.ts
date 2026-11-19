@@ -40,6 +40,8 @@ vi.mock("../jobs", () => ({
   registerHandler: (_kind: string, h: { run: (job: Job) => Promise<void> }) => {
     state.handler = h;
   },
+  showWaitOn: () => async () => {},
+  markFailed: async () => 1,
 }));
 vi.mock("../transcript-doc", () => ({ syncTranscriptionDoc: vi.fn(async () => {}) }));
 vi.mock("../archive", () => ({ archiveAndRemove: vi.fn(async () => {}) }));

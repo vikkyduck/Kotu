@@ -2,9 +2,10 @@ import { eq } from "drizzle-orm";
 import { db, transcriptionsTable, type Job } from "@workspace/db";
 import { transcribeLongAudio, ChunkError } from "../transcription";
 import { ModelWaitError } from "../codex";
-import { registerHandler } from "../jobs";
+import { markFailed, registerHandler, showWaitOn } from "../jobs";
 import { syncTranscriptionDoc } from "../transcript-doc";
 import { logger } from "../logger";
+import { syncQuietly } from "../work-doc";
 import { UPLOAD_DIR } from "../paths";
 import { resolveInsideDir } from "../uploads";
 import { archiveAndRemove } from "../archive";
@@ -46,9 +47,7 @@ async function run(job: Job): Promise<void> {
     return;
   }
   if (existing.status === "done") {
-    await syncTranscriptionDoc(existing).catch((err) =>
-      logger.error({ err, id }, "Расшифровка не доехала до библиотеки"),
-    );
+    await syncQuietly(syncTranscriptionDoc(existing), "transcription", id);
     return;
   }
 
@@ -89,7 +88,7 @@ async function run(job: Job): Promise<void> {
     // загруженное хранится, пока она сама не удалит запись. Это осознанно
     // отменяет прежнюю минимизацию по 152-ФЗ (ARCHITECTURE.md §10).
 
-    // Готовая расшифровка едет в библиотеку (со скрытием имён — маскированной). Сбой здесь
+    // Готовая расшифровка едет в библиотеку. Сбой здесь
     // не должен ронять готовую расшифровку — стартовая сверка догонит.
     const [fresh] = await db
       .select()
@@ -97,9 +96,7 @@ async function run(job: Job): Promise<void> {
       .where(eq(transcriptionsTable.id, id))
       .limit(1);
     if (fresh) {
-      await syncTranscriptionDoc(fresh).catch((err) =>
-        logger.error({ err, id }, "Расшифровка не доехала до библиотеки"),
-      );
+      await syncQuietly(syncTranscriptionDoc(fresh), "transcription", id);
     }
   } catch (err) {
     // Удаление — не сбой: задача закрывается тихо, без повтора и без записи
@@ -127,26 +124,19 @@ async function run(job: Job): Promise<void> {
 }
 
 /** Ждем подписку Codex: на карточке - причина и время продолжения. */
-async function onWait(job: Job, message: string): Promise<void> {
-  await db.update(transcriptionsTable).set({ statusMessage: message }).where(eq(transcriptionsTable.id, job.entityId));
-}
+const onWait = showWaitOn(transcriptionsTable);
 
 async function onGiveUp(job: Job, message: string): Promise<void> {
   // Аудио НЕ удаляем: попытки сжигает не только плохой файл, но и деплой
   // посреди задачи, сбой транзита, недоступный NER. Запись остаётся на диске,
   // чтобы «Попробовать ещё раз» повторило её без повторной загрузки. Лежит,
   // пока владелица не повторит или не удалит запись (см. lib/uploads.ts).
-  const updated = await db
-    .update(transcriptionsTable)
-    .set({ status: "error", statusMessage: "", error: message })
-    .where(eq(transcriptionsTable.id, job.entityId))
-    .returning({ id: transcriptionsTable.id })
-    .catch((err) => {
-      logger.error({ err, id: job.entityId }, "Не смог записать состояние ошибки");
-      return null;
-    });
+  const found = await markFailed(transcriptionsTable, job.entityId, message).catch((err) => {
+    logger.error({ err, id: job.entityId }, "Не смог записать состояние ошибки");
+    return null;
+  });
   // Исключение — записи больше нет: повторять нечего, аудио убираем.
-  if (updated && updated.length === 0) {
+  if (found === 0) {
     await removeAudio(job.payload as unknown as TranscribePayload, job.entityId);
   }
 }
