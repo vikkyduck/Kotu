@@ -41,7 +41,7 @@ import { logger } from "../logger";
 
 // Та же модель, что пишет лекции у бота ПСИ в Telegram (решение владелицы 19.11.2026).
 const MODEL = modelFor("MODEL_LECTURE");
-// Глубина рассуждения: high - самая глубокая, какую пропускает мост Codex. Без неё
+// Глубина рассуждения: по умолчанию high; глубже - EFFORT_LECTURE=xhigh или max в .env. Без неё
 // Codex думает на medium (проверено 19.11.2026), и лекция выходит проще, чем могла бы.
 const EFFORT = pickEffort("EFFORT_LECTURE", "high");
 
