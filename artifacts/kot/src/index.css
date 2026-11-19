@@ -908,5 +908,9 @@ input.field.lib-search{margin:0 0 var(--sp-2)}
   text-decoration-color:var(--line)}
 .lec-toc a:hover{color:var(--accent-strong)}
 .lec-next{margin-top:22px}
+/* Копия кнопок над текстом (лекция, презентация, расшифровка): без подписи - без верхнего отступа */
+.lec-top{margin:14px 0 18px}
+.lec-top > .btnrow:first-child,.btnrow.top-actions{margin-top:0}
+.btnrow.top-actions{margin-bottom:16px;flex-wrap:wrap}
 .lec-section{scroll-margin-top:70px}
 .plan-editing .field{margin-bottom:8px}
